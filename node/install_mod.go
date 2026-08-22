@@ -71,8 +71,12 @@ func runInstallMod(storage *StorageManager, payload string) {
 		log.Printf("install_mod: invalid active sub-server %q", pl.ActiveSubServer)
 		return
 	}
-	cleanName := filepath.Base(pl.FileName)
-	if cleanName == "" || cleanName == "." || cleanName == ".." || strings.ContainsAny(cleanName, "/\\") {
+	// Same rule Core now applies before queueing (validate.IsPlainFileName), so
+	// a name that reaches here at all is one it already agreed to. Kept as a
+	// check rather than trusted: this command arrives over a queue, and the node
+	// is the last thing between it and the filesystem.
+	cleanName := pl.FileName
+	if !validate.IsPlainFileName(cleanName) {
 		log.Printf("install_mod: invalid file name %q", pl.FileName)
 		return
 	}
@@ -196,7 +200,30 @@ func validActiveSubServer(s string) bool {
 }
 
 func downloadAndVerify(url, dest, expectedSHA512 string) error {
-	client := &http.Client{Timeout: 5 * time.Minute}
+	client := &http.Client{
+		Timeout: 5 * time.Minute,
+		// Core pins the download host to a Modrinth CDN before this command is
+		// queued, and with the default policy that pin covered the first hop
+		// only: Go follows up to ten redirects, so one hop off cdn.modrinth.com
+		// would have fetched from anywhere, with the sha512 checked only when
+		// the caller supplied one. Measured against the real CDN: a version
+		// file answers 200 with zero redirects, so refusing a hop to a
+		// different host costs nothing today and keeps Core's pin meaning what
+		// it says. Same-host redirects still work, so a path rewrite would not
+		// break installs.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) == 0 {
+				return nil
+			}
+			if req.URL.Host != via[0].URL.Host {
+				return fmt.Errorf("refusing redirect to a different host: %s -> %s", via[0].URL.Host, req.URL.Host)
+			}
+			if len(via) >= 5 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("http get: %w", err)

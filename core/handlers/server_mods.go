@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"dylaris-core/models"
+	"dylaris-pkg/validate"
 
 	"github.com/gorilla/mux"
 )
@@ -119,6 +120,16 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	req.FileName = strings.TrimSpace(req.FileName)
 	if req.ProjectID == "" || req.VersionID == "" || req.DownloadURL == "" || req.FileName == "" {
 		sendJSONError(w, "projectId, versionId, downloadUrl, fileName required", http.StatusBadRequest)
+		return
+	}
+	// The node reduces this to its basename and refuses what is left over, which
+	// is why nothing ever escaped the mods directory. What it could not do is
+	// tell the caller: Core queued whatever arrived and answered 200, so
+	// "../../../escape.jar" was accepted, written as "escape.jar", and recorded
+	// under a name that is not the file on disk - and uninstall aims at the
+	// recorded one. Refusing here makes the 200 mean what it says.
+	if !validate.IsPlainFileName(req.FileName) {
+		sendJSONError(w, "fileName must be a plain file name, without any path", http.StatusBadRequest)
 		return
 	}
 	// Trust-but-verify: the panel sends a downloadUrl it pulled from Modrinth,

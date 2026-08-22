@@ -11,6 +11,7 @@
 package validate
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -87,6 +88,29 @@ func IsLocationName(s string) bool      { return LocationName.MatchString(s) }
 func IsEmail(s string) bool             { return Email.MatchString(s) }
 func IsMcVersion(s string) bool         { return McVersion.MatchString(s) }
 func IsMinecraftUsername(s string) bool { return MinecraftUsername.MatchString(s) }
+
+// IsPlainFileName reports whether s names a single file with no path in it.
+//
+// Not a regex, because the alphabet is not the point: mod jars carry '+', '.',
+// spaces and unicode, and the question is only whether the string is a NAME or
+// a PATH. filepath.Base is what the node reduces it to, so agreeing with Base
+// is the definition.
+//
+// It exists because the two ends disagreed. The node reduced a mod file name to
+// its basename and refused the leftovers, which is correct and is the reason
+// nothing ever escaped; Core queued the request unexamined and answered 200. So
+// "../../../escape.jar" was accepted, written to disk as "escape.jar", and
+// recorded - where recorded at all - under a name that is not the file. Both
+// sides ask this now, so the answer Core gives is the one the node will act on.
+func IsPlainFileName(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	if strings.ContainsAny(s, `/\`) || strings.ContainsRune(s, 0) {
+		return false
+	}
+	return filepath.Base(s) == s
+}
 
 // SanitizeServerName coerces a raw name into the ServerName alphabet: invalid
 // characters are stripped (spaces are kept, they are allowed), the result is
