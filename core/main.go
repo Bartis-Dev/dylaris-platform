@@ -218,16 +218,16 @@ func main() {
 	grpcRegistry := nodegrpc.NewRegistry()
 
 	appState := &handlers.AppState{
-		Store:               pgStore,
-		GRPCRegistry:        grpcRegistry,
-		FrontendURL:         cfg.FrontendURL,
-		ExternalTicketDBURL: cfg.ExternalTicketDBURL,
-		FeatureFlags:        services.NewFeatureFlags(pgStore),
-		Authz:               authz.NewResolver(pgStore),
-		DBType:              cfg.DBType,
-		StoreEnabled:        cfg.StoreEnabled,
-		StoreURL:            cfg.StoreURL,
-		StoreSharedKey:      cfg.StoreSharedKey,
+		Store:                   pgStore,
+		GRPCRegistry:            grpcRegistry,
+		FrontendURL:             cfg.FrontendURL,
+		ExternalTicketDBURL:     cfg.ExternalTicketDBURL,
+		FeatureFlags:            services.NewFeatureFlags(pgStore),
+		Authz:                   authz.NewResolver(pgStore),
+		DBType:                  cfg.DBType,
+		StoreEnabled:            cfg.StoreEnabled,
+		StoreURL:                cfg.StoreURL,
+		StoreSharedKey:          cfg.StoreSharedKey,
 		TabProxyIsolationActive: cfg.TabProxyIsolationActive,
 		UpdatesFeedURLPlatform:  cfg.UpdatesFeedURLPlatform,
 		UpdatesFeedURLGateway:   cfg.UpdatesFeedURLGateway,
@@ -350,7 +350,7 @@ func main() {
 	gwBandwidth.SetLeader(coreLeader)
 	gwBandwidth.Start(bgCtx)
 
-	sftpSync := services.NewSFTPSyncService(pgStore, redisClient)
+	sftpSync := services.NewSFTPSyncService(pgStore, redisClient, appState.Authz)
 	sftpSync.Start()
 
 	// Traffic aggregator — leader-gated + BYON-gated. Turns the per-server byte

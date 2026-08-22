@@ -1615,21 +1615,36 @@ func (s *PostgresStore) SetLibraryPathDisabled(path string, disabled bool) error
 // SFTP
 // ==========================================
 
-// GetSFTPAccessByNode returns all (serverUUID, serverName, username) pairs for a node —
-// owners and invited users combined.
+// GetSFTPAccessByNode returns every (user, server) pair the grant tables
+// connect to a server on this node: owners, per-server grants, and account-wide
+// grants. It answers "who could plausibly have SFTP here", not "who may" -
+// SFTPSyncService resolves each non-owner row against sftp.access before
+// publishing anything.
+//
+// The third branch is not cosmetic. server_invites doubles as the grant table,
+// and an account-wide grant is a row with server_id IS NULL keyed on
+// owner_user_id, so joining on si.server_id = s.id skipped it entirely: someone
+// granted access to a whole account could use every panel route on those
+// servers and had no SFTP at all.
 func (s *PostgresStore) GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error) {
 	query := `
-		SELECT s.uuid, s.name, u.username
+		SELECT s.uuid, s.name, s.id, u.id, u.username, TRUE
 		FROM servers s
 		JOIN users u ON s.owner_id = u.id
 		WHERE s.node_id = $1
 		UNION
-		SELECT s.uuid, s.name, u.username
+		SELECT s.uuid, s.name, s.id, u.id, u.username, FALSE
 		FROM servers s
 		JOIN server_invites si ON si.server_id = s.id
 		JOIN users u ON si.user_id = u.id
 		WHERE s.node_id = $1
-		ORDER BY 1, 3
+		UNION
+		SELECT s.uuid, s.name, s.id, u.id, u.username, FALSE
+		FROM servers s
+		JOIN server_invites si ON si.server_id IS NULL AND si.owner_user_id = s.owner_id
+		JOIN users u ON si.user_id = u.id
+		WHERE s.node_id = $1
+		ORDER BY 1, 5
 	`
 	rows, err := s.db.Query(query, nodeID)
 	if err != nil {
@@ -1639,7 +1654,7 @@ func (s *PostgresStore) GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error) {
 	var result []SFTPAccess
 	for rows.Next() {
 		var a SFTPAccess
-		if err := rows.Scan(&a.ServerUUID, &a.ServerName, &a.Username); err != nil {
+		if err := rows.Scan(&a.ServerUUID, &a.ServerName, &a.ServerID, &a.UserID, &a.Username, &a.IsOwner); err != nil {
 			continue
 		}
 		result = append(result, a)

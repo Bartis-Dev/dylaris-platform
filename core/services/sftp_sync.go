@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
@@ -16,15 +17,24 @@ import (
 //
 // Keys written (both refreshed every 60s, both with a 5min TTL):
 //
-//	sftp:auth:{username}                      = bcrypt hash of the panel password
+//	sftp:auth:{nodeToken}:{username}          = bcrypt hash of the panel password
 //	sftp:node:{nodeToken}:user:{username}     = JSON [{uuid,name}]
+//
+// What lands in those keys IS the SFTP authorization decision - the node has no
+// second gate behind them, so a server listed here is a server that account can
+// read, write and delete files on. That is why the resolver runs below rather
+// than the grant tables being trusted as they come.
 type SFTPSyncService struct {
 	store store.Store
 	redis *redis.Client
+	authz *authz.Resolver
 }
 
-func NewSFTPSyncService(s store.Store, r *redis.Client) *SFTPSyncService {
-	return &SFTPSyncService{store: s, redis: r}
+// NewSFTPSyncService takes the same resolver the HTTP routes use. Passing a nil
+// one is not supported: this service decides file access, and a nil resolver
+// could only mean publishing everything or nothing.
+func NewSFTPSyncService(s store.Store, r *redis.Client, az *authz.Resolver) *SFTPSyncService {
+	return &SFTPSyncService{store: s, redis: r, authz: az}
 }
 
 func (s *SFTPSyncService) Start() {
@@ -37,6 +47,45 @@ func (s *SFTPSyncService) Start() {
 			s.sync()
 		}
 	}()
+}
+
+// sftpAccessCap is the capability an SFTP session is. The catalog already
+// expresses this decision, and the panel's sftp-credentials route already gates
+// on it; publishing the credentials has to ask the same question or the two
+// disagree - which they did.
+//
+// It is sftp.access rather than files.read for the same reason beam.go gives
+// for its own check: this authorizes the TRANSPORT. Whether a session that is
+// allowed to exist should then be read-only is a separate question the node
+// would have to enforce per operation, and it does not today.
+const sftpAccessCap = "sftp.access"
+
+// mayUseSFTP reports whether one candidate row may be published.
+//
+// Owners short-circuit because the resolver's own owner branch does: keying on
+// the row's flag rather than resolving avoids a per-server resolve on every
+// tick for the overwhelmingly common case, without changing the answer.
+//
+// Fails CLOSED. A resolver error drops that pair from this tick rather than
+// publishing it, and the keys carry a 5-minute TTL, so a database fault takes
+// SFTP away for a few minutes instead of handing out access it could not check.
+func (s *SFTPSyncService) mayUseSFTP(a store.SFTPAccess, isAdmin bool) bool {
+	if a.IsOwner {
+		return true
+	}
+	if s.authz == nil {
+		return false
+	}
+	res, err := s.authz.Resolve(authz.Identity{
+		UserID:   a.UserID,
+		Username: a.Username,
+		IsAdmin:  isAdmin,
+	}, a.ServerID)
+	if err != nil {
+		log.Printf("SFTPSync: could not resolve %s on server %d, withholding SFTP: %v", a.Username, a.ServerID, err)
+		return false
+	}
+	return res.HasCap(sftpAccessCap)
 }
 
 type sftpServerEntry struct {
@@ -107,10 +156,15 @@ func (s *SFTPSyncService) sync() {
 	// now go out per node, in step 2, to the nodes where the user actually has a
 	// server - which also means a user with no servers is published nowhere.
 	hashByUser := make(map[string]string, len(users))
+	// The admin flag has to come from here rather than from the access rows: an
+	// admin resolves as holding everything, and building the identity without it
+	// would resolve them as an ordinary user and drop their own access.
+	adminByUser := make(map[string]bool, len(users))
 	for _, u := range users {
 		if u.Password != "" {
 			hashByUser[u.Username] = u.Password
 		}
+		adminByUser[u.Username] = u.IsAdmin
 	}
 	valid := make(map[string]bool, len(users))
 	// Drop auth keys for users that no longer exist (deleted or renamed). The
@@ -133,9 +187,22 @@ func (s *SFTPSyncService) sync() {
 			continue
 		}
 
-		// Group by username
+		// Group by username, keeping only what the caller may actually reach.
+		//
+		// The rows are candidates, not decisions. A grant carries a server role
+		// and capability overrides, and this list used to ignore both: any row
+		// in server_invites became a full read/write SFTP session. Measured on a
+		// live instance - a member invited with every permission off could list
+		// the server, read server.properties (which carries the RCON password),
+		// write files and delete server.jar, while the same account got 403 on
+		// every one of those actions over HTTP. sftp.access already gated the
+		// panel's "show me my SFTP credentials" route, so the gate was on the
+		// doorbell and not on the door.
 		byUser := make(map[string][]sftpServerEntry)
 		for _, a := range accesses {
+			if !s.mayUseSFTP(a, adminByUser[a.Username]) {
+				continue
+			}
 			byUser[a.Username] = append(byUser[a.Username], sftpServerEntry{UUID: a.ServerUUID, Name: a.ServerName})
 		}
 

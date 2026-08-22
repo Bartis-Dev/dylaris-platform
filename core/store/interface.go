@@ -6,11 +6,22 @@ import (
 	"time"
 )
 
-// SFTPAccess is a flat row returned by GetSFTPAccessByNode.
+// SFTPAccess is one CANDIDATE (user, server) pair returned by
+// GetSFTPAccessByNode: someone the grant tables connect to a server on that
+// node. It is not an authorization decision - the caller resolves it.
+//
+// IsOwner marks the rows that cannot fail that resolution, because the
+// resolver's own short-circuit is keyed on exactly this. Every other row has to
+// be resolved before its credentials are published: an invite carries a server
+// role and capability overrides, and without checking them an invite with no
+// capabilities at all opened a full read/write SFTP session.
 type SFTPAccess struct {
 	ServerUUID string
 	ServerName string
+	ServerID   int
+	UserID     string
 	Username   string
+	IsOwner    bool
 }
 
 // Store defines all database operations of the Core

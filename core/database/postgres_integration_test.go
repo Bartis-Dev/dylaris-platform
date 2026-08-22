@@ -539,3 +539,81 @@ func TestIntegrationCountPendingNodeEnrollTokens(t *testing.T) {
 		}
 	}
 }
+
+// GetSFTPAccessByNode feeds the SFTP sync, and what that publishes IS the
+// access decision - the node has no second gate. Two things have to be true of
+// it and neither was: it must reach account-wide grants (a row with server_id
+// NULL, which the old join on si.server_id = s.id skipped entirely, so someone
+// granted a whole account had every panel route and no SFTP), and it must mark
+// which rows are owners so the caller knows which ones still need resolving.
+func TestIntegrationSFTPAccessCoversAccountGrants(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	friend := &models.User{Username: uniqueName("f_sftp_"), Password: "x", Email: uniqueName("fe_") + "@example.test"}
+	if err := st.CreateUser(friend); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	t.Cleanup(func() { st.DeleteUser(friend.ID) })
+
+	rowsFor := func(username string) []store.SFTPAccess {
+		t.Helper()
+		all, err := st.GetSFTPAccessByNode(f.node.ID)
+		if err != nil {
+			t.Fatalf("GetSFTPAccessByNode: %v", err)
+		}
+		var out []store.SFTPAccess
+		for _, a := range all {
+			if a.Username == username {
+				out = append(out, a)
+			}
+		}
+		return out
+	}
+
+	t.Run("the owner is present and marked as one", func(t *testing.T) {
+		rows := rowsFor(f.user.Username)
+		if len(rows) != 1 {
+			t.Fatalf("got %d rows for the owner, want 1", len(rows))
+		}
+		if !rows[0].IsOwner {
+			t.Error("the owner's row is not marked IsOwner, so the caller would resolve it needlessly")
+		}
+		if rows[0].ServerID != f.server.ID || rows[0].UserID != f.user.ID {
+			t.Errorf("row = %+v, want serverID %d and userID %s", rows[0], f.server.ID, f.user.ID)
+		}
+	})
+
+	t.Run("a friend with no grant is absent", func(t *testing.T) {
+		if rows := rowsFor(friend.Username); len(rows) != 0 {
+			t.Errorf("got %d rows for an unrelated account, want 0", len(rows))
+		}
+	})
+
+	t.Run("an ACCOUNT-WIDE grant reaches the server", func(t *testing.T) {
+		if err := st.UpsertServerGrant(nil, friend.ID, f.user.ID, nil, store.CapOverrides{Grant: []string{"sftp.access"}}, false); err != nil {
+			t.Fatalf("UpsertServerGrant (account-wide): %v", err)
+		}
+		rows := rowsFor(friend.Username)
+		if len(rows) != 1 {
+			t.Fatalf("got %d rows, want 1: an account-wide grant used to produce none, so the holder had no SFTP at all", len(rows))
+		}
+		if rows[0].IsOwner {
+			t.Error("a grantee is marked as the owner, which would skip the capability check entirely")
+		}
+		if rows[0].ServerID != f.server.ID {
+			t.Errorf("serverID = %d, want %d", rows[0].ServerID, f.server.ID)
+		}
+	})
+
+	t.Run("a per-server grant reaches it too, exactly once", func(t *testing.T) {
+		sid := f.server.ID
+		if err := st.UpsertServerGrant(&sid, friend.ID, f.user.ID, nil, store.CapOverrides{Grant: []string{"sftp.access"}}, false); err != nil {
+			t.Fatalf("UpsertServerGrant (per-server): %v", err)
+		}
+		rows := rowsFor(friend.Username)
+		if len(rows) != 1 {
+			t.Fatalf("got %d rows, want 1: holding both grant shapes must not publish the server twice", len(rows))
+		}
+	})
+}
