@@ -179,8 +179,15 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
 
     // Extracted so the copy buttons below can send the exact same string that
     // is rendered in the <pre> blocks, with no duplication.
-    const nodeEnv = revealed ? `GRPC_TLS_ENABLED=true
-GRPC_TLS_FINGERPRINT=${revealed.grpcTlsFingerprint}
+    // Core returns a fingerprint only while its own GRPC_TLS_ENABLED is on, so
+    // an empty one means this platform runs the control channel in plaintext.
+    // Both branches state the flag: the node defaults it to true, so printing
+    // GRPC_TLS_FINGERPRINT= with nothing after it would hand an operator a file
+    // that turns TLS on and gives it nothing to verify against.
+    const grpcTlsEnv = revealed?.grpcTlsFingerprint
+        ? `GRPC_TLS_ENABLED=true\nGRPC_TLS_FINGERPRINT=${revealed.grpcTlsFingerprint}`
+        : 'GRPC_TLS_ENABLED=false';
+    const nodeEnv = revealed ? `${grpcTlsEnv}
 NODE_ENROLL_TOKEN=<your enroll token>
 CORE_GRPC_ADDR=<core-host:25501>
 NODE_MANAGES_LINK=true

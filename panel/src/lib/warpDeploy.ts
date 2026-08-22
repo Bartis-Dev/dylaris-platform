@@ -87,19 +87,29 @@ function or(value: string | undefined, placeholder: string): string {
 }
 
 /**
- * The node's half of the Core gRPC pin, emitted only when there is one.
+ * The node's half of the Core gRPC pin. ALWAYS emitted, in one of two shapes.
  *
  * Core returns a fingerprint exclusively while GRPC_TLS_ENABLED is on, so a
  * value here means the control channel IS TLS and the node must match it. It
  * does not verify the hostname - it compares this fingerprint - which is also
  * why warp's local proxy in front of it changes nothing.
  *
- * Absent means Core runs the channel in plaintext, and emitting the pair would
- * make the node fail its handshake against a server that offers no TLS.
+ * The no-fingerprint case must be written out rather than left off, because the
+ * node now defaults GRPC_TLS_ENABLED to TRUE. Omitting the line used to mean
+ * "plaintext, same as Core"; with the default flipped it means "TLS, and no pin
+ * to verify it with", which is a boot-time fatal on a BYON machine that holds no
+ * CLUSTER_SECRET. Saying false explicitly keeps the snippet a complete
+ * description of what the node should do instead of one that leans on a default
+ * that has since changed underneath it.
  */
 function grpcTlsLines(fingerprint: string | undefined): string {
     const fp = (fingerprint ?? '').trim();
-    if (fp === '') return '';
+    if (fp === '') {
+        return `      # This platform runs the Core control channel in plaintext. The node
+      # defaults to TLS, so the opt-out has to be explicit here.
+      GRPC_TLS_ENABLED: "false"
+`;
+    }
     return `      # Core's control channel is TLS. The node pins this fingerprint
       # instead of verifying a hostname, so it must match Core exactly.
       GRPC_TLS_ENABLED: "true"

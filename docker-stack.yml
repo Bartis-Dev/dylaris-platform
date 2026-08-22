@@ -66,7 +66,7 @@ services:
       ADMIN_SECRET: "${ADMIN_SECRET:-}"
       TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-}"
       # Must be flipped on Core AND every Node together, or the mesh breaks.
-      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-false}"
+      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"
       DB_TYPE: "${DB_TYPE:-timescaledb}"
       EXTERNAL_TICKET_DB_URL: "${EXTERNAL_TICKET_DB_URL:-}"
       BILLING_SUSPEND_GRACE: "${BILLING_SUSPEND_GRACE:-48h}"
@@ -274,7 +274,7 @@ services:
       # without editing this file. GRPC_TLS_ENABLED must match Core's setting.
       SIDECAR_REDIS_ADDR: "${SIDECAR_REDIS_ADDR:-}"
       SIDECAR_REDIS_DB: "${SIDECAR_REDIS_DB:-}"
-      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-false}"
+      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"
       GRPC_TLS_FINGERPRINT: "${GRPC_TLS_FINGERPRINT:-}"
       NODE_EXTERNAL: "${NODE_EXTERNAL:-}"
       STORAGE_PATHS: "${STORAGE_PATHS:-}"

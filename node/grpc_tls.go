@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 
 	beamauth "dylaris-pkg/beam/auth"
@@ -24,21 +25,18 @@ func coreDialCreds() grpc.DialOption {
 	if !grpcTLSEnabled {
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
-	// Platform node (CLUSTER_SECRET present): derive the pin, exactly as P0b-2.
-	// BYON node (no CLUSTER_SECRET): pin the fingerprint delivered out-of-band via
-	// GRPC_TLS_FINGERPRINT. Fail closed if neither source is available.
-	var pinnedFP string
-	switch {
-	case clusterSecret != "":
-		fp, err := beamauth.ClusterGRPCCertFingerprint(clusterSecret)
-		if err != nil {
-			log.Fatalf("FATAL: cannot derive core gRPC cert fingerprint: %v", err)
-		}
-		pinnedFP = fp
-	case grpcTLSFingerprint != "":
-		pinnedFP = grpcTLSFingerprint
-	default:
-		log.Fatalf("FATAL: GRPC_TLS_ENABLED but no fingerprint source (set CLUSTER_SECRET or GRPC_TLS_FINGERPRINT)")
+	_, pinnedFP, err := resolveCorePin()
+	if err != nil {
+		// main() resolves the same pin at boot and exits there, so reaching this
+		// means the configuration changed under a running process. Refuse the
+		// dial rather than silently downgrading to plaintext.
+		log.Printf("core gRPC: refusing to dial - %v", err)
+		return grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+			InsecureSkipVerify: true,
+			VerifyConnection: func(tls.ConnectionState) error {
+				return errors.New("core gRPC: no certificate pin configured")
+			},
+		}))
 	}
 	cfg := &tls.Config{
 		InsecureSkipVerify: true, // we pin instead of CA/hostname chain-verify
@@ -46,12 +44,49 @@ func coreDialCreds() grpc.DialOption {
 			if len(cs.PeerCertificates) == 0 {
 				return errors.New("core gRPC: no peer certificate")
 			}
-			got := sha256.Sum256(cs.PeerCertificates[0].Raw)
-			if hex.EncodeToString(got[:]) != pinnedFP {
-				return errors.New("core gRPC: certificate fingerprint mismatch")
+			got := hex.EncodeToString(sha256Sum(cs.PeerCertificates[0].Raw))
+			if got != pinnedFP {
+				// Both values, not just "mismatch". The operator's next question
+				// is always which end is wrong, and that is answerable only by
+				// comparing this against the fp= prefix Core logs at startup.
+				return fmt.Errorf("core gRPC: certificate fingerprint mismatch (Core served %s..., this node expects %s...); "+
+					"the two ends hold different CLUSTER_SECRETs, or GRPC_TLS_FINGERPRINT is stale - re-copy the deploy snippet",
+					got[:16], pinnedFP[:16])
 			}
 			return nil
 		},
 	}
 	return grpc.WithTransportCredentials(credentials.NewTLS(cfg))
+}
+
+func sha256Sum(b []byte) []byte {
+	s := sha256.Sum256(b)
+	return s[:]
+}
+
+// resolveCorePin returns where the expected Core certificate pin comes from and
+// its lowercase-hex value.
+//
+// A node in the cluster holds CLUSTER_SECRET and derives the same certificate
+// Core does. A BYON node holds no fleet secret and pins the fingerprint handed
+// to it out of band (public pinning material, not a secret), which the panel
+// writes into the deploy snippet.
+//
+// Split out of coreDialCreds so main() can fail at BOOT on a missing pin instead
+// of at the first dial, and so the boot log can name the source: "which of the
+// two sources am I using" is the first thing to establish when a pin does not
+// match.
+func resolveCorePin() (source, fingerprint string, err error) {
+	switch {
+	case clusterSecret != "":
+		fp, derr := beamauth.ClusterGRPCCertFingerprint(clusterSecret)
+		if derr != nil {
+			return "", "", fmt.Errorf("cannot derive the pin from CLUSTER_SECRET: %w", derr)
+		}
+		return "CLUSTER_SECRET", fp, nil
+	case grpcTLSFingerprint != "":
+		return "GRPC_TLS_FINGERPRINT", grpcTLSFingerprint, nil
+	default:
+		return "", "", errors.New("neither CLUSTER_SECRET nor GRPC_TLS_FINGERPRINT is set")
+	}
 }

@@ -29,8 +29,16 @@ type Config struct {
 	CoreID        string
 	GRPCPort      int
 	// GRPCTLSEnabled turns on server-authenticated TLS + fingerprint pinning on
-	// the node<->core NodeService channel. Off (default) = plaintext, exactly as
-	// before. Must be flipped together with every node's GRPC_TLS_ENABLED.
+	// the node<->core NodeService channel. ON by default: the channel carries
+	// console output, RCON and file transfer, and the justification for shipping
+	// it in plaintext was "rely on an encrypted overlay" - which the reference
+	// deployment does not provide (dylaris_net is created without --opt
+	// encrypted). Set GRPC_TLS_ENABLED=false to opt out.
+	//
+	// Must hold the SAME value on every Core and every node: a TLS listener
+	// refuses a plaintext dial, so a split turns the whole management plane off.
+	// Both sides parse with strconv.ParseBool and default to true, so the two
+	// cannot disagree about what a given string means.
 	GRPCTLSEnabled bool
 	// Region — which logical region this Core lives in. Stamped into the
 	// system info endpoint so the panel can show a "Connected to <region> Core"
@@ -157,7 +165,7 @@ func LoadConfig() (Config, error) {
 	}
 
 	dnsUpdaterEnabled, _ := strconv.ParseBool(getEnv("DNS_UPDATER_ENABLED", "false"))
-	grpcTLSEnabled, _ := strconv.ParseBool(getEnv("GRPC_TLS_ENABLED", "false"))
+	grpcTLSEnabled := ParseBoolEnvDefault("GRPC_TLS_ENABLED", true)
 
 	storeURL := strings.TrimSpace(getEnv("STORE_URL", ""))
 	storeSharedKey := getSecret("STORE_SHARED_KEY", "")
@@ -261,6 +269,36 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// ParseBoolEnvDefault reads a boolean env var, falling back to def when it is
+// unset, empty, or not parseable.
+//
+// Keeping the default on an UNPARSEABLE value is the point, and it is why this
+// is not `v, _ := strconv.ParseBool(...)`. That idiom yields false on error,
+// which is harmless for a default-off flag and wrong for a default-on one: it
+// turns GRPC_TLS_ENABLED=yes - a plausible typo - into a silent opt-out of
+// transport security, with the operator's file reading as if they had switched
+// it on. A refused value is logged loudly and changes nothing.
+//
+// Exported because the node agent must agree with Core bit for bit on what a
+// given string means; it is a separate module, so it carries its own copy that
+// node/grpc_tls_env_test.go pins against these same semantics.
+func ParseBoolEnvDefault(key string, def bool) bool {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		log.Printf("config: %s=%q is not a boolean; keeping the default %v. Use true/false.", key, raw, def)
+		return def
+	}
+	return v
 }
 
 // NormalizeDBType maps the various spellings operators might use to the two

@@ -278,6 +278,12 @@ func main() {
 	}
 	log.Println("Connected to Redis (ACL mode)")
 
+	// Wired here, immediately after Redis authenticates and before the mesh
+	// starts, so the very first control-channel failure already has somewhere to
+	// go. Redis is the channel that survives a broken gRPC link, which is the
+	// only reason the panel can ever show why a node is offline.
+	initNodeErrLog(rdb, nodeID)
+
 	// Redis-ACL recovery watchdog: if a Valkey restart drops this node's scoped
 	// ACL user, go-redis re-auth fails (NOAUTH/NOPERM) with no self-heal. On
 	// sustained auth failure the watchdog re-bootstraps over gRPC (Redis-
@@ -431,6 +437,37 @@ func main() {
 	log.Println("Shutting down node gracefully...")
 }
 
+// parseBoolEnvDefault reads a boolean env var the way Core's
+// config.ParseBoolEnvDefault does, so a flag both sides must agree on cannot
+// mean different things on each end. Accepts everything strconv.ParseBool does
+// (1/t/T/TRUE/True/true and the false counterparts); unset, empty or
+// unparseable keeps def.
+//
+// Keeping def on an UNPARSEABLE value matters for a default-ON flag: discarding
+// the parse error would read GRPC_TLS_ENABLED=yes as false and silently drop
+// transport security, while the operator's file says otherwise. A refused value
+// is logged and changes nothing.
+//
+// CROSS-MODULE: the node agent is a separate Go module and cannot import Core's
+// config package. grpc_tls_env_test.go pins these semantics against
+// strconv.ParseBool itself so the two copies cannot drift apart in meaning.
+func parseBoolEnvDefault(key string, def bool) bool {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		log.Printf("config: %s=%q is not a boolean; keeping the default %v. Use true/false.", key, raw, def)
+		return def
+	}
+	return v
+}
+
 // getSecretEnv resolves a secret with Docker/Portainer secrets support.
 // Precedence: contents of "<key>_FILE" (trimmed) -> plain "<key>" -> "". This
 // lets operators mount a secret at a path instead of putting it in plain env.
@@ -577,12 +614,39 @@ func parseConfig() {
 		log.Printf("LINK_IMAGE is unset; the node-managed Link sidecar uses the built-in default %s", linkImage)
 	}
 
-	grpcTLSEnabled = os.Getenv("GRPC_TLS_ENABLED") == "true"
-	grpcTLSFingerprint = os.Getenv("GRPC_TLS_FINGERPRINT")
+	// Parsed the way Core parses it, and defaulted the same way (ON). This flag
+	// is worthless unless both ends read the SAME value out of the same string:
+	// Core accepts 1/t/T/TRUE/True, a bare == "true" accepted only "true", so
+	// GRPC_TLS_ENABLED=1 used to turn TLS on at Core and leave every node
+	// dialing plaintext. A TLS listener refuses those, so the whole management
+	// plane drops while both config files read correct to whoever wrote them.
+	grpcTLSEnabled = parseBoolEnvDefault("GRPC_TLS_ENABLED", true)
+	grpcTLSFingerprint = strings.TrimSpace(os.Getenv("GRPC_TLS_FINGERPRINT"))
+
+	// Resolve the pin at BOOT, not at the first dial. coreDialCreds() is called
+	// from the mesh loop and from the Redis-ACL bootstrap, so a missing pin used
+	// to surface as a log.Fatalf minutes in, from whichever of the two got there
+	// first - or, on a node whose mesh had not started, not at all. Failing here
+	// puts the reason on the first screen of the log.
+	//
+	// The fingerprint is echoed because Core logs the same prefix for the cert it
+	// serves. Two log lines an operator can hold side by side turn "the node is
+	// offline" into "these two strings differ", which is the whole difference
+	// between a pin that is debuggable and one that is not.
 	if grpcTLSEnabled {
-		log.Println("gRPC TLS ENABLED - node pins the Core control-channel cert fingerprint (must match Core GRPC_TLS_ENABLED).")
+		src, fp, ferr := resolveCorePin()
+		if ferr != nil {
+			log.Fatalf("FATAL: GRPC_TLS_ENABLED is on but no certificate pin is available: %v\n"+
+				"  A node in the cluster derives the pin from CLUSTER_SECRET; a BYON node needs\n"+
+				"  GRPC_TLS_FINGERPRINT, which the panel writes into the deploy snippet. Re-copy the\n"+
+				"  snippet from the panel, or set GRPC_TLS_ENABLED=false on Core AND every node.", ferr)
+		}
+		log.Printf("gRPC TLS ENABLED - pinning Core's control-channel certificate (pin source: %s, fp=%s...). "+
+			"Core logs the same prefix at startup; if they differ, the two ends hold different CLUSTER_SECRETs.",
+			src, fp[:16])
 	} else {
-		log.Println("WARNING: GRPC_TLS_ENABLED is false; node<->Core gRPC is UNENCRYPTED. Rely on an encrypted overlay (WireGuard/VPN) between node and Core, or set GRPC_TLS_ENABLED=true.")
+		log.Println("WARNING: GRPC_TLS_ENABLED is false; node<->Core gRPC is UNENCRYPTED and carries console output, RCON and file transfer. " +
+			"Rely on an encrypted overlay (WireGuard/VPN) between node and Core, or drop the override so it defaults back to true.")
 	}
 
 	// Port range stays env-only because firewall rules on the host must

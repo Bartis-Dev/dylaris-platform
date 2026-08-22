@@ -55,7 +55,7 @@ services:
       # reference reverse-proxy-on-the-same-Docker-network layout.
       TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-}"
       # Must be flipped on Core AND every Node together, or the mesh breaks.
-      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-false}"
+      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"
       # timescaledb (hypertable + native retention) or postgres (plain table).
       DB_TYPE: "${DB_TYPE:-timescaledb}"
       # Only relevant when pointing DB_HOST at an external Postgres.
@@ -166,7 +166,7 @@ services:
       MODPACK_MIRROR_HOSTS: "${MODPACK_MIRROR_HOSTS:-}"
       # Same reason as the core block above: forwarded so .env actually reaches
       # the container. GRPC_TLS_ENABLED must match Core's setting exactly.
-      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-false}"
+      GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"
       GRPC_TLS_FINGERPRINT: "${GRPC_TLS_FINGERPRINT:-}"
       NODE_EXTERNAL: "${NODE_EXTERNAL:-}"
       # MC containers are host siblings and cannot resolve Docker service DNS in

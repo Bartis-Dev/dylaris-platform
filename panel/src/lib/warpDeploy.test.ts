@@ -123,16 +123,23 @@ describe('nodeCompose', () => {
     });
 
     // Core returns a fingerprint only while its gRPC channel is TLS, so its
-    // presence is the signal. Emitting the pair against a plaintext Core would
+    // presence is the signal. Emitting the pin against a plaintext Core would
     // make every BYON node fail its handshake instead of connecting.
-    it('pins the Core gRPC certificate only when there is a fingerprint', () => {
-        const without = nodeCompose(base);
-        expect(without).not.toContain('GRPC_TLS_ENABLED');
-        expect(without).not.toContain('GRPC_TLS_FINGERPRINT');
-
+    it('pins the Core gRPC certificate when there is a fingerprint', () => {
         const withPin = nodeCompose({ ...base, grpcTlsFingerprint: 'ab12cd34' });
         expect(withPin).toContain('GRPC_TLS_ENABLED: "true"');
         expect(withPin).toContain('GRPC_TLS_FINGERPRINT: "ab12cd34"');
+    });
+
+    // The node defaults GRPC_TLS_ENABLED to true, and a BYON machine holds no
+    // CLUSTER_SECRET to derive a pin from - so a snippet that simply omits the
+    // line hands the customer a container that exits at boot with "no
+    // certificate pin available". Silence stopped being a safe way to say
+    // "plaintext" the moment the default flipped; the opt-out has to be written.
+    it('says plaintext out loud rather than leaning on the old default', () => {
+        const without = nodeCompose(base);
+        expect(without).toContain('GRPC_TLS_ENABLED: "false"');
+        expect(without).not.toContain('GRPC_TLS_FINGERPRINT');
     });
 
     // A machine that runs our node also runs warp's proxy, and the operator is
