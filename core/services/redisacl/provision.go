@@ -121,16 +121,25 @@ func (p *Provisioner) EnsureRouteOnlyLinkACL(ctx context.Context, clusterSecret,
 // link in isolation should use RemoveRouteOnlyLinkACL below; a sweep tearing
 // down several issues one trailing SaveACL itself, exactly like
 // EnsureRouteOnlyLinkACLNoSave does for the ensure side.
-func (p *Provisioner) RemoveRouteOnlyLinkACLNoSave(ctx context.Context, linkID string) {
-	if err := p.admin.Do(ctx, "ACL", "DELUSER", RouteOnlyLinkUsername(linkID)).Err(); err != nil {
+// Returns whether a user was actually deleted. DELUSER answers with the number
+// it removed, and the reconciler re-runs this every ~70s for as long as a tenant
+// stays suspended - which has no time bound, on purpose. Reporting the size of
+// the "must not have an ACL" set instead of the work done made that a permanent
+// "swept 3 link kit ACL(s)" every tick, which is both untrue after the first
+// pass and the kind of line that trains an operator to stop reading the log.
+func (p *Provisioner) RemoveRouteOnlyLinkACLNoSave(ctx context.Context, linkID string) bool {
+	n, err := p.admin.Do(ctx, "ACL", "DELUSER", RouteOnlyLinkUsername(linkID)).Int64()
+	if err != nil {
 		log.Printf("redisacl: WARNING: ACL DELUSER failed for route-only link %s: %v. The scoped Redis user may still be live; retrying on the next reconcile sweep.", linkID, err)
+		return false
 	}
+	return n > 0
 }
 
 // RemoveRouteOnlyLinkACL drops the user, terminating its live Redis connections
 // (ACL DELUSER), then persists. Best-effort.
 func (p *Provisioner) RemoveRouteOnlyLinkACL(ctx context.Context, linkID string) {
-	p.RemoveRouteOnlyLinkACLNoSave(ctx, linkID)
+	_ = p.RemoveRouteOnlyLinkACLNoSave(ctx, linkID)
 	p.SaveACL(ctx)
 }
 

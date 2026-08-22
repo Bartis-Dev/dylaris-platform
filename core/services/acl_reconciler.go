@@ -176,11 +176,18 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 	if terr != nil {
 		log.Printf("acl reconciler: list link kits for teardown: %v", terr)
 	} else {
+		removed := 0
 		for _, k := range teardown {
-			r.prov.RemoveRouteOnlyLinkACLNoSave(ctx, k.NodeID)
+			if r.prov.RemoveRouteOnlyLinkACLNoSave(ctx, k.NodeID) {
+				removed++
+			}
 		}
-		if len(teardown) > 0 {
-			log.Printf("acl reconciler: swept %d link kit ACL(s) for teardown", len(teardown))
+		// Count what was REMOVED, not what was checked. The hard-suspension arm
+		// of this query has no time bound by design, so the checked count stays
+		// constant for as long as the tenant is suspended; logging it repeated
+		// the same line every tick forever and claimed work that was not done.
+		if removed > 0 {
+			log.Printf("acl reconciler: swept %d link kit ACL(s) for teardown", removed)
 		}
 	}
 
