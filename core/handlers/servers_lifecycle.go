@@ -166,6 +166,13 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		DiskLimit:       req.Docker.DiskLimit,
 		ServerType:      serverType,
 		AutoMove:        req.AutoMove,
+		// From the NODE, not from req.Region. The request field is a scheduler
+		// FILTER - it is only read when there is no explicit nodeId, and even then
+		// it says which nodes were eligible, not where the server ended up. The
+		// node is the only thing that knows where this server physically runs, and
+		// that is what servers.region has to mean for CountServersInRegion (the
+		// guard on deleting a region) to be right.
+		Region: node.Region,
 	}
 
 	serverID, err := h.state.Store.CreateServer(srv)

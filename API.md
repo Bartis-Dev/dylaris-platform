@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **460 routes** in 49 sections: 202 GET, 132 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
+- **463 routes** in 49 sections: 203 GET, 134 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
 - **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **313** declare a capability at the route and **18** enforce authorization inside the handler. Of the rest, **88** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **313** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **88** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -152,7 +152,7 @@ can still show what exists.
 - [/api/disk](#apidisk) (4)
 - [/api/external](#apiexternal) (1)
 - [/api/files](#apifiles) (10)
-- [/api/gateway](#apigateway) (16)
+- [/api/gateway](#apigateway) (19)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (2)
@@ -312,11 +312,11 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/auth/2fa/disable` | session | _no capability_ | - | `AuthHandler.DisableTOTPHandler` | User-initiated 2FA disable. |
-| POST | `/api/auth/2fa/regenerate-backup-codes` | session | _no capability_ | - | `AuthHandler.RegenerateBackupCodesHandler` | Issues a fresh set of 10 backup codes for a user who has 2FA already enabled. |
+| POST | `/api/auth/2fa/disable` | session | _no capability_ | Limit, LimitBody | `AuthHandler.DisableTOTPHandler` | User-initiated 2FA disable. |
+| POST | `/api/auth/2fa/regenerate-backup-codes` | session | _no capability_ | Limit, LimitBody | `AuthHandler.RegenerateBackupCodesHandler` | Issues a fresh set of 10 backup codes for a user who has 2FA already enabled. |
 | POST | `/api/auth/2fa/setup` | session | _no capability_ | - | `AuthHandler.SetupTOTPHandler` | Generates a fresh TOTP secret + otpauth URI for the authenticated user. |
 | GET | `/api/auth/2fa/status` | session | _no capability_ | - | `AuthHandler.Get2FAStatusHandler` | Returns whether 2FA is enabled and the count of unconsumed backup codes. |
-| POST | `/api/auth/2fa/verify` | session | _no capability_ | - | `AuthHandler.VerifyTOTPHandler` | Validates the user's 6-digit code against the freshly-generated secret. |
+| POST | `/api/auth/2fa/verify` | session | _no capability_ | Limit, LimitBody | `AuthHandler.VerifyTOTPHandler` | Validates the user's 6-digit code against the freshly-generated secret. |
 | GET | `/api/auth/demo-login` | **none** | _public_ | Limit | `AuthHandler.DemoStatus` | public, rate-limited. |
 | POST | `/api/auth/demo-login` | **none** | _public_ | Limit, LimitBody | `AuthHandler.DemoLogin` | public, rate-limited. |
 | POST | `/api/auth/forgot-password` | **none** | _public_ | Limit, LimitBody | `PasswordResetHandler.ForgotPassword` | public. |
@@ -410,6 +410,9 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/gateway/check-domain` | session | _no capability_ | - | `GatewayHandler.CheckDomainAvailability` | tells the panel whether a candidate domain is already registered, so the route-create form can show a live "available / in use" hint while the user types. |
+| GET | `/api/gateway/custom-domains` | session | _in-handler_ | - | `CustomDomainHandler.List` | the caller's OWN claims. |
+| POST | `/api/gateway/custom-domains/{domain:.+}/txt-token` | session | _in-handler_ | - | `CustomDomainHandler.IssueTXTToken` | Mints (once) the record a permanently blocked user must publish to prove ownership the strict way. |
+| POST | `/api/gateway/custom-domains/{domain:.+}/verify-txt` | session | _in-handler_ | Limit | `CustomDomainHandler.VerifyTXT` | Checks the published record and, on success, lifts the permanent block. |
 | GET | `/api/gateway/dns-check` | session | `topology.read` | - | `DNSHandler.CheckDNS` | computes the required DNS records from the operator's OWN config (FRONTEND_URL + gateway settings + registered edges) and verifies them against the public DNS view plus a TCP reachability probe. |
 | GET | `/api/gateway/edges` | session | `topology.read` | - | `GatewayHandler.GetEdges` | every edge currently registered in Redis. |
 | GET | `/api/gateway/errors` | session | `topology.read` | - | `GatewayHandler.GetErrors` | the 50 most recent gateway service errors; ?service= narrows them to one component. |

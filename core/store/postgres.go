@@ -725,10 +725,15 @@ func (s *PostgresStore) DeleteStaleOfflineNodes(offlineSince time.Time) (int, er
 
 func (s *PostgresStore) CreateServer(srv *models.Server) (int64, error) {
 	var id int64
-	query := `INSERT INTO servers (uuid, name, node_id, owner_id, game_image, port, memory, cpu_limit, start_command, status, is_fixed, active_sub_server, extra_jvm_flags, disk_limit, server_type, proxy_id, auto_move)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`
+	// region is written explicitly. It used to be left to the column default, so
+	// every server read back as "default" no matter which node it actually landed
+	// on - and servers.region is what CountServersInRegion counts, which is the
+	// guard that refuses to delete a region still in use. A region full of servers
+	// looked empty to it.
+	query := `INSERT INTO servers (uuid, name, node_id, owner_id, game_image, port, memory, cpu_limit, start_command, status, is_fixed, active_sub_server, extra_jvm_flags, disk_limit, server_type, proxy_id, auto_move, region)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, COALESCE(NULLIF($18, ''), 'default')) RETURNING id`
 
-	err := s.db.QueryRow(query, srv.UUID, srv.Name, srv.NodeID, srv.OwnerID, srv.GameImage, srv.Port, srv.Memory, srv.CPULimit, srv.StartCommand, srv.Status, srv.IsFixed, srv.ActiveSubServer, srv.ExtraJvmFlags, srv.DiskLimit, srv.ServerType, srv.ProxyID, srv.AutoMove).Scan(&id)
+	err := s.db.QueryRow(query, srv.UUID, srv.Name, srv.NodeID, srv.OwnerID, srv.GameImage, srv.Port, srv.Memory, srv.CPULimit, srv.StartCommand, srv.Status, srv.IsFixed, srv.ActiveSubServer, srv.ExtraJvmFlags, srv.DiskLimit, srv.ServerType, srv.ProxyID, srv.AutoMove, srv.Region).Scan(&id)
 	return id, err
 }
 
@@ -740,8 +745,16 @@ func (s *PostgresStore) SetServerAutoMove(id int, enabled bool) error {
 }
 
 // UpdateServerNode reassigns a server to a different node (auto-move target).
+//
+// The region follows the node, because that is what the region MEANS here: where
+// the server physically runs. Leaving it behind would make a migrated server
+// count against a region it no longer occupies, and CountServersInRegion is the
+// guard on deleting a region.
 func (s *PostgresStore) UpdateServerNode(serverID int, newNodeID int) error {
-	_, err := s.db.Exec("UPDATE servers SET node_id = $1 WHERE id = $2", newNodeID, serverID)
+	_, err := s.db.Exec(
+		`UPDATE servers SET node_id = $1,
+		        region = COALESCE(NULLIF((SELECT region FROM nodes WHERE id = $1), ''), region)
+		  WHERE id = $2`, newNodeID, serverID)
 	return err
 }
 
