@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
+
+	"dylaris-core/authz"
 )
 
 // FeatureSettingsHandler is the admin GET/PUT bundle for platform-wide
@@ -35,6 +38,15 @@ type featureSettingsPayload struct {
 	ApplyAuthoringToManual bool `json:"applyAuthoringToManual"`
 	AutoMove               bool `json:"autoMove"`
 	Byon                   bool `json:"byon"`
+	// UserAPIKeys decides whether a NON-ADMIN may hold an API key at all. It is
+	// enforced at mint AND at use (see APIKeysHandler.ownerStillHolds): turning
+	// it off has to stop keys that already exist, or an operator who switched it
+	// off would still be running every key created before that.
+	UserAPIKeys bool `json:"userApiKeys"`
+	// UserAPIKeyAllowedCaps narrows what a non-admin may put on a key, as a
+	// comma-separated capability list. EMPTY MEANS NO EXTRA RESTRICTION - the
+	// delegation subset check already stops a key from exceeding its creator.
+	UserAPIKeyAllowedCaps string `json:"userApiKeyAllowedCaps"`
 }
 
 // Get GET /api/admin/settings/features — current bundle of platform toggles.
@@ -46,6 +58,9 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ModpackAuthoring: h.state.FeatureFlags.IsModpackAuthoringEnabled(r.Context()),
 		AutoMove:         h.state.FeatureFlags.IsAutoMoveEnabled(r.Context()),
 		Byon:             h.state.FeatureFlags.IsBYONEnabled(r.Context()),
+		UserAPIKeys:      h.state.FeatureFlags.UserAPIKeysEnabled(r.Context()),
+		UserAPIKeyAllowedCaps: strings.Join(
+			h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context()), ","),
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -117,6 +132,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"feature_modpack_authoring_enabled", req.ModpackAuthoring, "feature_modpack_authoring_enabled", "modpackAuthoring"},
 		{"feature_auto_move_enabled", req.AutoMove, "feature_auto_move_enabled", "autoMove"},
 		{"feature_byon_enabled", req.Byon, "feature_byon_enabled", "byon"},
+		{"apikeys_user_enabled", req.UserAPIKeys, "apikeys_user_enabled", "userApiKeys"},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.key, boolStr(kv.val)); err != nil {
@@ -129,6 +145,17 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			"enabled": kv.val,
 		})
 	}
+
+	// The capability whitelist is a string, so it does not fit the boolean write
+	// loop above. Unknown or PANEL capabilities are dropped rather than refused:
+	// the list is a NARROWING filter, and an entry that no key could carry
+	// anyway narrows nothing. Refusing the whole save over one stale id would
+	// make the field impossible to edit after a capability is renamed.
+	if err := h.state.Store.SetSetting("apikeys_user_allowed_caps", sanitizeKeyCapList(req.UserAPIKeyAllowedCaps)); err != nil {
+		sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.state.FeatureFlags.Invalidate("apikeys_user_allowed_caps")
 
 	// Bring the per-user column in line with the new global answer, so the users
 	// list shows the truth rather than a stale TRUE default from before the split.
@@ -161,4 +188,21 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		// gets "42 users updated" instead of guessing what the switch did.
 		"usersChanged": usersChanged,
 	})
+}
+
+// sanitizeKeyCapList normalizes the operator whitelist: trimmed, de-duplicated,
+// and filtered to capabilities a key could actually carry. See the call site
+// for why an unknown id is dropped instead of refused.
+func sanitizeKeyCapList(raw string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] || !authz.ValidKeyCap(p) {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return strings.Join(out, ",")
 }

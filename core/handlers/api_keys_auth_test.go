@@ -16,12 +16,13 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
 // apiKeysAuthFakeStore embeds store.Store (nil) so it satisfies the full
 // interface at compile time; only the methods the external API-key auth
-// chain (APIKeyMiddleware) and Create touch are overridden. Any other call
+// chain (apiKeyMiddleware) and Create touch are overridden. Any other call
 // would panic - these tests never make one.
 type apiKeysAuthFakeStore struct {
 	store.Store
@@ -35,7 +36,7 @@ type apiKeysAuthFakeStore struct {
 	// resolver-based delegation subset check in Create. Key: grantKey(serverID, userID).
 	grants map[string]*store.ServerGrant
 
-	// users backs the use-time owner re-check in APIKeyMiddleware
+	// users backs the use-time owner re-check in apiKeyMiddleware
 	// (ownerStillHolds): the key's authority is re-resolved against what its
 	// owner holds NOW. Absent = the owner's account is gone.
 	users      map[string]*models.User
@@ -44,6 +45,24 @@ type apiKeysAuthFakeStore struct {
 	createCalls []*models.APIKey
 	createErr   error
 	nextID      int
+
+	// settings backs the FeatureFlags service, which the middleware and Create
+	// consult for the operator gate on user API keys.
+	settings map[string]string
+
+	// backupJobs backs ExternalJobInServer, which checks that a {jobId} really
+	// belongs to the {uuid} in the same path. Keyed by job id; see
+	// external_api_test.go for the methods that read these.
+	backupJobs map[int]*models.BackupJob
+	// ownedServers backs ListServersForUser for the external listing route.
+	ownedServers []models.Server
+}
+
+func (f *apiKeysAuthFakeStore) GetSetting(key string) (string, error) {
+	if f.settings == nil {
+		return "", nil
+	}
+	return f.settings[key], nil
 }
 
 // grantKey lets a test hand a friend an explicit per-server grant.
@@ -126,8 +145,22 @@ func (f *apiKeysAuthFakeStore) CreateAPIKey(k *models.APIKey) (int, error) {
 	return f.nextID, nil
 }
 
+// newAPIKeysAuthHandler builds the handler with user API keys ENABLED, because
+// almost every case here is about some other branch. The operator gate itself is
+// covered by TestAPIKeyMiddleware_OperatorGate and TestAPIKeysCreate_OperatorGate,
+// which set the flag themselves.
 func newAPIKeysAuthHandler(fs *apiKeysAuthFakeStore) *APIKeysHandler {
-	return NewAPIKeysHandler(&AppState{Store: fs, Authz: authz.NewResolver(fs)})
+	if fs.settings == nil {
+		fs.settings = map[string]string{}
+	}
+	if _, set := fs.settings["apikeys_user_enabled"]; !set {
+		fs.settings["apikeys_user_enabled"] = "true"
+	}
+	return NewAPIKeysHandler(&AppState{
+		Store:        fs,
+		Authz:        authz.NewResolver(fs),
+		FeatureFlags: services.NewFeatureFlags(fs),
+	})
 }
 
 // sentinelStatus/sentinelBody mark that the wrapped inner handler (the real
@@ -144,7 +177,7 @@ func sentinelInner(w http.ResponseWriter, r *http.Request) {
 }
 
 // TestAPIKeyMiddleware_Chain covers every rejection branch of the external
-// auth chain (api_keys.go: APIKeyMiddleware) plus the success passthrough.
+// auth chain (api_keys.go: apiKeyMiddleware) plus the success passthrough.
 // Each case gets its own fresh handler/limiters so per-IP and per-key
 // rate-limit state never leaks between cases; the dedicated rate-limit tests
 // below cover the throttle branches on purpose.
@@ -153,12 +186,18 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 	past := time.Now().Add(-time.Hour)
 
 	cases := []struct {
-		name            string
-		authHeader      string
-		setAuthHeader   bool
-		key             *models.APIKey
-		requiredPerm    string
-		uuidVar         string
+		name          string
+		authHeader    string
+		setAuthHeader bool
+		key           *models.APIKey
+		requiredPerm  string
+		uuidVar       string
+		// ownerRoute guards the case with APIKeyOwnerRoute instead of
+		// APIKeyServerRoute: no server in the path, SERVER caps must not count.
+		ownerRoute bool
+		// noUUID suppresses the harness default below, to exercise a
+		// server-scoped route wired without the {uuid} it requires.
+		noUUID          bool
 		wantStatus      int
 		wantBodySub     string
 		wantInnerCalled bool
@@ -253,12 +292,33 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 			wantInnerCalled: true,
 		},
 		{
-			name:            "no server uuid in the path skips the AllowsServer check entirely",
-			setAuthHeader:   true,
-			authHeader:      "Bearer noserverintoken",
-			key:             &models.APIKey{ID: 8, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}}},
-			requiredPerm:    "rcon.exec",
-			wantInnerCalled: true,
+			// This case used to assert the opposite - that a missing uuid
+			// "skips the AllowsServer check entirely" - and passing was the
+			// bug: every SERVER capability on the key counted, for every
+			// server, with the allowlist ignored. A server route with no
+			// server is a wiring mistake and now says so.
+			name:          "server route registered without a uuid is refused, not waved through",
+			setAuthHeader: true,
+			authHeader:    "Bearer noserverintoken",
+			key:           &models.APIKey{ID: 8, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}, Servers: []string{"target-server-uuid"}}},
+			requiredPerm:  "rcon.exec",
+			noUUID:        true,
+			wantStatus:    http.StatusInternalServerError,
+			wantBodySub:   "Route misconfigured",
+		},
+		{
+			// The other half of the same rule: on an owner route there is no
+			// server, so a SERVER capability cannot have been scoped to one and
+			// must not count. Before the split this key would have been let
+			// through on exactly this shape.
+			name:          "owner route does not honor a SERVER capability",
+			setAuthHeader: true,
+			authHeader:    "Bearer ownerroutetoken",
+			key:           &models.APIKey{ID: 13, RatePerMin: 1000, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}, Servers: []string{"target-server-uuid"}}},
+			requiredPerm:  "rcon.exec",
+			ownerRoute:    true,
+			wantStatus:    http.StatusForbidden,
+			wantBodySub:   "Key lacks required permission",
 		},
 		{
 			name:            "non-rcon server cap honored",
@@ -318,14 +378,30 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 				fs.keysByHash[HashAPIKey(plaintext)] = c.key
 			}
 			h := newAPIKeysAuthHandler(fs)
-			wrapped := h.APIKeyMiddleware(c.requiredPerm)(sentinelInner)
+			wrapped := h.APIKeyServerRoute(c.requiredPerm)(sentinelInner)
+			if c.ownerRoute {
+				wrapped = h.APIKeyOwnerRoute(c.requiredPerm)(sentinelInner)
+			}
+
+			// A server route addresses a server. Cases that do not say which
+			// one get the fixture server, in the key's allowlist, so they keep
+			// testing the branch they were written for rather than tripping the
+			// scope gate. Cases that set Servers themselves are left alone -
+			// that is what the scoping cases assert.
+			uuidVar := c.uuidVar
+			if uuidVar == "" && !c.ownerRoute && !c.noUUID {
+				uuidVar = "target-server-uuid"
+			}
+			if c.key != nil && c.key.Scope.Servers == nil && uuidVar != "" {
+				c.key.Scope.Servers = []string{uuidVar}
+			}
 
 			r := httptest.NewRequest("POST", "/api/external/rcon", nil)
 			if c.setAuthHeader {
 				r.Header.Set("Authorization", c.authHeader)
 			}
-			if c.uuidVar != "" {
-				r = mux.SetURLVars(r, map[string]string{"uuid": c.uuidVar})
+			if uuidVar != "" {
+				r = mux.SetURLVars(r, map[string]string{"uuid": uuidVar})
 			}
 			rec := httptest.NewRecorder()
 
@@ -353,12 +429,25 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 // same minute is throttled with 429 + Retry-After, while the first reaches
 // the inner handler.
 func TestAPIKeyMiddleware_PerKeyRateLimitExceeded(t *testing.T) {
-	key := &models.APIKey{ID: 42, RatePerMin: 1, Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}}}
-	fs := &apiKeysAuthFakeStore{keysByHash: map[string]*models.APIKey{HashAPIKey("ratelimited"): key}}
+	// A server route addresses a server, so this fixture carries one and the
+	// key is scoped to it; otherwise the request is refused for shape before it
+	// ever reaches the limiter this test is about.
+	key := &models.APIKey{
+		ID: 42, RatePerMin: 1, UserID: "owner-1",
+		Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}, Servers: []string{"target-server-uuid"}},
+	}
+	fs := &apiKeysAuthFakeStore{
+		keysByHash: map[string]*models.APIKey{HashAPIKey("ratelimited"): key},
+		users:      map[string]*models.User{"owner-1": {ID: "owner-1", Username: "owner"}},
+		servers:    map[string]*models.Server{"target-server-uuid": {ID: 1, UUID: "target-server-uuid", OwnerID: "owner-1"}},
+	}
 	h := newAPIKeysAuthHandler(fs)
-	wrapped := h.APIKeyMiddleware("rcon.exec")(sentinelInner)
+	wrapped := h.APIKeyServerRoute("rcon.exec")(sentinelInner)
+	withServer := func(r *http.Request) *http.Request {
+		return mux.SetURLVars(r, map[string]string{"uuid": "target-server-uuid"})
+	}
 
-	r1 := httptest.NewRequest("POST", "/api/external/rcon", nil)
+	r1 := withServer(httptest.NewRequest("POST", "/api/external/rcon", nil))
 	r1.Header.Set("Authorization", "Bearer ratelimited")
 	rec1 := httptest.NewRecorder()
 	wrapped(rec1, r1)
@@ -366,7 +455,7 @@ func TestAPIKeyMiddleware_PerKeyRateLimitExceeded(t *testing.T) {
 		t.Fatalf("first request: status = %d, want inner handler reached (%d): %s", rec1.Code, sentinelStatus, rec1.Body.String())
 	}
 
-	r2 := httptest.NewRequest("POST", "/api/external/rcon", nil)
+	r2 := withServer(httptest.NewRequest("POST", "/api/external/rcon", nil))
 	r2.Header.Set("Authorization", "Bearer ratelimited")
 	rec2 := httptest.NewRecorder()
 	wrapped(rec2, r2)
@@ -390,7 +479,7 @@ func TestAPIKeyMiddleware_PerKeyRateLimitExceeded(t *testing.T) {
 func TestAPIKeyMiddleware_PerIPThrottleExceeded(t *testing.T) {
 	fs := &apiKeysAuthFakeStore{keysByHash: map[string]*models.APIKey{}}
 	h := newAPIKeysAuthHandler(fs)
-	wrapped := h.APIKeyMiddleware("rcon.exec")(sentinelInner)
+	wrapped := h.APIKeyServerRoute("rcon.exec")(sentinelInner)
 
 	for i := 1; i <= 120; i++ {
 		r := httptest.NewRequest("POST", "/api/external/rcon", nil)
@@ -729,7 +818,7 @@ func TestAPIKeysCreate_AdminBypassesScopingAndDefaultsRate(t *testing.T) {
 	// carries the one-time plaintext), so pin the hash relationship against
 	// what was actually persisted via CreateAPIKey, not the JSON response:
 	// the stored KeyHash must be exactly HashAPIKey of the plaintext with the
-	// dyl_ prefix stripped, since that is what APIKeyMiddleware re-derives
+	// dyl_ prefix stripped, since that is what apiKeyMiddleware re-derives
 	// from the caller's Authorization header on every subsequent use.
 	rawPlaintext := strings.TrimPrefix(resp.Plaintext, "dyl_")
 	if call.KeyHash != HashAPIKey(rawPlaintext) {
@@ -855,7 +944,7 @@ func TestAPIKeyMiddleware_OwnerAccessIsRecheckedAtUse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newAPIKeysAuthHandler(tt.fs)
-			wrapped := h.APIKeyMiddleware("rcon.exec")(sentinelInner)
+			wrapped := h.APIKeyServerRoute("rcon.exec")(sentinelInner)
 
 			r := httptest.NewRequest("POST", "/api/external/rcon", nil)
 			r.Header.Set("Authorization", "Bearer dyl_thekey")

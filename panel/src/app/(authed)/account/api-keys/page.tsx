@@ -6,21 +6,26 @@ import {
     Shield, X, EyeOff,
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
-import { listAPIKeys, createAPIKey, revokeAPIKey, type APIKey } from '@/lib/api/apiKeys';
+import { listAPIKeys, createAPIKey, revokeAPIKey, type APIKey, type APIKeyOptions } from '@/lib/api/apiKeys';
+import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 
 // per-user API key management. Lives under /account/ because
 // keys are owned by users, not the admin platform. Plaintext is shown
 // exactly once on creation; subsequent listings only carry metadata.
-
-const ALL_PERMISSIONS = [
-    { id: 'rcon.exec', label: 'RCON exec', description: 'Run RCON commands against the scoped server(s).' },
-];
+//
+// The permission picker renders from the authz catalog, never from a list kept
+// here. It used to hold a hardcoded one-entry array from back when rcon.exec
+// was the only key-authed route, so every capability added to the external
+// surface afterwards was unmintable from the panel while the backend accepted
+// it perfectly well - the failure mode a frontend permission array always has.
 
 export default function ApiKeysPage() {
     const { user, servers } = useAppData();
     const [keys, setKeys] = useState<APIKey[]>([]);
+    const [options, setOptions] = useState<APIKeyOptions | null>(null);
+    const [catalog, setCatalog] = useState<CatalogScope[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
 
@@ -29,7 +34,7 @@ export default function ApiKeysPage() {
         servers: string[];
         permissions: string[];
         ratePerMin: number;
-    }>({ name: '', servers: [], permissions: ['rcon.exec'], ratePerMin: 60 });
+    }>({ name: '', servers: [], permissions: [], ratePerMin: 60 });
 
     const [revealedKey, setRevealedKey] = useState<{ plaintext: string; name: string } | null>(null);
     const [revoking, setRevoking] = useState<APIKey | null>(null);
@@ -45,10 +50,37 @@ export default function ApiKeysPage() {
     const refresh = useCallback(async () => {
         const res = await listAPIKeys();
         if (res.success && res.keys) setKeys(res.keys);
+        if (res.success && res.options) setOptions(res.options);
         setLoading(false);
     }, []);
 
     useEffect(() => { refresh(); }, [refresh]);
+
+    useEffect(() => {
+        // PANEL capabilities are dropped: a key can never carry one (the backend
+        // rejects them at mint), so offering them would only produce a 400.
+        getCatalog().then(res => {
+            if (res.success && res.catalog) setCatalog(res.catalog.filter(sc => sc.scope !== 'panel'));
+        });
+    }, []);
+
+    // What this account may actually put on a key: the catalog, narrowed by the
+    // operator whitelist when there is one. A NULL allowedCaps means the
+    // operator set no whitelist, which is "no extra restriction" - treating it
+    // like an empty list would show an empty picker on every default install.
+    const mintable = catalog
+        .map(sc => ({
+            ...sc,
+            categories: sc.categories
+                .map(cat => ({
+                    ...cat,
+                    capabilities: cat.capabilities.filter(
+                        c => !options?.allowedCaps || options.allowedCaps.includes(c.id),
+                    ),
+                }))
+                .filter(cat => cat.capabilities.length > 0),
+        }))
+        .filter(sc => sc.categories.length > 0);
 
     const handleCreate = async () => {
         const name = form.name.trim();
@@ -90,7 +122,11 @@ export default function ApiKeysPage() {
                 <Key size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">API Keys</h1>
                 <div className="ml-auto">
-                    <button onClick={() => setCreating(true)} className="btn btn-primary btn-sm">
+                    <button
+                        onClick={() => setCreating(true)}
+                        disabled={options?.enabled === false}
+                        className="btn btn-primary btn-sm"
+                    >
                         <Plus size={12} />
                         New API Key
                     </button>
@@ -107,11 +143,29 @@ export default function ApiKeysPage() {
                         scoped to a list of servers + capabilities.
                     </p>
                     <p className="mt-1 text-(--base-06)">
-                        Endpoint: <code className="font-mono">POST /api/external/rcon/&lt;server-uuid&gt;/exec</code>
-                        {' '}— body: <code className="font-mono">{'{ "command": "list" }'}</code>
+                        Base path: <code className="font-mono">/api/external</code>, servers addressed
+                        by UUID — e.g. <code className="font-mono">POST /api/external/servers/&lt;uuid&gt;/power</code>
+                        {' '}with <code className="font-mono">{'{ "action": "restart" }'}</code>.
                     </p>
                 </div>
             </div>
+
+            {/* The operator can turn user keys off entirely. Existing keys stop
+                working at that moment (the switch is enforced at use, not only at
+                mint), so the page has to say that rather than just hide the
+                button and leave the listed keys looking live. */}
+            {options?.enabled === false && (
+                <div className="card p-4 mb-4 text-xs flex items-start gap-2">
+                    <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
+                    <div>
+                        <p className="text-(--base-08)">API keys are turned off for users on this platform.</p>
+                        <p className="mt-1 text-(--base-06)">
+                            New keys cannot be created, and any key listed below is already being
+                            refused. An admin can re-enable them under Settings → Features.
+                        </p>
+                    </div>
+                </div>
+            )}
 
             {loading ? (
                 <SkeletonList rows={3} />
@@ -190,30 +244,57 @@ export default function ApiKeysPage() {
 
                             <div>
                                 <label className="input-label">Permissions</label>
-                                <div className="space-y-1.5 mt-1">
-                                    {ALL_PERMISSIONS.map(p => {
-                                        const checked = form.permissions.includes(p.id);
-                                        return (
-                                            <label key={p.id} className="flex items-start gap-2 p-2 rounded-md border border-(--base-04) cursor-pointer hover:bg-(--base-03)">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    onChange={() => setForm({
-                                                        ...form,
-                                                        permissions: checked
-                                                            ? form.permissions.filter(x => x !== p.id)
-                                                            : [...form.permissions, p.id],
-                                                    })}
-                                                    className="mt-0.5"
-                                                />
-                                                <div className="min-w-0">
-                                                    <div className="text-sm font-medium text-(--base-09)">{p.id}</div>
-                                                    <div className="text-xs text-(--base-06)">{p.description}</div>
+                                {mintable.length === 0 ? (
+                                    <p className="text-xs text-(--base-06) mt-1">
+                                        No permissions are available to put on a key. An admin has narrowed the list to capabilities you do not hold.
+                                    </p>
+                                ) : (
+                                    <div className="mt-1 max-h-64 overflow-y-auto border border-(--base-04) rounded-md p-2 space-y-3">
+                                        {mintable.map(sc => (
+                                            <div key={sc.scope} className="space-y-2">
+                                                <div className="mono-label text-(--base-06)">
+                                                    {sc.scope === 'server' ? 'Per server' : 'Account-wide'}
                                                 </div>
-                                            </label>
-                                        );
-                                    })}
-                                </div>
+                                                {sc.categories.map(cat => (
+                                                    <div key={cat.category}>
+                                                        <div className="text-xs text-(--base-07) mb-1">{cat.category}</div>
+                                                        <div className="space-y-0.5">
+                                                            {cat.capabilities.map(c => {
+                                                                const checked = form.permissions.includes(c.id);
+                                                                return (
+                                                                    <label key={c.id} className="flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer hover:bg-(--base-03)">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={checked}
+                                                                            onChange={() => setForm({
+                                                                                ...form,
+                                                                                permissions: checked
+                                                                                    ? form.permissions.filter(x => x !== c.id)
+                                                                                    : [...form.permissions, c.id],
+                                                                            })}
+                                                                        />
+                                                                        <span className="text-sm text-(--base-09)">{c.label}</span>
+                                                                        <code className="text-xs text-(--base-06) font-mono ml-auto">{c.id}</code>
+                                                                    </label>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {/* Per-server capabilities are inert without a server, and the
+                                    backend refuses that combination at mint rather than issuing
+                                    a key whose only safeguard is the use-time check. Say so here
+                                    instead of letting the create fail. */}
+                                {form.servers.length === 0 && form.permissions.some(p => mintable.find(sc => sc.scope === 'server')?.categories.some(cat => cat.capabilities.some(c => c.id === p))) && (
+                                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-2">
+                                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                        <span>Per-server permissions need at least one server selected below.</span>
+                                    </p>
+                                )}
                             </div>
 
                             <div>

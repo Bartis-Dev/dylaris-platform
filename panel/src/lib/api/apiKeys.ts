@@ -35,7 +35,18 @@ export interface CreateAPIKeyResponse {
     message?: string;
 }
 
-export async function listAPIKeys(): Promise<{ success: boolean; keys?: APIKey[]; message?: string }> {
+// What the caller may actually mint, so the page never offers a choice the
+// operator gate would refuse at create time.
+export interface APIKeyOptions {
+    // False when the operator has turned user keys off (admins are exempt).
+    enabled: boolean;
+    // Null means the operator set no whitelist, i.e. no extra restriction. An
+    // empty array would mean "nothing allowed" - the backend deliberately sends
+    // null for the first case, so do not normalise it away.
+    allowedCaps: string[] | null;
+}
+
+export async function listAPIKeys(): Promise<{ success: boolean; keys?: APIKey[]; options?: APIKeyOptions; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/me/api-keys`, { headers: getAuthHeader() });
         return handleResponse(res) as any;

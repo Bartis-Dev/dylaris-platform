@@ -66,8 +66,22 @@ var ExemptRoutes = map[string]bool{
 	"/api/store/usage":       true,
 	"/api/store/provision":   true,
 
-	// External RCON: Authorization: Bearer dyl_<key>, not session authz.
-	"/api/external/rcon/{uuid}/exec": true,
+	// External API surface: Authorization: Bearer dyl_<key>, not session authz.
+	// These are NOT ungated - each declares its capability at
+	// APIKeyServerRoute/APIKeyOwnerRoute, which resolves it against the scope of
+	// the key through the same HasCap chokepoint. They sit here because
+	// requiredCaps describes SESSION authorization and a key is a different
+	// credential class, the same reason the warp and store rows above are here.
+	"/api/external/rcon/{uuid}/exec":                                  true,
+	"/api/external/servers":                                           true,
+	"/api/external/usage":                                             true,
+	"/api/external/servers/{uuid}":                                    true,
+	"/api/external/servers/{uuid}/power":                              true,
+	"/api/external/servers/{uuid}/console/history":                    true,
+	"/api/external/servers/{uuid}/console/command":                    true,
+	"/api/external/servers/{uuid}/stats/history":                      true,
+	"/api/external/servers/{uuid}/backup-jobs":                        true,
+	"/api/external/servers/{uuid}/backup-jobs/{jobId:[0-9]+}/trigger": true,
 
 	// Tab-proxy root routes on the ROOT router (bypass /api's setup-lock +
 	// maintenance + AuthMiddleware on purpose): auth is cookie-only

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -89,6 +90,21 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// keys stay unrestricted.
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	if !isAdmin {
+		// Operator gate, checked before the delegation maths below. An operator
+		// who has not turned user keys on gets none minted, whatever the caller
+		// is otherwise entitled to.
+		if !h.userKeysAllowed(r) {
+			sendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
+			return
+		}
+		if allowed := h.allowedUserKeyCaps(r); allowed != nil {
+			for _, p := range req.Permissions {
+				if !allowed[p] {
+					sendJSONError(w, "This platform does not allow that permission on a user key: "+p, http.StatusForbidden)
+					return
+				}
+			}
+		}
 		username := r.Context().Value("username").(string)
 		identity := authz.Identity{UserID: userID, Username: username, IsAdmin: false}
 		var serverCaps []string
@@ -159,7 +175,20 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// List GET /api/me/api-keys - the calling user's own API keys.
+// apiKeyOptions tells the panel what this caller may actually mint, so the page
+// does not offer choices the operator gate would refuse at Create.
+//
+// AllowedCaps is nil when the operator has set no whitelist, which means "no
+// extra restriction" - the same distinction UserAPIKeyAllowedCaps draws. An
+// empty JSON array would read as "nothing allowed" on the panel side, so it
+// must stay null.
+type apiKeyOptions struct {
+	Enabled     bool     `json:"enabled"`
+	AllowedCaps []string `json:"allowedCaps"`
+}
+
+// List GET /api/me/api-keys - the calling user's own API keys, plus what they
+// are allowed to mint.
 func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -171,9 +200,15 @@ func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to list keys", http.StatusInternalServerError)
 		return
 	}
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	opts := apiKeyOptions{Enabled: isAdmin || h.userKeysAllowed(r)}
+	if !isAdmin && h.state != nil && h.state.FeatureFlags != nil {
+		opts.AllowedCaps = h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context())
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"keys":    keys,
+		"options": opts,
 	})
 }
 
@@ -213,11 +248,135 @@ func generateLinkIdentity() (string, error) {
 	return "link-" + hex.EncodeToString(b), nil
 }
 
-// --- External RCON middleware ---
+// --- API key middleware ---
 
-// APIKeyMiddleware validates Authorization: Bearer <dyl_…> for the external
-// surface. On success it injects the resolved APIKey into the context.
-func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.HandlerFunc) http.HandlerFunc {
+// keyRouteShape says what kind of route the middleware is guarding. It is
+// declared at the route, never inferred.
+//
+// It used to be inferred from whether the path happened to carry a {uuid}:
+//
+//	serverAllowed := uuidVar == "" || key.Scope.AllowsServer(uuidVar)
+//	func ownerStillHolds(...) { if serverUUID == "" { return true } }
+//
+// Both guards therefore switched themselves OFF for any route without one. That
+// was invisible while the single key route was server-scoped, and would have
+// become a hole the moment a list or owner-scoped route was added: every SERVER
+// capability on the key would have counted, for every server, regardless of the
+// key's allowlist, and the owner re-check would have been skipped entirely.
+// Declaring the shape makes the two cases different code paths instead of an
+// accident of path syntax.
+type keyRouteShape int
+
+const (
+	// keyRouteServer addresses one server by UUID. The path MUST carry {uuid};
+	// the key's allowlist gates it and the owner re-check runs against it.
+	keyRouteServer keyRouteShape = iota
+	// keyRouteOwner acts on the caller's own realm and names no server. SERVER
+	// capabilities never count here - there is no server to have scoped them to
+	// - so the handler must scope its own query with APIKeyCallerID and, where
+	// it lists servers, APIKeyAllowedServers.
+	keyRouteOwner
+)
+
+type apiKeyCtxKey struct{}
+
+// apiKeyCtx is what the middleware injects: the key, plus whether this
+// request's server scope was satisfied.
+//
+// serverAllowed travels with the key because a handler that has to resolve a
+// capability itself - the power route, whose capability is named in the request
+// body - must resolve it exactly as the middleware would have. Hardcoding true
+// there would work today (a server route refuses before reaching the handler
+// when the allowlist misses) and would silently grant every SERVER capability
+// the day such a handler is wired to an owner-shaped route.
+type apiKeyCtx struct {
+	key           *models.APIKey
+	serverAllowed bool
+}
+
+// APIKeyFromContext returns the key that authenticated this request, if any.
+func APIKeyFromContext(r *http.Request) *models.APIKey {
+	c, _ := r.Context().Value(apiKeyCtxKey{}).(*apiKeyCtx)
+	if c == nil {
+		return nil
+	}
+	return c.key
+}
+
+// apiKeyServerAllowed reports whether the key's SERVER capabilities count for
+// this request. False on an owner-shaped route and on any request that did not
+// come through the key middleware.
+func apiKeyServerAllowed(r *http.Request) bool {
+	c, _ := r.Context().Value(apiKeyCtxKey{}).(*apiKeyCtx)
+	return c != nil && c.serverAllowed
+}
+
+// APIKeyCallerID is the realm an owner-scoped key route may act on: the key's
+// creator, and nobody else. Every owner-scoped handler must scope its query
+// with this.
+//
+// This is the binding authz/apikey.go warns about: a key's OWNER capabilities
+// are not tied to a realm by the resolver, so without scoping here, a key
+// carrying one could act on another owner's data.
+func APIKeyCallerID(r *http.Request) string {
+	if k := APIKeyFromContext(r); k != nil {
+		return k.UserID
+	}
+	return ""
+}
+
+// APIKeyAllowedServers is the key's server allowlist. A listing route must
+// filter with it: owner scoping alone would return every server the owner has,
+// which is wider than the key was minted for.
+func APIKeyAllowedServers(r *http.Request) []string {
+	if k := APIKeyFromContext(r); k != nil {
+		return k.Scope.Servers
+	}
+	return nil
+}
+
+// userKeysAllowed reports whether a NON-ADMIN may hold a key on this platform.
+// Nil flags mean "not configured", which reads as the default (off) rather than
+// as permission - a missing dependency must never open a gate.
+func (h *APIKeysHandler) userKeysAllowed(r *http.Request) bool {
+	if h.state == nil || h.state.FeatureFlags == nil {
+		return false
+	}
+	return h.state.FeatureFlags.UserAPIKeysEnabled(r.Context())
+}
+
+// allowedUserKeyCaps is the operator's capability whitelist for user keys, or
+// nil when they have not set one. Nil is "no extra restriction", NOT "none":
+// see UserAPIKeyAllowedCaps.
+func (h *APIKeysHandler) allowedUserKeyCaps(r *http.Request) map[string]bool {
+	if h.state == nil || h.state.FeatureFlags == nil {
+		return nil
+	}
+	list := h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context())
+	if len(list) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(list))
+	for _, c := range list {
+		out[c] = true
+	}
+	return out
+}
+
+// APIKeyServerRoute guards a route that addresses one server by {uuid}.
+func (h *APIKeysHandler) APIKeyServerRoute(requiredPerm string) func(http.HandlerFunc) http.HandlerFunc {
+	return h.apiKeyMiddleware(keyRouteServer, requiredPerm)
+}
+
+// APIKeyOwnerRoute guards a route that acts on the caller's own realm and names
+// no server.
+func (h *APIKeysHandler) APIKeyOwnerRoute(requiredPerm string) func(http.HandlerFunc) http.HandlerFunc {
+	return h.apiKeyMiddleware(keyRouteOwner, requiredPerm)
+}
+
+// apiKeyMiddleware validates Authorization: Bearer <dyl_...> and injects the
+// resolved key into the request context.
+func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm string) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			auth := r.Header.Get("Authorization")
@@ -252,15 +411,32 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 				sendJSONError(w, "Key expired", http.StatusUnauthorized)
 				return
 			}
-			// Server-UUID scope: when the path carries a {uuid} the key must be scoped
-			// to it. serverAllowed then gates whether the key's SERVER caps count for
-			// this request when it is turned into a Resolution below.
+
 			uuidVar := mux.Vars(r)["uuid"]
-			serverAllowed := uuidVar == "" || key.Scope.AllowsServer(uuidVar)
-			if uuidVar != "" && !serverAllowed {
-				sendJSONError(w, "Key not scoped to this server", http.StatusForbidden)
-				return
+
+			// serverAllowed decides whether the key's SERVER capabilities count
+			// for this request. On an owner route it is false unconditionally:
+			// there is no server, so nothing could have scoped them.
+			serverAllowed := false
+			switch shape {
+			case keyRouteServer:
+				if uuidVar == "" {
+					// A server route registered without {uuid} is a wiring
+					// mistake. Failing loudly beats silently granting every
+					// SERVER cap the key holds, which is what inferring the
+					// shape from the path used to do.
+					sendJSONError(w, "Route misconfigured: server-scoped key route without a server", http.StatusInternalServerError)
+					return
+				}
+				serverAllowed = key.Scope.AllowsServer(uuidVar)
+				if !serverAllowed {
+					sendJSONError(w, "Key not scoped to this server", http.StatusForbidden)
+					return
+				}
+			case keyRouteOwner:
+				uuidVar = "" // owner routes never address a server
 			}
+
 			// Authorization through the SAME chokepoint as session auth: the key's caps
 			// become a Resolution and the required cap is checked via HasCap. A key
 			// holds exactly its minted caps - no admin/owner short-circuit, no panel
@@ -271,9 +447,12 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 					sendJSONError(w, "Key lacks required permission", http.StatusForbidden)
 					return
 				}
-				if !h.ownerStillHolds(w, key, uuidVar, requiredPerm) {
-					return
-				}
+			}
+			// Always, not only when a capability is declared: the operator gate
+			// inside must apply to every key-authed request, and a route without
+			// a required capability is still a route.
+			if !h.ownerStillHolds(w, r, key, uuidVar, requiredPerm) {
+				return
 			}
 			if !h.rateLimiter.allow(key.ID, key.RatePerMin) {
 				w.Header().Set("Retry-After", "60")
@@ -285,7 +464,10 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 			if h.rateLimiter.shouldTouch(key.ID) {
 				go h.state.Store.TouchAPIKey(key.ID)
 			}
-			next(w, r)
+			// Inject the key so an owner-scoped handler can bind its query to
+			// the key's realm and allowlist. Without this the handler has no way
+			// to tell whose data it may return.
+			next(w, r.WithContext(context.WithValue(r.Context(), apiKeyCtxKey{}, &apiKeyCtx{key: key, serverAllowed: serverAllowed})))
 		}
 	}
 }
@@ -313,8 +495,8 @@ func (h *APIKeysHandler) APIKeyMiddleware(requiredPerm string) func(http.Handler
 // fail closed, matching AuthMiddleware: a vanished account or server is a 401,
 // and a database fault is a 503 rather than a 403 that would read as a
 // permissions problem.
-func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, key *models.APIKey, serverUUID, requiredPerm string) bool {
-	if serverUUID == "" || h.state == nil || h.state.Authz == nil || h.state.Store == nil {
+func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request, key *models.APIKey, serverUUID, requiredPerm string) bool {
+	if h.state == nil || h.state.Authz == nil || h.state.Store == nil {
 		return true
 	}
 	owner, err := h.state.Store.GetUserByID(key.UserID)
@@ -322,16 +504,40 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, key *models.APIK
 		sendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
 		return false
 	}
-	srv, err := h.state.Store.GetServerByUUID(serverUUID)
-	if err != nil || srv == nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+
+	// Operator gate at USE time, not only at mint. Enforcing it only when a key
+	// is created would leave every key minted before the switch was turned off
+	// working afterwards, which is not what an operator who turned it off means.
+	// The owner is loaded here anyway, so this costs nothing extra.
+	if !owner.IsAdmin && !h.userKeysAllowed(r) {
+		sendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
 		return false
 	}
+
+	if requiredPerm == "" {
+		return true // nothing to re-check; the gate above was the point
+	}
+
+	// serverID 0 means "the owner's own realm", which is exactly what an
+	// owner-scoped route acts on. The empty-serverUUID case used to return true
+	// here, so on such a route the check did not run at all and a key kept
+	// working after its owner lost the access it was minted from. Now both
+	// shapes resolve; only the scope differs.
+	serverID := 0
+	if serverUUID != "" {
+		srv, serr := h.state.Store.GetServerByUUID(serverUUID)
+		if serr != nil || srv == nil {
+			sendJSONError(w, "Server not found", http.StatusNotFound)
+			return false
+		}
+		serverID = srv.ID
+	}
+
 	res, err := h.state.Authz.Resolve(authz.Identity{
 		UserID:   owner.ID,
 		Username: owner.Username,
 		IsAdmin:  owner.IsAdmin,
-	}, srv.ID)
+	}, serverID)
 	if err != nil {
 		sendJSONError(w, "Could not verify key authorization", http.StatusServiceUnavailable)
 		return false

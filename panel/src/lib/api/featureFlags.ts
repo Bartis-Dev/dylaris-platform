@@ -38,6 +38,14 @@ export interface FeatureFlagsAdminPayload {
     applyAuthoringToManual?: boolean;
     autoMove: boolean;
     byon: boolean;
+    // Whether NON-ADMINS may hold an API key at all. Default off: a key is a
+    // second credential class that outlives a session and is not covered by the
+    // account's 2FA, so a fresh install does not start handing them out.
+    userApiKeys: boolean;
+    // Comma-separated capability ids a non-admin may put on a key. EMPTY MEANS
+    // NO EXTRA RESTRICTION, not "none" - the backend already stops a key from
+    // exceeding what its creator holds.
+    userApiKeyAllowedCaps: string;
 }
 
 export async function getSystemFeatures(): Promise<{ success: boolean; features?: FeatureFlags; message?: string }> {

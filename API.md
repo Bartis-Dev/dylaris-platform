@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **463 routes** in 49 sections: 203 GET, 134 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
+- **472 routes** in 49 sections: 209 GET, 137 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
 - **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **313** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **88** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **320** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -150,7 +150,7 @@ can still show what exists.
 - [/api/backup-storages](#apibackup-storages) (5)
 - [/api/beam](#apibeam) (4)
 - [/api/disk](#apidisk) (4)
-- [/api/external](#apiexternal) (1)
+- [/api/external](#apiexternal) (10)
 - [/api/files](#apifiles) (10)
 - [/api/gateway](#apigateway) (19)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
@@ -389,6 +389,15 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | POST | `/api/external/rcon/{uuid}/exec` | user API key | `rcon.exec` | - | `RconHandler.ExecExternal` | automation entry. |
+| GET | `/api/external/servers` | user API key | _no capability_ | - | `APIKeysHandler.ListExternalServers` | the servers this KEY may act on: the servers of its owner, narrowed to the allowlist of the key. |
+| GET | `/api/external/servers/{uuid}` | user API key | `overview.read` | - | `APIKeysHandler.GetExternalServer` | the record of one server. |
+| GET | `/api/external/servers/{uuid}/backup-jobs` | user API key | `backups.read` | ExternalServerRoute | `BackupHandler.ListJobs` | the backup schedules configured for one server. |
+| POST | `/api/external/servers/{uuid}/backup-jobs/{jobId:[0-9]+}/trigger` | user API key | `backups.create` | ExternalJobInServer, ExternalServerRoute | `BackupHandler.TriggerJob` | starts a run immediately. |
+| POST | `/api/external/servers/{uuid}/console/command` | user API key | `console.send` | ExternalServerRoute | `ConsoleHandler.SendCommand` | pushes one line onto the server's Redis input queue. |
+| GET | `/api/external/servers/{uuid}/console/history` | user API key | `console.read` | ExternalServerRoute | `ConsoleHandler.GetHistory` | Returns the last 1000 log lines from the Redis Stream for this server. |
+| POST | `/api/external/servers/{uuid}/power` | user API key | _no capability_ | APIKeyPowerGate, ExternalServerRoute | `ServerHandler.ServerPowerHandler` | Controls Start, Stop, Kill and Restart |
+| GET | `/api/external/servers/{uuid}/stats/history` | user API key | `stats.read` | ExternalServerRoute | `StatsHandler.GetHistory` | Returns historical stats data points from PostgreSQL. |
+| GET | `/api/external/usage` | user API key | `usage.read` | ExternalOwnerRoute | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
 
 ## /api/files
 
@@ -474,7 +483,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/me/api-keys` | session | `apikeys.read` | - | `APIKeysHandler.List` | the calling user's own API keys. |
+| GET | `/api/me/api-keys` | session | `apikeys.read` | - | `APIKeysHandler.List` | the calling user's own API keys, plus what they are allowed to mint. |
 | POST | `/api/me/api-keys` | session | `apikeys.write` | - | `APIKeysHandler.Create` | mints a key and returns its plaintext exactly once. |
 | DELETE | `/api/me/api-keys/{id:[0-9]+}` | session | `apikeys.delete` | - | `APIKeysHandler.Revoke` | revokes one of the caller's own keys. |
 | GET | `/api/me/billing` | session | _no capability_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |

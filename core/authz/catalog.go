@@ -137,6 +137,19 @@ var catalog = []Capability{
 	{ID: "roles.write", Label: "Edit server-roles", Category: "Server-roles", Scope: ScopeOwner, Verb: VerbWrite},
 	{ID: "roles.delete", Label: "Delete server-roles", Category: "Server-roles", Scope: ScopeOwner, Verb: VerbDelete},
 
+	// Account-level metered usage (traffic + backup storage), i.e. the numbers a
+	// bill is computed from. It exists as its own capability because the only
+	// route that consumes it is API-key-authed: an owner hands a key to an
+	// integrator for one server, and without a gate that key would also read the
+	// whole account's billing figures, which the key's server allowlist cannot
+	// narrow. Making it mintable makes that an explicit choice.
+	//
+	// A session never needs it: /api/me/usage answers the CALLER's own usage and
+	// is capability-exempt for exactly that reason. So granting this in a
+	// server-role changes nothing today - it is a key capability that happens to
+	// live in the shared catalog, which is where key capabilities live.
+	{ID: "usage.read", Label: "View account usage", Category: "Usage", Scope: ScopeOwner, Verb: VerbRead},
+
 	{ID: "apikeys.read", Label: "View API keys", Category: "API keys", Scope: ScopeOwner, Verb: VerbRead},
 	{ID: "apikeys.write", Label: "Create API keys", Category: "API keys", Scope: ScopeOwner, Verb: VerbWrite},
 	{ID: "apikeys.delete", Label: "Revoke API keys", Category: "API keys", Scope: ScopeOwner, Verb: VerbDelete},

@@ -6,7 +6,8 @@ import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload 
 import { getTabProxySettings, setTabProxySettings, type TabProxySettings } from '@/lib/api/tabProxySettings';
 import { getCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage } from '@/lib/coreStorage';
-import { CircleCheck, CircleAlert, Network, Globe, LifeBuoy, Package, Move, AlertTriangle, Server } from 'lucide-react';
+import { CircleCheck, CircleAlert, Network, Globe, LifeBuoy, Package, Move, AlertTriangle, Server, Key, ChevronDown, ChevronRight } from 'lucide-react';
+import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { useAppData } from '@/lib/AppDataContext';
@@ -33,7 +34,7 @@ export default function FeaturesTab() {
     // /api/admin/settings/features and save-on-click independently of the
     // proxy/gateway settings above. Each flip persists immediately so the
     // admin doesn't have to remember a Save bar for a dangerous gate.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
     const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
 
     // What the NEXT flip of "open authoring to users" should do to per-user
@@ -62,6 +63,13 @@ export default function FeaturesTab() {
     // as the platform flags above, but its own admin settings endpoint.
     const [tabProxy, setTabProxy] = useState<TabProxySettings>({ enabled: false, allowPublicLinks: false, maxPerServer: 10, maxShareLinksPerUser: 20 });
     const [tabProxySaving, setTabProxySaving] = useState(false);
+
+    // The capability whitelist for user API keys, rendered from the authz
+    // catalog rather than a hardcoded list, so a capability added to the
+    // catalog shows up here without a second edit. PANEL caps are left out
+    // because a key can never carry one (authz.ValidKeyCap rejects them).
+    const [keyCatalog, setKeyCatalog] = useState<CatalogScope[]>([]);
+    const [keyCapsOpen, setKeyCapsOpen] = useState(false);
 
     // Snapshot of last-saved settings for dirty detection.
     const snapshotRef = useRef<FeatureSettings | null>(null);
@@ -102,12 +110,17 @@ export default function FeaturesTab() {
         getTabProxySettings().then(res => {
             if (res.success && res.settings) setTabProxy(res.settings);
         });
+        getCatalog().then(res => {
+            if (res.success && res.catalog) {
+                setKeyCatalog(res.catalog.filter(sc => sc.scope !== 'panel'));
+            }
+        });
     }, []);
 
     // Save-on-click for the platform-wide bundle. We send BOTH keys every
     // time so the wire shape stays predictable even when only one toggle
     // flipped; cheaper than tracking partial dirty state for a 2-bool form.
-    const savePlatformFlag = async (key: keyof FeatureFlagsAdminPayload, value: boolean) => {
+    const savePlatformFlag = async (key: keyof FeatureFlagsAdminPayload, value: boolean | string) => {
         if (platformSaving) return;
         const prev = platformFlags;
         const next = { ...platformFlags, [key]: value };
@@ -170,6 +183,17 @@ export default function FeaturesTab() {
         JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
 
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
+
+    // The whitelist travels as a comma-separated string because that is what the
+    // setting stores; the picker works on a Set and writes it back the same way.
+    const allowedKeyCaps = new Set(
+        platformFlags.userApiKeyAllowedCaps.split(',').map(c => c.trim()).filter(Boolean),
+    );
+    const toggleKeyCap = (id: string) => {
+        const next = new Set(allowedKeyCaps);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        savePlatformFlag('userApiKeyAllowedCaps', Array.from(next).join(','));
+    };
 
     if (loading) return (
         <div className="max-w-2xl space-y-6">
@@ -369,7 +393,13 @@ export default function FeaturesTab() {
                 The PUT publishes features.changed, which AppDataContext consumes
                 to refresh featureFlags, so the Settings nav's BYON group
                 (Usage/Billing/Plans) appears/disappears without a manual reload. */}
-            <div className="card p-5">
+            {/* Disabled while routing is on IP:Port, same as Auto-Move above. An
+                external node FORCES gateway routing locally (NODE_EXTERNAL), so
+                with no gateway a tenant node has nothing to join: the flag would
+                switch on an enrolment surface for machines that can never
+                connect. The panel therefore ANDs this flag with the live routing
+                mode (see byonEnabled in AppDataContext). */}
+            <div className={`card p-5 ${gatewayOff ? 'opacity-60' : ''}`}>
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
@@ -386,13 +416,116 @@ export default function FeaturesTab() {
                         type="button"
                         role="switch"
                         aria-checked={platformFlags.byon}
-                        disabled={platformSaving !== null}
+                        disabled={platformSaving !== null || gatewayOff}
                         onClick={() => savePlatformFlag('byon', !platformFlags.byon)}
                         className={`toggle-track ${platformFlags.byon ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
                     >
                         <span className={`toggle-knob ${platformFlags.byon ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
                 </div>
+                {gatewayOff && (
+                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-3">
+                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                        <span>Requires gateway routing. A tenant node forces gateway routing on its own side, so it has nothing to join while Game Traffic is on IP:Port.</span>
+                    </p>
+                )}
+            </div>
+
+            {/* User API keys. Two controls, because "may users hold keys" and
+                "which capabilities may they put on one" are different decisions:
+                an operator can open the feature without opening the whole
+                capability catalogue. Both are enforced at MINT and at USE - a
+                key created before the switch was turned off stops working, which
+                is what an operator who turned it off means. */}
+            <div className="card p-5">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                            <Key size={18} className="text-(--accent-light)" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-sm text-(--base-09)">User API Keys</div>
+                            <div className="text-xs text-(--base-06)">
+                                Lets non-admins mint scoped keys for the <code className="font-mono">/api/external</code> automation surface. Admins can always mint their own.
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={platformFlags.userApiKeys}
+                        disabled={platformSaving !== null}
+                        onClick={() => savePlatformFlag('userApiKeys', !platformFlags.userApiKeys)}
+                        className={`toggle-track ${platformFlags.userApiKeys ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
+                    >
+                        <span className={`toggle-knob ${platformFlags.userApiKeys ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                </div>
+
+                {platformFlags.userApiKeys && (
+                    <div className="mt-4 pt-4 border-t border-(--base-03)">
+                        <button
+                            type="button"
+                            onClick={() => setKeyCapsOpen(o => !o)}
+                            aria-expanded={keyCapsOpen}
+                            className="flex items-center gap-2 w-full text-left group"
+                        >
+                            {keyCapsOpen
+                                ? <ChevronDown size={14} className="text-(--base-06)" />
+                                : <ChevronRight size={14} className="text-(--base-06)" />}
+                            <span className="text-sm font-medium text-(--base-09) group-hover:text-(--accent-light) transition-colors">Allowed capabilities</span>
+                            <span className="ml-auto text-xs text-(--base-06)">
+                                {allowedKeyCaps.size === 0 ? 'No restriction' : `${allowedKeyCaps.size} selected`}
+                            </span>
+                        </button>
+                        <p className="text-xs text-(--base-06) mt-2 ml-6">
+                            {allowedKeyCaps.size === 0
+                                ? 'Users may put any capability on a key that they already hold themselves. Select some to narrow that further.'
+                                : 'Users may only put these on a key, and still only ones they already hold themselves.'}
+                        </p>
+
+                        {keyCapsOpen && (
+                            <div className="mt-3 ml-6 space-y-4">
+                                {allowedKeyCaps.size > 0 && (
+                                    <button
+                                        type="button"
+                                        disabled={platformSaving !== null}
+                                        onClick={() => savePlatformFlag('userApiKeyAllowedCaps', '')}
+                                        className="btn btn-ghost btn-sm"
+                                    >
+                                        Clear restriction
+                                    </button>
+                                )}
+                                {keyCatalog.map(sc => (
+                                    <div key={sc.scope} className="space-y-3">
+                                        <div className="text-xs font-semibold uppercase tracking-wide text-(--base-06)">
+                                            {sc.scope === 'server' ? 'Per server' : 'Account-wide'}
+                                        </div>
+                                        {sc.categories.map(cat => (
+                                            <div key={cat.category}>
+                                                <div className="text-xs text-(--base-07) mb-1">{cat.category}</div>
+                                                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                                                    {cat.capabilities.map(c => (
+                                                        <label key={c.id} className="flex items-center gap-2 text-xs text-(--base-08) cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={allowedKeyCaps.has(c.id)}
+                                                                disabled={platformSaving !== null}
+                                                                onChange={() => toggleKeyCap(c.id)}
+                                                            />
+                                                            <span>{c.label}</span>
+                                                            <code className="font-mono text-(--base-06)">{c.id}</code>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* WS5 custom-tab reverse proxy */}

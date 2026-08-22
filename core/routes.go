@@ -719,9 +719,39 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.read")(apiKeysHandler.List))).Methods("GET")
 	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.write")(apiKeysHandler.Create))).Methods("POST")
 	api.HandleFunc("/me/api-keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.delete")(apiKeysHandler.Revoke))).Methods("DELETE")
-	// External RCON: Authorization: Bearer dyl_<key>. Scope check on the
-	// path-uuid happens in the middleware itself.
-	api.HandleFunc("/external/rcon/{uuid}/exec", apiKeysHandler.APIKeyMiddleware("rcon.exec")(rconHandler.ExecExternal)).Methods("POST")
+	// --- External API surface: Authorization: Bearer dyl_<key> ---
+	//
+	// A separate surface from the panel routes above, addressing servers by
+	// UUID rather than by the sequential id (see handlers/external_api.go).
+	// APIKeyServerRoute / APIKeyOwnerRoute declare the shape: which one is used
+	// decides whether the SERVER capabilities of the key count at all, and it
+	// is never inferred from the path.
+	//
+	// The ExternalServerRoute wrapper resolves {uuid} to the {id} + identity
+	// the panel handler behind it expects, so these are adapters, not copies -
+	// the suspension, quota and audit guards inside those handlers keep
+	// applying to key traffic.
+	api.HandleFunc("/external/servers", apiKeysHandler.APIKeyOwnerRoute("")(apiKeysHandler.ListExternalServers)).Methods("GET")
+	api.HandleFunc("/external/usage", apiKeysHandler.APIKeyOwnerRoute("usage.read")(apiKeysHandler.ExternalOwnerRoute(usageHandler.GetMyUsage))).Methods("GET")
+
+	api.HandleFunc("/external/servers/{uuid}", apiKeysHandler.APIKeyServerRoute("overview.read")(apiKeysHandler.GetExternalServer)).Methods("GET")
+	// POWER carries no route capability for the same reason the panel route
+	// does not (Rule R5: the action is in the body). APIKeyPowerGate resolves
+	// power.<action> against the KEY; ServerPowerHandler then resolves it again
+	// against the OWNER, which is the check that keeps a revoked member's key
+	// from working.
+	api.HandleFunc("/external/servers/{uuid}/power", apiKeysHandler.APIKeyServerRoute("")(apiKeysHandler.APIKeyPowerGate(apiKeysHandler.ExternalServerRoute(serverHandler.ServerPowerHandler)))).Methods("POST")
+	api.HandleFunc("/external/servers/{uuid}/console/history", apiKeysHandler.APIKeyServerRoute("console.read")(apiKeysHandler.ExternalServerRoute(consoleHandler.GetHistory))).Methods("GET")
+	api.HandleFunc("/external/servers/{uuid}/console/command", apiKeysHandler.APIKeyServerRoute("console.send")(apiKeysHandler.ExternalServerRoute(consoleHandler.SendCommand))).Methods("POST")
+	// Stats are the recorded history, not a live sample: the node only produces
+	// live stats while a watcher key is held (StreamStats sets it), so a
+	// one-shot live read would answer whatever the last SSE viewer left behind.
+	api.HandleFunc("/external/servers/{uuid}/stats/history", apiKeysHandler.APIKeyServerRoute("stats.read")(apiKeysHandler.ExternalServerRoute(statsHandler.GetHistory))).Methods("GET")
+	api.HandleFunc("/external/servers/{uuid}/backup-jobs", apiKeysHandler.APIKeyServerRoute("backups.read")(apiKeysHandler.ExternalServerRoute(backupHandler.ListJobs))).Methods("GET")
+	api.HandleFunc("/external/servers/{uuid}/backup-jobs/{jobId:[0-9]+}/trigger", apiKeysHandler.APIKeyServerRoute("backups.create")(apiKeysHandler.ExternalJobInServer(apiKeysHandler.ExternalServerRoute(backupHandler.TriggerJob)))).Methods("POST")
+	// External RCON: the original key route. Scope check on the path-uuid
+	// happens in the middleware itself.
+	api.HandleFunc("/external/rcon/{uuid}/exec", apiKeysHandler.APIKeyServerRoute("rcon.exec")(rconHandler.ExecExternal)).Methods("POST")
 
 	// --- Modrinth proxy + per-server mod install ---
 	// Browse + project metadata are cached in Redis (5 min / 1 h). All authed.

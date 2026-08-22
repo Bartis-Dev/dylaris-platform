@@ -312,7 +312,13 @@ func analyzeChain(e ast.Expr, r *Route, varTypes map[string]string) {
 			// conclusion.
 			case "AuthMiddleware":
 				r.Auth = "session"
-			case "APIKeyMiddleware":
+			// Both key-route constructors. A name this switch does not know
+			// falls through to `default` and the route is documented as taking
+			// NO credential - which is how renaming the single constructor
+			// silently reclassified a key-authed route as anonymous, in the
+			// generated reference and in the frozen-anonymous-surface guard.
+			// Adding a third shape means adding it here too.
+			case "APIKeyServerRoute", "APIKeyOwnerRoute":
 				// Its argument is a capability too, checked against the same
 				// catalog - just resolved from the key's scope rather than from
 				// the caller's identity. The Auth column carries that

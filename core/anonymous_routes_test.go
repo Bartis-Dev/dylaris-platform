@@ -125,12 +125,40 @@ func anonymousUnlimited(t *testing.T) map[string]bool {
 		// loc[0] is the "H" of HandleFunc; the paren is just before the path.
 		args := callArgs(src, strings.Index(src[loc[0]:], "(")+loc[0])
 		path := src[loc[2]:loc[3]]
-		if strings.Contains(args, "Middleware") || strings.Contains(args, ".Limit(") {
+		if appliesCredentialOrLimit(args) {
 			continue
 		}
 		found[path] = true
 	}
 	return found
+}
+
+// credentialWrappers are the wrappers that put a credential in front of a
+// route. This used to be the substring "Middleware", which held only for as
+// long as every such wrapper happened to be named that way: renaming the API
+// key middleware to APIKeyServerRoute made a key-authed route read as
+// anonymous here and in the generated reference, because neither matched on
+// what the wrapper DOES, only on what it is called.
+//
+// A wrapper missing from this list makes its routes look unauthenticated, which
+// fails loudly (this test), so the failure mode is safe. Add new ones here and
+// in apidoc.go's switch, which classifies the same call for the reference.
+var credentialWrappers = []string{
+	"Middleware",        // AuthMiddleware, WarpAPIKeyMiddleware, ...
+	"APIKeyServerRoute", // user API key, route addresses one server
+	"APIKeyOwnerRoute",  // user API key, route acts on the caller's realm
+}
+
+func appliesCredentialOrLimit(args string) bool {
+	if strings.Contains(args, ".Limit(") {
+		return true
+	}
+	for _, w := range credentialWrappers {
+		if strings.Contains(args, w) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAnonymousUnlimitedRouteSurfaceIsFrozen(t *testing.T) {

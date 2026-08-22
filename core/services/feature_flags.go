@@ -125,6 +125,38 @@ func (f *FeatureFlags) IsBYONEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_byon_enabled", false)
 }
 
+// UserAPIKeysEnabled gates whether a NON-ADMIN may hold an API key at all.
+//
+// Default = false. A key is a second credential class with a life of its own -
+// it outlives a session, it is not covered by the account's 2FA, and it is
+// revoked separately. A fresh install should not start handing those out
+// because the software supports them; an operator turning this on is a decision
+// with a date attached. Admins are unaffected: they can always mint their own.
+func (f *FeatureFlags) UserAPIKeysEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "apikeys_user_enabled", false)
+}
+
+// UserAPIKeyAllowedCaps is the capability subset a non-admin may put on a key,
+// as a comma-separated setting. EMPTY MEANS NO EXTRA RESTRICTION, not "none":
+// the delegation subset check in the create handler already prevents a key from
+// exceeding its creator, so an operator who has expressed no opinion gets that
+// behaviour rather than a feature that silently does nothing.
+//
+// Returning nil for empty is what lets the caller tell the two apart.
+func (f *FeatureFlags) UserAPIKeyAllowedCaps(ctx context.Context) []string {
+	raw := strings.TrimSpace(f.GetString(ctx, "apikeys_user_allowed_caps", ""))
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // IsShareLinksEnabled gates CREATION of tokenized modpack share/download links.
 // Default = false (opt-in distribution surface; the admin enables it in
 // Settings -> Modpacks). Existing links keep serving while the parent modpacks
