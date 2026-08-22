@@ -14,9 +14,13 @@ type User struct {
 	// call site remembered to blank it first. Exactly two did, and safety that
 	// depends on each future call site remembering is not safety - an offline
 	// cracking target is the wrong thing to leave one forgotten assignment away
-	// from a response body. Nothing decodes a User from JSON (the create/update
-	// wire types are separate structs on purpose), so nothing needs it to
-	// round-trip.
+	// from a response body.
+	//
+	// It applies on the way IN too, and one wire type does embed this struct:
+	// handlers.createUserRequest. It therefore declares its own `password`
+	// field to take the plaintext - without that, every admin-created account
+	// arrived with an empty password and was refused. Any future request type
+	// that embeds User has to do the same.
 	Password          string    `json:"-"`
 	Email             string    `json:"email"`
 	MinecraftUsername string    `json:"minecraftUsername"`

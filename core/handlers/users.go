@@ -56,6 +56,15 @@ func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 // add registration-specific fields in 0a.2+ without polluting the model.
 type createUserRequest struct {
 	models.User
+	// Password shadows models.User.Password, which is json:"-" so that a user
+	// row can never be serialised back to a client with its bcrypt hash on it.
+	// That tag also applies on the way IN, which silently made this the one
+	// field an admin could not send: every create arrived with an empty
+	// password and was refused with "Password is required". Declaring it here
+	// keeps the hash off every response and still lets the create payload
+	// carry one. Plaintext on the way in, hashed into req.User.Password below
+	// - never assign this field to the model directly.
+	Password string `json:"password"`
 	// Region access. If the caller omits both fields, the new
 	// user defaults to all-regions access — matches the grandfather behavior
 	// applied to existing users at migration time, and avoids creating users
@@ -103,7 +112,9 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Could not create user", 500)
 		return
 	}
-	req.Password = string(hashed)
+	// req.User, not req: CreateUser persists the embedded model, and the
+	// shadowing field above is only the wire's plaintext.
+	req.User.Password = string(hashed)
 
 	if err := h.state.Store.CreateUser(&req.User); err != nil {
 		log.Printf("CreateUser failed for username=%q: %v", req.Username, err)
