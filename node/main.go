@@ -402,12 +402,19 @@ func main() {
 	go meshMgr.Run(ctx)
 
 	// Beam: file transfer gRPC server (BEAM_GRPC_PORT, default :25521).
-	// BEAM_JWT_SECRET must match the gateway's beam-relay so tickets that
-	// the relay validated also pass the node-side Authenticate gate.
+	//
+	// BEAM_JWT_SECRET is the fleet key. It is OPTIONAL: a ticket also carries a
+	// per-node proof derived from this node's own secret, which is the only key
+	// a BYON machine has, and Authenticate prefers that. The fleet key stays as
+	// the fallback for a ticket minted before Core could load the node secret.
 	beamThrottle := NewBeamThrottle(ctx, rdb)
 	beamJWTSecret := getSecretEnv("BEAM_JWT_SECRET")
 	if beamJWTSecret == "" {
-		log.Printf("BEAM_JWT_SECRET unset — Beam authentication will reject all tickets")
+		// Not a warning any more. It used to say "will reject all tickets",
+		// which was true then and is the exact state the per-node proof exists
+		// to fix - leaving it would send an operator hunting a secret they are
+		// deliberately not given.
+		log.Printf("BEAM_JWT_SECRET unset - Beam tickets are authenticated by this node's own per-node proof")
 	}
 	go StartBeamServer(ctx, rdb, storageMgr, beamThrottle, beamJWTSecret, nodeID)
 

@@ -30,6 +30,10 @@ type BeamClaims struct {
 	NodeID     string `json:"node_id"`
 	Username   string `json:"username"`
 	IsAdmin    bool   `json:"is_admin"`
+	// NodeProof authenticates this ticket to ONE node using the per-node secret,
+	// so a node that holds no fleet secret can still trust it. Empty on a ticket
+	// minted for a node whose secret Core could not load. See node_proof.go.
+	NodeProof string `json:"node_proof,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -39,6 +43,21 @@ func SignBeamTicket(secret string, c BeamClaims) (string, error) {
 }
 
 func SignBeamTicketWithTTL(secret string, c BeamClaims, ttl time.Duration) (string, error) {
+	return SignBeamTicketWithNodeProof(secret, c, ttl, nil)
+}
+
+// SignBeamTicketWithNodeProof signs the ticket AND, when nodeSecret is
+// non-empty, stamps the per-node authenticator into it.
+//
+// The proof has to be computed here rather than by the caller: it covers the
+// expiry, and the expiry is only decided at this point. A caller building it
+// beforehand would be signing a promise about a timestamp that did not exist
+// yet.
+//
+// nodeSecret nil/empty produces the old ticket exactly, so a deployment where
+// Core cannot load a node's secret keeps working over the fleet-signature path
+// instead of minting something nobody can read.
+func SignBeamTicketWithNodeProof(secret string, c BeamClaims, ttl time.Duration, nodeSecret []byte) (string, error) {
 	if secret == "" {
 		return "", errors.New("auth: empty secret")
 	}
@@ -46,6 +65,11 @@ func SignBeamTicketWithTTL(secret string, c BeamClaims, ttl time.Duration) (stri
 		Issuer:    BeamIssuer,
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
+	}
+	// After the expiry is set, before the token is built: the proof covers the
+	// claims as they will actually be serialised.
+	if len(nodeSecret) > 0 {
+		c.NodeProof = NodeProof(nodeSecret, c)
 	}
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 	return t.SignedString([]byte(secret))

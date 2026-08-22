@@ -451,7 +451,25 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		Username:   username,
 		IsAdmin:    isAdmin,
 	}
-	ticketString, err := beamauth.SignBeamTicket(h.jwtSecret, claims)
+	// The same per-node secret that keys the LAN certificate also stamps a
+	// per-node proof into the ticket, so a node holding no fleet secret can
+	// still authenticate it. Without this the ticket is unreadable to a BYON
+	// machine and beam file access does not exist there at all - the LAN
+	// listener comes up, TLS pins, and every request is then refused.
+	//
+	// Best-effort by design: a node whose secret will not load still gets a
+	// plain fleet-signed ticket, which is exactly what it got before. Losing
+	// the proof degrades to the old behaviour rather than to no ticket.
+	var nodeProofSecret []byte
+	if server.NodeID != 0 {
+		if secret, ok, serr := redisacl.LoadNodeSecret(h.state.Store, h.clusterSecret, server.NodeID); serr != nil {
+			log.Printf("beam ticket: node %d secret load failed, ticket carries no node proof: %v", server.NodeID, serr)
+		} else if ok {
+			nodeProofSecret = secret
+		}
+	}
+	ticketString, err := beamauth.SignBeamTicketWithNodeProof(
+		h.jwtSecret, claims, beamauth.BeamTicketTTL, nodeProofSecret)
 	if err != nil {
 		sendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
 		return

@@ -483,15 +483,49 @@ func (s *beamServer) validateBeamPathOp(reqPath, serverUUID, op string) (string,
 
 // ─── Auth ────────────────────────────────────────────────────────────
 
-func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb.BeamAuthResp, error) {
-	if s.jwtSecret == "" {
-		// Defence in depth: empty secret means no validator is configured,
-		// so we must refuse rather than accept blindly.
-		return &pb.BeamAuthResp{Ok: false, Message: "node beam auth not configured"}, nil
+// validateTicket reads a beam ticket with whichever key this node actually has.
+//
+// A BYON machine holds NO fleet secret - the deploy snippet withholds it on
+// purpose - so it cannot check the JWT signature, and used to reject every
+// ticket with "node beam auth not configured". The listener came up, TLS
+// pinned, and file access still did not exist.
+//
+// Core therefore stamps a per-node proof into the ticket, keyed on the secret
+// this node and Core already share and which never crosses the wire. That
+// proof covers every claim that decides access, so verifying it is as strong
+// a statement as verifying the signature - see pkg/beam/auth/node_proof.go.
+//
+// The per-node path is tried FIRST, so a machine that has both prefers the
+// narrower key: a fleet-signed ticket is valid for every node at once, while a
+// proof is valid for exactly this one.
+//
+// Refuses when neither key is available, rather than accepting blindly.
+func (s *beamServer) validateTicket(ticket string) (*beamauth.BeamClaims, error) {
+	if secret := getNodeSecret(); len(secret) > 0 {
+		claims, err := beamauth.ValidateBeamTicketByNodeProof(secret, ticket)
+		if err == nil {
+			return claims, nil
+		}
+		// Fall through to the fleet key: a platform node that has both may still
+		// be handed a ticket minted before Core could load its secret.
+		if s.jwtSecret == "" {
+			return nil, fmt.Errorf("invalid ticket: %w", err)
+		}
 	}
-	claims, err := beamauth.ValidateBeamTicket(s.jwtSecret, req.Ticket)
+	if s.jwtSecret == "" {
+		return nil, errors.New("node beam auth not configured")
+	}
+	claims, err := beamauth.ValidateBeamTicket(s.jwtSecret, ticket)
 	if err != nil {
-		return &pb.BeamAuthResp{Ok: false, Message: "invalid ticket: " + err.Error()}, nil
+		return nil, fmt.Errorf("invalid ticket: %w", err)
+	}
+	return claims, nil
+}
+
+func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb.BeamAuthResp, error) {
+	claims, err := s.validateTicket(req.Ticket)
+	if err != nil {
+		return &pb.BeamAuthResp{Ok: false, Message: err.Error()}, nil
 	}
 	// Node-binding: the relay routes by node_id, but a stolen ticket for
 	// another node should still be rejected at the destination.
