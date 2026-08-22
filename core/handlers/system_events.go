@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/services"
 )
 
@@ -14,6 +16,58 @@ import (
 // changes so it can refresh cached state without polling.
 type SystemEventsHandler struct {
 	state *AppState
+}
+
+// mayReceive decides whether one broadcast frame goes to THIS subscriber.
+//
+// The channel is a single fleet-wide fan-out, so everything published on it
+// reached every authenticated session. Most of that is harmless by design -
+// the events are cache-invalidation signals whose payload is usually empty, and
+// the panel re-fetches through the normal authorized routes. But a few name a
+// serverId, and those were being delivered to people with no access to that
+// server: measured on a live instance, a non-admin who owns one server received
+// server_tabs.changed for a server belonging to someone else. No content and no
+// credentials, but other tenants' identifiers and the timing of their activity.
+//
+// Fails OPEN, which is the opposite of the rule everywhere else in this file's
+// neighbourhood and is deliberate. This is not an access decision - the data
+// behind every one of these events is fetched over a route that authorizes it
+// properly. Dropping a frame we could not classify would silently stop a panel
+// from refreshing; forwarding one leaks an integer. So only a resolution that
+// actually says "no" drops the frame.
+func (h *SystemEventsHandler) mayReceive(r *http.Request, payload string) bool {
+	serverID := eventServerID(payload)
+	if serverID == 0 {
+		return true // no server named: a platform-wide signal, or an empty one
+	}
+	if h.state == nil || h.state.Authz == nil {
+		return true
+	}
+	userID, _ := r.Context().Value("userID").(string)
+	username, _ := r.Context().Value("username").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	res, err := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	if err != nil {
+		return true
+	}
+	// overview.read is "may this account see that this server exists at all",
+	// which is exactly what a bare id discloses. Every invite carries it.
+	return res.HasCap("overview.read")
+}
+
+// eventServerID pulls the serverId out of an event payload, or 0 when it names
+// none. JSON numbers decode as float64; anything else is treated as absent
+// rather than guessed at.
+func eventServerID(payload string) int {
+	var ev struct {
+		Payload struct {
+			ServerID *float64 `json:"serverId"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(payload), &ev) != nil || ev.Payload.ServerID == nil {
+		return 0
+	}
+	return int(*ev.Payload.ServerID)
 }
 
 func NewSystemEventsHandler(state *AppState) *SystemEventsHandler {
@@ -61,6 +115,9 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 		case msg, ok := <-ch:
 			if !ok {
 				return
+			}
+			if !h.mayReceive(r, msg.Payload) {
+				continue
 			}
 			fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
 			flusher.Flush()
