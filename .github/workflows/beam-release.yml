@@ -71,6 +71,18 @@ jobs:
         # generated the (platform-agnostic) frontend bindings, so reuse them.
         run: go run github.com/wailsapp/wails/v2/cmd/wails build -platform windows/amd64 -skipbindings -ldflags "-X main.AppVersion=${{ steps.ver.outputs.VERSION }}"
 
+      - name: Read the force-update floor
+        id: floor
+        working-directory: beam/app
+        # The floor lives in MIN_VERSION, committed beside the app, because it is a
+        # property of the release rather than an operator setting - Core removed its
+        # hand-typed second opinion for exactly that reason. Without this step the
+        # -min-version flag had no caller at all: every published manifest omitted
+        # minVersion, so the force-update gate Core advertises and the app enforces
+        # could never fire, on any release. Empty is the normal case and reproduces
+        # the old manifest byte for byte.
+        run: echo "MIN=$(sed -n 's/^MIN_VERSION=//p' MIN_VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
       - name: Stage + sign release assets
         working-directory: beam/app
         env:
@@ -85,6 +97,7 @@ jobs:
           cp build/bin/DylarisBeam.exe dist-release/DylarisBeam-windows-amd64.exe
           go run ./cmd/beam-release sign \
             -version "${{ steps.ver.outputs.VERSION }}" \
+            -min-version "${{ steps.floor.outputs.MIN }}" \
             -base-url "https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download" \
             -out dist-release \
             linux-amd64=dist-release/DylarisBeam-linux-amd64 \
@@ -106,6 +119,7 @@ jobs:
           cp dist-release/DylarisBeam-windows-amd64.exe dist-dev/
           go run ./cmd/beam-release sign \
             -version "${{ steps.ver.outputs.VERSION }}" \
+            -min-version "${{ steps.floor.outputs.MIN }}" \
             -base-url "https://github.com/Bartis-Dev/dylaris-platform/releases/download/beam-dev" \
             -out dist-dev \
             linux-amd64=dist-dev/DylarisBeam-linux-amd64 \

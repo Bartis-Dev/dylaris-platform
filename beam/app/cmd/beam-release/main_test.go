@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -147,5 +149,58 @@ func TestBuildManifestMinVersion(t *testing.T) {
 	}
 	if strings.Contains(string(nb), "minVersion") {
 		t.Errorf("empty min-version must omit the field, got: %s", nb)
+	}
+}
+
+// TestParsableMinVersionMatchesTheApp pins the producer's rule to the consumer's.
+//
+// The app's belowMinVersion returns false for a floor it cannot parse, so an
+// unparseable value is not an error anywhere: the release succeeds, the manifest
+// verifies, and the gate simply never fires. These cases are the ones that would
+// have shipped that way.
+func TestParsableMinVersionMatchesTheApp(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{"1.2.3", true},
+		{"v1.2.3", true},    // the app strips a leading v
+		{"1.2.3-rc1", true}, // and everything from the first - or +
+		{"1.2.3+build", true},
+		{"1.2", false}, // two parts: the app gives up, silently
+		{"1.2.3.4", false},
+		{"latest", false},
+		{"1.x.0", false},
+		{"", false},
+	} {
+		if got := parsableMinVersion(c.in); got != c.want {
+			t.Errorf("parsableMinVersion(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestCommittedMinVersionIsUsable reads the real beam/app/MIN_VERSION, the file
+// the release workflow passes to -min-version.
+//
+// It is the only guard on that value: a typo there cannot fail a build, cannot
+// fail a signature, and cannot be seen in the published manifest without knowing
+// what to look for. It would just be a force-update that quietly does nothing on
+// the one day it was needed.
+func TestCommittedMinVersionIsUsable(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "MIN_VERSION"))
+	if err != nil {
+		t.Fatalf("MIN_VERSION is missing - the release workflow reads it: %v", err)
+	}
+	var value string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "MIN_VERSION="); ok {
+			value = strings.TrimSpace(v)
+		}
+	}
+	if value == "" {
+		return // no floor is the normal case
+	}
+	if !parsableMinVersion(value) {
+		t.Errorf("MIN_VERSION=%q would be silently ignored by the app; use x.y.z", value)
 	}
 }

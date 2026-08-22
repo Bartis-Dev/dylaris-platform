@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -70,6 +71,10 @@ func runSign(args []string) error {
 	if *version == "" || *baseURL == "" {
 		return fmt.Errorf("-version and -base-url are required")
 	}
+	min := strings.TrimSpace(*minVersion)
+	if min != "" && !parsableMinVersion(min) {
+		return fmt.Errorf("-min-version %q is not x.y.z; the app would silently ignore it and the gate would never fire", min)
+	}
 	seedB64 := os.Getenv("BEAM_UPDATE_PRIVKEY")
 	if seedB64 == "" {
 		return fmt.Errorf("BEAM_UPDATE_PRIVKEY not set")
@@ -104,7 +109,7 @@ func runSign(args []string) error {
 		return fmt.Errorf("no binaries given")
 	}
 
-	m := buildManifest(*version, strings.TrimSpace(*minVersion), *baseURL, priv, bins)
+	m := buildManifest(*version, min, *baseURL, priv, bins)
 	manifestBytes, err := canonicalManifestBytes(m)
 	if err != nil {
 		return err
@@ -118,6 +123,34 @@ func runSign(args []string) error {
 		return fmt.Errorf("write latest.json.sig: %w", err)
 	}
 	return nil
+}
+
+// parsableMinVersion reports whether the app's own parser would accept this
+// floor. It mirrors parseSemver in beam/app/updater.go, which cannot be imported
+// (both are package main in different modules' commands), so the rule is
+// duplicated on purpose - the same way update_pubkey.go is duplicated into Core.
+//
+// This check exists because the failure it prevents is SILENT. belowMinVersion
+// returns false for a floor it cannot parse, so a typo does not fail the
+// release, produce a warning, or block anyone: it ships a manifest whose gate
+// can never fire, and nobody finds out until the day the floor was supposed to
+// matter. Refusing at sign time turns that into a failed release instead.
+func parsableMinVersion(s string) bool {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
+	if i := strings.IndexAny(s, "-+"); i >= 0 {
+		s = s[:i]
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // assetName is the release-asset filename for a platform slug. Windows carries a

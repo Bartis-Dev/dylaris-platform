@@ -1,0 +1,19 @@
+# Force-update floor for the beam desktop app. A client below this version is
+# blocked out of the panel until it updates; empty means no floor, which is the
+# normal case.
+#
+# Set it ONLY when an older build must not stay in use - a security fix in the
+# app, or a wire change it cannot survive. Raising it locks every client below
+# the value out until they update, so it is deliberately not an operator setting
+# in the panel: it is a property of the release, and whoever cuts the release
+# sets it here.
+#
+# The value is baked into the SIGNED release manifest by beam-release at tag
+# time, so it takes effect with the NEXT release and stays in force until this
+# file changes. Both readers verify the manifest signature before trusting it:
+# Core (effectiveMinVersion) advertises it, the app (belowMinVersion) enforces it.
+#
+# Must be exactly x.y.z. beam-release refuses anything the app's own parser would
+# silently ignore, because an unparseable floor is not a loud failure - it is a
+# gate that quietly never fires.
+MIN_VERSION=
