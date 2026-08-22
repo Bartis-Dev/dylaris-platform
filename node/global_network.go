@@ -7,17 +7,31 @@ import (
 	"strings"
 )
 
-// wg0RoutedSubnets parses /proc/net/route content and returns every subnet routed
-// via wg0, so a freshly-created local dylaris_net can avoid shadowing the warp
-// tunnel. Best-effort: an unparseable line is skipped and a fully unparseable
-// table yields no ranges (Docker's own non-overlap and the 10/8 reservation still
-// apply).
-func wg0RoutedSubnets(routeTable string) []*net.IPNet {
+// warpInterfacePrefix is the interface-name prefix the warp client brings its
+// tunnel up under (gateway/warp: OwnedInterfacePrefix, default "dylaris-wg0").
+//
+// CROSS-REPO CONTRACT, and the reason it is a PREFIX rather than a fixed name:
+// warp deliberately does not use "wg0", because a BYON machine very often
+// already runs WireGuard under that name. This side only has to recognise the
+// tunnel, so matching the prefix keeps the two repos from having to agree on an
+// exact string - but the prefix itself must stay in step with warp's.
+const warpInterfacePrefix = "dylaris-"
+
+// warpRoutedSubnets parses /proc/net/route content and returns every subnet
+// routed through the warp tunnel, so a freshly-created local dylaris_net can
+// avoid shadowing it. Best-effort: an unparseable line is skipped and a fully
+// unparseable table yields no ranges (Docker's own non-overlap and the 10/8
+// reservation still apply).
+//
+// Matching the customer's OWN WireGuard interfaces here would be wrong: those
+// subnets are theirs to keep, and reserving them would shrink the pool this node
+// can pick from for no benefit.
+func warpRoutedSubnets(routeTable string) []*net.IPNet {
 	var out []*net.IPNet
 	for _, line := range strings.Split(routeTable, "\n") {
 		f := strings.Fields(line)
 		// /proc/net/route columns: Iface Destination Gateway Flags RefCnt Use Metric Mask ...
-		if len(f) < 8 || f[0] != "wg0" {
+		if len(f) < 8 || !strings.HasPrefix(f[0], warpInterfacePrefix) {
 			continue
 		}
 		dest, derr := hexLEtoIP(f[1])
@@ -47,13 +61,13 @@ func hexLEtoIP(h string) (net.IP, error) {
 }
 
 // reservedSubnets unions the ranges a new local dylaris_net must avoid: existing
-// Docker network subnets, every range routed via wg0 (the warp tunnel), and - on
+// Docker network subnets, every range routed through the warp tunnel, and - on
 // a host-net node - all of 10.0.0.0/8, which is warp's home range and must never
 // be shadowed by a local bridge. The result is fed to nextFreeSubnet, which then
 // picks a free block from 172.16/12 or 192.168/16 on a host-net node.
 func reservedSubnets(dockerSubnets []*net.IPNet, routeTable string, hostNet bool) []*net.IPNet {
 	used := append([]*net.IPNet{}, dockerSubnets...)
-	used = append(used, wg0RoutedSubnets(routeTable)...)
+	used = append(used, warpRoutedSubnets(routeTable)...)
 	if hostNet {
 		used = append(used, parseCIDRs([]string{"10.0.0.0/8"})...)
 	}

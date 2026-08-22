@@ -2,31 +2,32 @@ package main
 
 import (
 	"net"
+	"strings"
 	"testing"
 )
 
-func TestWg0RoutedSubnets(t *testing.T) {
+func TestWarpRoutedSubnets(t *testing.T) {
 	// /proc/net/route stores Destination + Mask as little-endian hex.
 	// wg0 -> 10.0.0.0/16: Destination=0000000A, Mask=0000FFFF
 	// wg0 -> 10.77.0.0/16: Destination=00004D0A, Mask=0000FFFF
 	table := "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
-		"wg0\t0000000A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n" +
-		"wg0\t00004D0A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n" +
+		"dylaris-wg0\t0000000A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n" +
+		"dylaris-wg0\t00004D0A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n" +
 		"eth0\t00000000\t0100000A\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
-	nets := wg0RoutedSubnets(table)
+	nets := warpRoutedSubnets(table)
 	if len(nets) != 2 {
-		t.Fatalf("wg0RoutedSubnets len = %d, want 2 (%v)", len(nets), nets)
+		t.Fatalf("warpRoutedSubnets len = %d, want 2 (%v)", len(nets), nets)
 	}
 	if nets[0].String() != "10.0.0.0/16" || nets[1].String() != "10.77.0.0/16" {
-		t.Fatalf("wg0RoutedSubnets = %v, want [10.0.0.0/16 10.77.0.0/16]", nets)
+		t.Fatalf("warpRoutedSubnets = %v, want [10.0.0.0/16 10.77.0.0/16]", nets)
 	}
 }
 
 func TestWg0RoutedSubnetsIgnoresGarbage(t *testing.T) {
-	if got := wg0RoutedSubnets(""); len(got) != 0 {
+	if got := warpRoutedSubnets(""); len(got) != 0 {
 		t.Fatalf("empty table -> %v, want none", got)
 	}
-	if got := wg0RoutedSubnets("wg0 short line\nnonsense"); len(got) != 0 {
+	if got := warpRoutedSubnets("dylaris-wg0 short line\nnonsense"); len(got) != 0 {
 		t.Fatalf("garbage -> %v, want none", got)
 	}
 }
@@ -35,11 +36,11 @@ func TestWg0RoutedSubnetsIgnoresGarbage(t *testing.T) {
 // a reserved subnet would make every candidate overlap and collapse avoidance.
 func TestWg0RoutedSubnetsSkipsDefaultRoute(t *testing.T) {
 	table := "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
-		"wg0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n" +
-		"wg0\t0000000A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
-	nets := wg0RoutedSubnets(table)
+		"dylaris-wg0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n" +
+		"dylaris-wg0\t0000000A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+	nets := warpRoutedSubnets(table)
 	if len(nets) != 1 || nets[0].String() != "10.0.0.0/16" {
-		t.Fatalf("wg0RoutedSubnets = %v, want just [10.0.0.0/16] (default route skipped)", nets)
+		t.Fatalf("warpRoutedSubnets = %v, want just [10.0.0.0/16] (default route skipped)", nets)
 	}
 }
 
@@ -49,7 +50,7 @@ func TestWg0RoutedSubnetsSkipsDefaultRoute(t *testing.T) {
 func TestReservedSubnetsHostNetPushesOutOf10Slash8(t *testing.T) {
 	docker := []*net.IPNet{mustCIDR(t, "172.17.0.0/16")}
 	table := "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
-		"wg0\t0000000A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+		"dylaris-wg0\t0000000A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
 	used := reservedSubnets(docker, table, true)
 
 	free, err := nextFreeSubnet(used, 24)
@@ -73,5 +74,31 @@ func TestReservedSubnetsNonHostNetKeeps10Slash8(t *testing.T) {
 	used := reservedSubnets(nil, "", false)
 	if len(used) != 0 {
 		t.Fatalf("non-host-net with no docker nets / no routes -> %v, want none reserved", used)
+	}
+}
+
+// The customer's OWN WireGuard interfaces must not be treated as warp's. warp
+// deliberately avoids the name "wg0" precisely because BYON machines often
+// already run WireGuard there; reserving those subnets would shrink this node's
+// pool for no benefit, and matching on the old literal would make the whole
+// avoidance silently return nothing once warp renamed its interface.
+func TestWarpRoutedSubnetsIgnoresForeignInterfaces(t *testing.T) {
+	table := "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+		"wg0\t0000000A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n" +
+		"tailscale0\t00004D0A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n" +
+		"eth0\t0000A8C0\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+	if got := warpRoutedSubnets(table); len(got) != 0 {
+		t.Errorf("foreign interfaces were treated as the warp tunnel: %v", got)
+	}
+}
+
+// The prefix this node matches on must stay in step with the interface name warp
+// actually brings up (gateway/warp OwnedInterfacePrefix + DefaultWGInterface).
+// Nothing links the two repos, so this pins the contract from this side.
+func TestWarpInterfacePrefixMatchesWarpsDefault(t *testing.T) {
+	const warpDefaultInterface = "dylaris-wg0" // gateway/warp: DefaultWGInterface
+	if !strings.HasPrefix(warpDefaultInterface, warpInterfacePrefix) {
+		t.Fatalf("warpInterfacePrefix %q does not match warp's default interface %q",
+			warpInterfacePrefix, warpDefaultInterface)
 	}
 }
