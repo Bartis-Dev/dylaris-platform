@@ -516,15 +516,36 @@ func GetServiceErrorsFromRedis(rdb *redis.Client, service string, count int64) [
 	return all
 }
 
-// GetAllServiceErrorsFromRedis reads errors for all gateway service types.
+// ErrorStreamServices are the service names whose Redis error streams the panel
+// reads. A name here must match the FIRST argument every producer passes to
+// errlog.New, because that argument is what forms the stream key
+// (dylaris:errors:<service>:<instance>) - a scan for a name nobody writes finds
+// nothing and reports it as "no errors".
+//
+// "edge" replaced "gate", and the gap it left is why this list is now a named
+// constant with a test behind it. The service was renamed gate -> edge and its
+// producer moved with it (edge/cmd/main.go passes "edge"), but this list did
+// not: Core kept scanning dylaris:errors:gate:* while every edge wrote to
+// dylaris:errors:edge:*. The ACL granted the new name, so the writes succeeded
+// and the reads simply matched nothing - the panel showed an empty edge section,
+// which looks exactly like a healthy edge. The component carrying all player
+// traffic had no error reporting at all, and nothing anywhere failed to say so.
+//
+// "hub" belongs here: the Hub logs a dropped queue message to its own error
+// stream, and leaving it out of this list is why a malformed create_route
+// could fail silently for months while the panel still reported success.
+// "beam" for the same reason: a relay that refuses to register over a
+// region/host conflict writes the explanation here and nowhere else.
+// "node" is the platform side rather than the gateway: it is the one component
+// that can still reach Redis while its control channel to Core is broken, so it
+// is the only thing able to report WHY a node looks offline.
+var ErrorStreamServices = errlog.Services
+
+// GetAllServiceErrorsFromRedis reads errors for every service in
+// ErrorStreamServices.
 func GetAllServiceErrorsFromRedis(rdb *redis.Client, count int64) map[string][]errlog.Entry {
 	result := make(map[string][]errlog.Entry)
-	// "hub" belongs here: the Hub logs a dropped queue message to its own error
-	// stream, and leaving it out of this list is why a malformed create_route
-	// could fail silently for months while the panel still reported success.
-	// "beam" for the same reason: a relay that refuses to register over a
-	// region/host conflict writes the explanation here and nowhere else.
-	for _, svc := range []string{"gate", "link", "hub", "beam"} {
+	for _, svc := range ErrorStreamServices {
 		entries := GetServiceErrorsFromRedis(rdb, svc, count)
 		if len(entries) > 0 {
 			result[svc] = entries

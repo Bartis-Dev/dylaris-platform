@@ -6,7 +6,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -293,21 +295,44 @@ func (h *StoreHandler) Status(w http.ResponseWriter, r *http.Request) {
 // fetchLinkStatus asks dylaris.com whether this Core UUID is linked. Best-effort:
 // on any store-side error it reports "not linked" rather than failing the panel.
 func (h *StoreHandler) fetchLinkStatus(ctx context.Context, uuid string) (bool, string) {
+	linked, email, err := h.probeLinkStatus(ctx, uuid)
+	if err != nil {
+		// Still fail soft for the customer - a store outage must not break the
+		// panel - but say so somewhere. Every one of these used to return a bare
+		// false, so a wrong STORE_SHARED_KEY, an unreachable storefront and a
+		// genuinely unlinked account produced the identical "Connect Store"
+		// button. The one state that needs an operator was indistinguishable
+		// from the two that do not.
+		log.Printf("store: link-status lookup failed for %s: %v", uuid, err)
+		return false, ""
+	}
+	return linked, email
+}
+
+// probeLinkStatus is fetchLinkStatus with the error kept, so the health check can
+// report WHAT is wrong with the storefront integration instead of the panel
+// silently rendering "not linked".
+func (h *StoreHandler) probeLinkStatus(ctx context.Context, uuid string) (bool, string, error) {
 	endpoint := strings.TrimRight(h.state.StoreURL, "/") + "/api/store/link-status?uuid=" + url.QueryEscape(uuid)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return false, ""
+		return false, "", err
 	}
 	req.Header.Set("X-Store-Key", h.state.StoreSharedKey)
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, ""
+		return false, "", fmt.Errorf("cannot reach the storefront at %s: %w", h.state.StoreURL, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		// The single most likely misconfiguration, and the one that looks most
+		// like normal operation from the panel.
+		return false, "", fmt.Errorf("the storefront refused our key (HTTP %d) - STORE_SHARED_KEY does not match the value configured on %s", resp.StatusCode, h.state.StoreURL)
+	}
 	if resp.StatusCode != http.StatusOK {
-		return false, ""
+		return false, "", fmt.Errorf("the storefront answered HTTP %d", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	var parsed struct {
@@ -315,7 +340,7 @@ func (h *StoreHandler) fetchLinkStatus(ctx context.Context, uuid string) (bool, 
 		Email  string `json:"email"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return false, ""
+		return false, "", fmt.Errorf("the storefront answered something that is not the expected JSON: %w", err)
 	}
-	return parsed.Linked, parsed.Email
+	return parsed.Linked, parsed.Email, nil
 }

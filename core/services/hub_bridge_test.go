@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/store"
+	"dylaris-pkg/errlog"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -626,17 +627,56 @@ func TestGetAllServiceErrorsFromRedis_OnlyNonEmptyServicesIncluded(t *testing.T)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	ctx := context.Background()
 
-	entryJSON, _ := json.Marshal(map[string]string{"ts": "now", "level": "ERROR", "source": "gate", "message": "x"})
-	if _, err := rdb.XAdd(ctx, &redis.XAddArgs{Stream: "dylaris:errors:gate:inst-1", Values: map[string]interface{}{"data": entryJSON}}).Result(); err != nil {
+	entryJSON, _ := json.Marshal(map[string]string{"ts": "now", "level": "ERROR", "source": "edge", "message": "x"})
+	if _, err := rdb.XAdd(ctx, &redis.XAddArgs{Stream: "dylaris:errors:edge:inst-1", Values: map[string]interface{}{"data": entryJSON}}).Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	// No streams seeded for "link".
 
 	all := GetAllServiceErrorsFromRedis(rdb, 10)
-	if _, ok := all["gate"]; !ok {
-		t.Error("expected gate to be present")
+	if _, ok := all["edge"]; !ok {
+		t.Error("expected edge to be present")
 	}
 	if _, ok := all["link"]; ok {
 		t.Error("link has no streams and must be omitted, not present with an empty slice")
+	}
+}
+
+// The reader's service list must BE the shared one, not a copy of it.
+//
+// This test used to seed dylaris:errors:gate:* and assert "gate" came back,
+// which passed for as long as the reader looked for a name no producer had
+// written since the gate -> edge rename. It proved the function scans what the
+// list says and nothing more - the list itself was never the thing under test,
+// so the one error that mattered was invisible to it.
+//
+// errlog.Services is shared with the producers (and mirrored byte-identically
+// into the gateway repo, where errlog's own test holds every errlog.New call
+// against it), so pinning to it here closes the loop: a name can no longer be
+// added on one side alone.
+func TestErrorStreamServicesIsTheSharedList(t *testing.T) {
+	if len(ErrorStreamServices) == 0 {
+		t.Fatal("ErrorStreamServices is empty; nothing would ever be read")
+	}
+	for _, svc := range ErrorStreamServices {
+		if !errlog.IsKnownService(svc) {
+			t.Errorf("ErrorStreamServices has %q, which errlog.Services does not - producers will never write it", svc)
+		}
+	}
+	for _, svc := range errlog.Services {
+		found := false
+		for _, have := range ErrorStreamServices {
+			if have == svc {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("errlog.Services has %q but the reader does not scan it - those entries are written and never read", svc)
+		}
+	}
+	// The rename that started all this, named explicitly so it cannot come back.
+	if errlog.IsKnownService("gate") {
+		t.Error(`"gate" is back in errlog.Services; the service is called "edge" and no producer writes "gate"`)
 	}
 }

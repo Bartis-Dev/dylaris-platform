@@ -198,16 +198,21 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		}),
 	)
 	if err != nil {
-		log.Printf("gRPC Mesh: Failed to connect to Core %s: %v", info.ID, err)
+		reportCoreProblem("grpc-dial", "cannot build a connection to Core "+info.ID+" at "+targetAddr+": "+grpcErrText(err))
 		return
 	}
 
 	ctx, cancel := context.WithCancel(parentCtx)
 
 	client := pb.NewNodeServiceClient(conn)
+	// grpc.NewClient above is lazy, so this is the first call that actually
+	// touches the network - and therefore where a TLS pin mismatch, a refused
+	// port or a dead tunnel first appears. Reporting here rather than at the
+	// dial is what makes the difference between "node offline" and a named
+	// cause reaching the panel.
 	stream, err := client.NodeConnect(ctx)
 	if err != nil {
-		log.Printf("gRPC Mesh: Failed to open stream to Core %s: %v", info.ID, err)
+		reportCoreProblem("grpc-stream", "cannot open the control stream to Core "+info.ID+" at "+targetAddr+": "+grpcErrText(err))
 		cancel()
 		conn.Close()
 		return
@@ -257,13 +262,17 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		if authResult != nil {
 			msg = authResult.Message
 		}
-		log.Printf("gRPC Mesh: Auth rejected by Core %s: %s", info.ID, msg)
+		// Reported like the transport failures: a node rejected at the auth step
+		// is online, reachable and still absent from the panel, which from the
+		// outside is indistinguishable from an unplugged machine.
+		reportCoreProblem("grpc-auth", "Core "+info.ID+" rejected this node's identity: "+msg)
 		cancel()
 		conn.Close()
 		return
 	}
 
 	log.Printf("gRPC Mesh: Connected to Core %s ✓", info.ID)
+	reportCoreRecovered(info.ID)
 
 	// Defensive: persist a refreshed secret if Core handed one back (e.g. ACL
 	// newly enabled for this known node, or a reset). No-op when ACL is off.

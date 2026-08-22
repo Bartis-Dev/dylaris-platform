@@ -83,6 +83,17 @@ func migrationKeys(token string) []string {
 func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface{} {
 	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
 	rules = append(rules, "~dylaris:node:"+token+":*", "~dylaris:discovery:"+token, "~beam:node-endpoint:"+token)
+	// The node's own error stream, read by the panel via
+	// services.ErrorStreamServices. Scoped to this node's token exactly like the
+	// Link's, so one node cannot write into another's diagnostics.
+	//
+	// This is the node's ONLY channel that survives a broken control plane: when
+	// the gRPC dial fails - a certificate pin that does not match, a Core that
+	// refuses the proof - Core learns nothing at all, because the connection it
+	// would have learned it from is the one that failed. The node still holds its
+	// cached secret and can still reach Redis, so it is the only party in a
+	// position to say why it looks offline.
+	rules = append(rules, "~dylaris:errors:node:"+token)
 	// The per-server storage-path mapping lives under the UN-prefixed
 	// node:<token>:server:<uuid>:storage namespace (core handlers/servers_storage.go
 	// writes it, node/storage.go reads+writes it) - NOT dylaris:node:*. Without this

@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"dylaris-core/database"
 	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
+	"dylaris-pkg/errlog"
 )
 
 // HealthHandler powers the admin Status page. It runs a set of on-demand
@@ -81,6 +85,8 @@ func (h *HealthHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	components = append(components, h.nodesComponent())
 	components = append(components, h.gatewayComponent(r.Context()))
 	components = append(components, h.storageComponent())
+	components = append(components, h.redisACLComponent(r.Context(), redisUp))
+	components = append(components, h.storefrontComponent(r.Context()))
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -197,6 +203,175 @@ func (h *HealthHandler) redisComponent(ctx context.Context, up *bool) healthComp
 
 // nodesComponent reports node fleet health from the persisted node.Status,
 // which the discovery service keeps current from heartbeats.
+// nodeSelfReportedFailureMaxAge bounds how old a node's own report may be
+// before the status page stops repeating it.
+//
+// A stream entry outlives the condition it describes: the node writes "pin
+// mismatch", the operator fixes it, and the node then cannot write a recovery
+// line because a node that recovers is online and no longer has a row here to
+// annotate. Without a bound, one solved problem would be reported next to that
+// node forever. An hour is long enough to still be showing the cause while
+// someone investigates the outage it explains.
+const nodeSelfReportedFailureMaxAge = time.Hour
+
+// nodeSelfReportedFailure returns the newest reason this node gave for being
+// unable to reach Core, or "" when there is none, it is stale, or Redis is
+// unavailable.
+//
+// Best-effort in every direction: this decorates a status row, and a Redis
+// hiccup while rendering it must not turn the whole health check into an error.
+func (h *HealthHandler) nodeSelfReportedFailure(nodeToken string) string {
+	if h.state.Redis == nil || nodeToken == "" {
+		return ""
+	}
+	entries, err := errlog.ReadEntries(h.state.Redis, "dylaris:errors:node:"+nodeToken, 1)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	e := entries[0]
+	// An Info entry is the node saying it recovered, so it is not a failure to
+	// report - and it is the newest line precisely when everything is fine.
+	if e.Level != "ERROR" && e.Level != "WARN" {
+		return ""
+	}
+	if ts, perr := time.Parse(time.RFC3339, e.Timestamp); perr == nil {
+		if time.Since(ts) > nodeSelfReportedFailureMaxAge {
+			return ""
+		}
+	}
+	return e.Message
+}
+
+// storefrontComponent reports whether the dylaris.com integration actually
+// works, which the panel alone can never show.
+//
+// Every failure of the link-status call - an unreachable storefront, a
+// STORE_SHARED_KEY that does not match, a 500 - used to come back as plain
+// "not linked", the same answer a perfectly healthy integration gives for a
+// customer who simply has not connected their account. So a broken service-to-
+// service trust looked exactly like normal operation, on the one path that
+// carries money.
+//
+// The probe uses the all-zero UUID: it is a real request over the real key, and
+// the answer for a UUID nobody owns is a valid "not linked" rather than an
+// error. What is under test is the CHANNEL, not any particular account.
+func (h *HealthHandler) storefrontComponent(ctx context.Context) healthComponent {
+	comp := healthComponent{Key: "storefront", Name: "Storefront (billing)"}
+	if !h.state.StoreEnabled {
+		comp.Status = "disabled"
+		comp.Detail = "STORE_URL / STORE_SHARED_KEY not set - open-core build, no billing"
+		return comp
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	sh := NewStoreHandler(h.state)
+	if _, _, err := sh.probeLinkStatus(cctx, "00000000-0000-0000-0000-000000000000"); err != nil {
+		comp.Status = "down"
+		comp.Cause = "storefront_unreachable"
+		comp.Detail = "Cannot talk to " + h.state.StoreURL
+		comp.Reason = err.Error() + ". Purchases cannot provision and the panel shows every account as unlinked while this stands."
+		return comp
+	}
+	comp.Status = "up"
+	comp.Detail = h.state.StoreURL + " answers and accepts our key"
+	return comp
+}
+
+// redisACLComponent reports whether every scoped Redis credential Core is
+// supposed to have provisioned actually exists in Valkey.
+//
+// The reconciler sweeps the other direction - it deletes users no node claims -
+// and nothing checked for the reverse. A MISSING user is the failure with real
+// consequences and no symptom anywhere: the log-shipper for one server gets
+// NOPERM, buffers its output and retries forever, so that server's console goes
+// blank in the panel and panel-typed commands stop arriving. Java keeps running
+// and the container stays Up, so every other signal says healthy. The shipper
+// says so clearly, but only on the node's own container stderr - which on a BYON
+// machine belongs to the customer, not to whoever is looking at the panel.
+//
+// There is one shipper user per server, so this also answers "is per-server
+// isolation actually provisioned" rather than only "is it implemented".
+func (h *HealthHandler) redisACLComponent(ctx context.Context, redisUp bool) healthComponent {
+	comp := healthComponent{Key: "redis_acl", Name: "Redis credentials"}
+	if !redisUp || h.state.Redis == nil {
+		comp.Status = "disabled"
+		comp.Detail = "not checked while Redis is unreachable"
+		return comp
+	}
+
+	nodes, err := h.state.Store.ListNodes()
+	if err != nil {
+		comp.Status = "degraded"
+		comp.Detail = "Could not list nodes"
+		comp.Reason = err.Error()
+		return comp
+	}
+	if len(nodes) == 0 {
+		comp.Status = "disabled"
+		comp.Detail = "no nodes registered"
+		return comp
+	}
+
+	// Same authoritative shape the provisioner and the prune sweep use: a
+	// partial server list would invent missing users out of a lookup failure.
+	serversByToken := make(map[string][]string, len(nodes))
+	for i := range nodes {
+		servers, lerr := h.state.Store.ListServersByNode(nodes[i].ID)
+		if lerr != nil {
+			comp.Status = "degraded"
+			comp.Detail = "Could not list servers"
+			comp.Reason = fmt.Sprintf("node %s: %v", nodes[i].Name, lerr)
+			return comp
+		}
+		uuids := make([]string, 0, len(servers))
+		for _, s := range servers {
+			uuids = append(uuids, s.UUID)
+		}
+		serversByToken[nodes[i].Token] = uuids
+	}
+	expected := redisacl.ExpectedNodeACLUsers(serversByToken)
+
+	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	have, err := h.state.Redis.Do(cctx, "ACL", "USERS").StringSlice()
+	if err != nil {
+		comp.Status = "degraded"
+		comp.Detail = "Could not read the Redis ACL user list"
+		// Verbatim: this route is settings.read, and NOPERM names the command.
+		comp.Reason = err.Error()
+		return comp
+	}
+	present := make(map[string]bool, len(have))
+	for _, u := range have {
+		present[u] = true
+	}
+
+	missing := make([]string, 0)
+	for want := range expected {
+		if !present[want] {
+			missing = append(missing, want)
+		}
+	}
+	sort.Strings(missing) // map iteration order would reshuffle the row every poll
+
+	if len(missing) == 0 {
+		comp.Status = "up"
+		comp.Detail = fmt.Sprintf("%d scoped user(s) provisioned", len(expected))
+		return comp
+	}
+	comp.Status = "degraded"
+	comp.Cause = "acl_users_missing"
+	comp.Detail = fmt.Sprintf("%d of %d scoped user(s) missing", len(missing), len(expected))
+	comp.Reason = "these credentials should exist in Valkey and do not, so whatever holds them gets NOPERM and retries silently: " +
+		strings.Join(missing, ", ") +
+		". A node reconnect or a server placement re-provisions them; if they stay missing, check that Valkey loaded its aclfile."
+	for _, m := range missing {
+		comp.Items = append(comp.Items, healthItem{Name: m, Status: "down", Detail: "not provisioned"})
+	}
+	return comp
+}
+
 func (h *HealthHandler) nodesComponent() healthComponent {
 	comp := healthComponent{Key: "nodes", Name: "Nodes"}
 	nodes, err := h.state.Store.ListNodes()
@@ -218,15 +393,37 @@ func (h *HealthHandler) nodesComponent() healthComponent {
 	for i := range nodes {
 		n := &nodes[i]
 		item := healthItem{Name: n.Name}
-		if n.Status == "online" {
+		// The node's own account of its control channel. Core cannot derive this:
+		// the channel it would learn from is the one that failed. The node writes
+		// it to its Redis error stream over separate credentials, which is the
+		// only path that survives a broken control plane.
+		why := h.nodeSelfReportedFailure(n.Token)
+		switch {
+		case n.Status == "online" && why != "":
+			// The case that made this necessary. `status` is driven by the node's
+			// Redis heartbeat, and the heartbeat does not go over gRPC - so a node
+			// whose control channel is refused (a certificate pin that does not
+			// match, a rejected proof) keeps reporting itself online. Measured on
+			// a live node with TLS disabled against a TLS Core: the panel said
+			// "up", every server on it kept running, and every operation that
+			// rides the mesh - console, file transfer, RCON, the tab proxy - failed
+			// with "Node not connected" and no explanation anywhere.
+			//
+			// It does NOT count toward `online`. Counting it is the lie.
+			item.Status = "degraded"
+			item.Detail = n.Region + " - heartbeat is fine, but the control channel to Core is down: " + why
+		case n.Status == "online":
 			online++
 			item.Status = "up"
 			item.Detail = n.Region
-		} else {
+		default:
 			item.Status = "down"
 			item.Detail = "offline"
 			if n.LastSeenAt != nil {
 				item.Detail = "offline, last seen " + n.LastSeenAt.UTC().Format(time.RFC3339)
+			}
+			if why != "" {
+				item.Detail += " - " + why
 			}
 		}
 		items = append(items, item)
@@ -244,7 +441,11 @@ func (h *HealthHandler) nodesComponent() healthComponent {
 	default:
 		comp.Status = "degraded"
 		comp.Detail = fmt.Sprintf("%d/%d online", online, len(nodes))
-		comp.Reason = fmt.Sprintf("%d node(s) offline", len(nodes)-online)
+		// "N offline" was wrong once a node could be reachable and still not
+		// usable: a heartbeating node with a dead control channel is neither
+		// online nor offline, and calling it offline sends whoever reads this to
+		// check whether the machine is powered on.
+		comp.Reason = fmt.Sprintf("%d node(s) not fully connected - see the rows below", len(nodes)-online)
 	}
 	return comp
 }

@@ -26,10 +26,45 @@ type Logger struct {
 	maxEntries int64
 }
 
+// Services is the canonical set of service names that may appear in a stream
+// key. It is the SAME list a producer picks its name from and a reader scans
+// for, which is the whole point of it existing.
+//
+// Writing and reading used to name the service independently, and they drifted:
+// the edge was renamed gate -> edge, its producer moved to "edge", and Core kept
+// scanning "gate". Nothing failed - the ACL granted the new key, the writes
+// landed, and the reads matched nothing - so the panel showed no edge errors,
+// which is indistinguishable from an edge that has none. Every service carrying
+// player traffic reported nothing for as long as that stood.
+//
+// CROSS-REPO: gateway/pkg/errlog carries a byte-identical copy, because the
+// gateway is a separate repository and its producers (edge, link, hub, beam)
+// must validate against the same list Core reads.
+var Services = []string{"edge", "link", "hub", "beam", "node"}
+
+// IsKnownService reports whether name is one a reader will ever scan for.
+func IsKnownService(name string) bool {
+	for _, s := range Services {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
 // New creates a new error logger that writes to Redis Streams.
-// service: "gate", "link", "hub"
-// instanceID: unique identifier for this instance (e.g. gateID, nodeID)
+// service: one of Services ("edge", "link", "hub", "beam", "node")
+// instanceID: unique identifier for this instance (e.g. edgeID, nodeID)
+//
+// An unknown service name is logged rather than rejected: refusing would take a
+// service down over its diagnostics, which is backwards. But it must not pass in
+// silence either - a name no reader scans for makes this logger a hole that
+// swallows every error written to it, and the symptom is an empty panel section
+// that reads as good news.
 func New(client *redis.Client, service, instanceID string) *Logger {
+	if !IsKnownService(service) {
+		log.Printf("errlog: service %q is not in errlog.Services %v - these entries are written but nothing reads them; add the name to BOTH copies of Services", service, Services)
+	}
 	return &Logger{
 		client:     client,
 		streamKey:  fmt.Sprintf("dylaris:errors:%s:%s", service, instanceID),

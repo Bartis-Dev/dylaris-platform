@@ -106,14 +106,30 @@ function ComponentCard({ comp }: { comp: HealthComponent }) {
                         const im = STATUS_META[item.status] ?? STATUS_META.disabled;
                         const ic = colorClasses(im.color);
                         const IIcon = im.Icon;
+                        // A short detail ("online", "offline, last seen ...") reads
+                        // best on one line beside the name. A node that reported
+                        // WHY it cannot reach Core sends a sentence, and truncating
+                        // that to the width left over next to a hostname hid the one
+                        // part worth reading - the row said "offline, last seen 12:0…"
+                        // exactly as before the reason existed. Long details wrap onto
+                        // their own line instead.
+                        const longDetail = (item.detail?.length ?? 0) > 48;
                         return (
-                            <div key={i} className="flex items-center justify-between gap-3 text-xs">
+                            <div key={i} className={`text-xs ${longDetail ? 'space-y-1' : 'flex items-center justify-between gap-3'}`}>
                                 <span className="flex items-center gap-1.5 min-w-0 text-(--base-08)">
                                     <IIcon size={12} className={`${ic.text} shrink-0`} />
                                     <span className="truncate">{item.name}</span>
                                 </span>
                                 {item.detail && (
-                                    <span className="font-mono text-[11px] text-(--base-06) truncate text-right">{item.detail}</span>
+                                    <span
+                                        className={
+                                            longDetail
+                                                ? 'block font-mono text-[11px] leading-relaxed break-words text-(--base-07) pl-[18px]'
+                                                : 'font-mono text-[11px] text-(--base-06) truncate text-right'
+                                        }
+                                    >
+                                        {item.detail}
+                                    </span>
                                 )}
                             </div>
                         );
