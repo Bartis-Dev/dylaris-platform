@@ -22,7 +22,10 @@ func TestBuildNodeACLRules(t *testing.T) {
 		// storage-path mapping (node:n1:server:<uuid>:storage); without it the
 		// node gets NOPERM on every install + reconcile.
 		"~node:n1:*",
-		"~dylaris:server:uuid-a:*", "~dylaris:core:*", "~sftp:auth:*",
+		"~dylaris:server:uuid-a:*", "~dylaris:core:*",
+		// Node-scoped: the hashes are published per node, so this grant names
+		// the token instead of the whole sftp:auth namespace.
+		"%R~sftp:auth:n1:*",
 		// Upload-limit enforcement needs the node to read the config keys and
 		// read+write the shared per-user daily counter; SFTP needs its own
 		// server-list key. Without these the node-side quota fails open and SFTP
@@ -108,17 +111,82 @@ func TestNodeGlobalKeysAreReadOnlyWhereTheNodeOnlyReads(t *testing.T) {
 
 	// The counterpart: keys the node genuinely writes must stay read+write, so a
 	// blanket tightening cannot pass this test either.
-	for _, k := range []string{"dylaris:migration:*", "dylaris:beam:daily:*"} {
+	for _, k := range []string{
+		"dylaris:beam:daily:*",
+		// Migration progress, for the server being moved in either direction.
+		"dylaris:migration:*:status", "dylaris:migration:*:meta",
+		// Its own transfer endpoint.
+		"dylaris:migration:endpoint:n1",
+	} {
 		if !tokens["~"+k] {
 			t.Errorf("%s must stay read+write - the node writes it", k)
 		}
 	}
 }
 
+// TestNodeMigrationGrantIsNotWholeNamespace pins the split that replaced a
+// blanket "~dylaris:migration:*". That grant was read+write over every server's
+// migration state, so any node - a tenant-owned BYON machine included - could
+// rewrite another server's transfer status or forge a peer's endpoint.
+func TestNodeMigrationGrantIsNotWholeNamespace(t *testing.T) {
+	tokens := map[string]bool{}
+	for _, a := range BuildNodeACLRules("n1", "pw", []string{"uuid-a"}) {
+		tokens[a.(string)] = true
+	}
+	if tokens["~dylaris:migration:*"] {
+		t.Error("the blanket read+write grant on dylaris:migration:* is back")
+	}
+	// Another node's endpoint is readable (a pull migration resolves the source
+	// address) but must never be writable, or a node could redirect a transfer.
+	if !tokens["%R~dylaris:migration:endpoint:*"] {
+		t.Error("peer endpoints must be readable for pull migration")
+	}
+	if tokens["~dylaris:migration:endpoint:*"] {
+		t.Error("peer endpoints must NOT be writable - a node could forge a transfer source")
+	}
+	// Core owns the plan; the node reads nothing from it today and must not write it.
+	if tokens["~dylaris:migration:*:orchestration"] {
+		t.Error("orchestration is Core-authoritative and must not be writable by a node")
+	}
+}
+
+// TestNodeSFTPAuthGrantIsNodeScoped pins that a node can only read the SFTP
+// password hashes Core published FOR IT. The previous "%R~sftp:auth:*" handed
+// every node the bcrypt hash of every account on the platform.
+func TestNodeSFTPAuthGrantIsNodeScoped(t *testing.T) {
+	tokens := map[string]bool{}
+	for _, a := range BuildNodeACLRules("n1", "pw", nil) {
+		tokens[a.(string)] = true
+	}
+	if tokens["%R~sftp:auth:*"] || tokens["~sftp:auth:*"] {
+		t.Error("the fleet-wide sftp:auth grant is back")
+	}
+	if !tokens["%R~"+SFTPAuthKeyPrefix("n1")+"*"] {
+		t.Errorf("missing the node-scoped sftp auth grant; got: %v", tokens)
+	}
+}
+
+// The two copies of this key derivation live in different Go modules and cannot
+// import each other, so the shape is pinned here as well as on the node side.
+func TestSFTPAuthKeyShape(t *testing.T) {
+	if got := SFTPAuthKey("n1", "alice"); got != "sftp:auth:n1:alice" {
+		t.Errorf("SFTPAuthKey = %q, want %q", got, "sftp:auth:n1:alice")
+	}
+	if got := SFTPAuthKeyPrefix("n1"); got != "sftp:auth:n1:" {
+		t.Errorf("SFTPAuthKeyPrefix = %q, want %q", got, "sftp:auth:n1:")
+	}
+}
+
 func TestBuildShipperACLRulesIsNarrow(t *testing.T) {
-	r := joinRules(BuildShipperACLRules("pw", []string{"uuid-a"}))
+	r := joinRules(BuildShipperACLRules("pw", "uuid-a"))
 	if !strings.Contains(r, "~dylaris:server:uuid-a:*") {
 		t.Error("shipper must allow its server keys")
+	}
+	// ONE server, never the node's whole set. dylaris:server:<u>:input is a stdin
+	// bridge into the JVM, so a second server's keys here would let one tenant's
+	// container write into a neighbour's console.
+	if strings.Contains(r, "uuid-b") {
+		t.Errorf("shipper rules reach a second server: %s", r)
 	}
 	for _, forbidden := range []string{"dylaris:node:", "dylaris:core:", "sftp:auth", ":cmds"} {
 		if strings.Contains(r, forbidden) {

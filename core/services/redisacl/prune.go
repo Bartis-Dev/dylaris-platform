@@ -38,14 +38,24 @@ func UnknownNodeACLUsers(users []string, expected map[string]bool) []string {
 	return out
 }
 
-// ExpectedNodeACLUsers is the full set of ACL usernames that should exist for
-// the given node tokens: the agent, its shipper and its link user.
-func ExpectedNodeACLUsers(tokens []string) map[string]bool {
-	m := make(map[string]bool, len(tokens)*3)
-	for _, t := range tokens {
+// ExpectedNodeACLUsers is the full set of ACL usernames that should exist: for
+// each node its agent and link user, plus ONE shipper user per server placed on
+// it (serversByToken).
+//
+// The shipper set has to come from the same authoritative server list the ACLs
+// are built from. Feeding only tokens would make every per-server shipper look
+// like an orphan and delete the credential of every running container on the
+// next sweep. It is also what makes the prune do the cleanup for a server that
+// MOVED: its old node stops listing it, so its shipper user stops being
+// expected, and the sweep removes it without anything else having to remember.
+func ExpectedNodeACLUsers(serversByToken map[string][]string) map[string]bool {
+	m := make(map[string]bool, len(serversByToken)*3)
+	for t, uuids := range serversByToken {
 		m[NodeUsername(t)] = true
-		m[ShipperUsername(t)] = true
 		m[LinkUsername(t)] = true
+		for _, u := range uuids {
+			m[ShipperUsername(t, u)] = true
+		}
 	}
 	return m
 }

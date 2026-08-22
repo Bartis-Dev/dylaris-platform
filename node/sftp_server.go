@@ -118,7 +118,7 @@ func (s *SFTPServer) authUser(username, password string) (*ssh.Permissions, erro
 		return nil, fmt.Errorf("too many failed attempts, try again later")
 	}
 
-	hash, err := s.rdb.Get(ctx, "sftp:auth:"+username).Result()
+	hash, err := s.rdb.Get(ctx, sftpAuthKey(s.nodeID, username)).Result()
 	if err != nil {
 		s.recordAuthFail(ctx, failKey)
 		return nil, fmt.Errorf("user not found")

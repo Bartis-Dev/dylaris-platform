@@ -51,8 +51,8 @@ func TestBuildRedisEnv(t *testing.T) {
 		}
 		m := envMap(t, got)
 
-		wantUser := aclShipperUsername(nodeID)
-		wantPass := aclShipperPassword(nodeSecret, nodeID)
+		wantUser := aclShipperUsername(nodeID, "uuid-abc")
+		wantPass := aclShipperPassword(nodeSecret, nodeID, "uuid-abc")
 
 		if m["REDIS_ADDR"] != mcRedisAddr {
 			t.Errorf("REDIS_ADDR = %q, want %q", m["REDIS_ADDR"], mcRedisAddr)
@@ -208,5 +208,28 @@ func TestApplyIOWeight(t *testing.T) {
 					hc.Resources.BlkioWeight, c.wantValue, c.weight, c.wantApplied)
 			}
 		})
+	}
+}
+
+// Two containers on the SAME node must not be able to compute each other's
+// Redis credential. dylaris:server:<u>:input is a stdin bridge into the JVM, so
+// a shared credential meant one tenant could write to a neighbour's console;
+// splitting only the ACL username would not have closed that if the password
+// still derived from the node alone.
+func TestShipperCredentialIsPerServer(t *testing.T) {
+	const node = "node-token"
+	secret := []byte("a-node-secret")
+
+	uA, uB := aclShipperUsername(node, "srv-a"), aclShipperUsername(node, "srv-b")
+	if uA == uB {
+		t.Errorf("two servers share the ACL username %q", uA)
+	}
+	pA, pB := aclShipperPassword(secret, node, "srv-a"), aclShipperPassword(secret, node, "srv-b")
+	if pA == pB {
+		t.Error("two servers on the same node derive the same shipper password")
+	}
+	// And it must still be stable, or a container would lose Redis on restart.
+	if pA != aclShipperPassword(secret, node, "srv-a") {
+		t.Error("shipper password is not deterministic")
 	}
 }

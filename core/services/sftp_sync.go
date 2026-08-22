@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"dylaris-core/models"
+	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 	"encoding/json"
 	"log"
@@ -99,18 +100,19 @@ func (s *SFTPSyncService) sync() {
 		log.Printf("SFTPSync: failed to list users: %v", err)
 		return
 	}
-	pipe := s.redis.Pipeline()
-	valid := make(map[string]bool, len(users))
+	// Hash per username, so the per-node publish below can look one up without
+	// walking the list again. Nothing is written under a bare "sftp:auth:<user>"
+	// any more: that key was readable by EVERY node, so a tenant's own BYON
+	// machine held the bcrypt hash of every account on the platform. The hashes
+	// now go out per node, in step 2, to the nodes where the user actually has a
+	// server - which also means a user with no servers is published nowhere.
+	hashByUser := make(map[string]string, len(users))
 	for _, u := range users {
 		if u.Password != "" {
-			key := "sftp:auth:" + u.Username
-			pipe.Set(ctx, key, u.Password, 5*time.Minute)
-			valid[key] = true
+			hashByUser[u.Username] = u.Password
 		}
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		log.Printf("SFTPSync: failed to write auth keys: %v", err)
-	}
+	valid := make(map[string]bool, len(users))
 	// Drop auth keys for users that no longer exist (deleted or renamed). The
 	// TTL above already bounds this at 5 minutes; the prune is what closes the
 	// gap between a deletion in the panel and the moment those credentials stop
@@ -118,9 +120,7 @@ func (s *SFTPSyncService) sync() {
 	// keys carried no TTL and that the prune was the only thing standing between
 	// a deleted user and permanent SFTP access - it is not, and reading it that
 	// way makes the 5-minute window look like a bug rather than the floor.)
-	s.pruneStaleAuthKeys(ctx, valid)
-
-	// 2. Publish per-node, per-user server lists
+	// 2. Publish per-node, per-user server lists + the auth hashes that node may see
 	nodes, err := s.store.ListNodes()
 	if err != nil {
 		log.Printf("SFTPSync: failed to list nodes: %v", err)
@@ -146,9 +146,25 @@ func (s *SFTPSyncService) sync() {
 				continue
 			}
 			pipe.Set(ctx, sftpNodeServersKey(node, username), data, 5*time.Minute)
+			// The same TTL as the server list, for the same reason: if this sync
+			// stops, the credentials stop opening a session within 5 minutes
+			// rather than lingering.
+			if hash, ok := hashByUser[username]; ok {
+				authKey := redisacl.SFTPAuthKey(node.Token, username)
+				pipe.Set(ctx, authKey, hash, 5*time.Minute)
+				valid[authKey] = true
+			}
 		}
 		if _, err := pipe.Exec(ctx); err != nil {
 			log.Printf("SFTPSync: failed to write node %s keys: %v", node.Name, err)
 		}
 	}
+
+	// Drop auth keys that no longer belong: users deleted or renamed, and users
+	// whose access to a node was revoked. This runs AFTER the node loop because
+	// `valid` is only complete then - pruning first would delete every key the
+	// loop had just written. It also clears the old fleet-wide
+	// "sftp:auth:<username>" keys from before this was node-scoped, since those
+	// can never appear in `valid` again.
+	s.pruneStaleAuthKeys(ctx, valid)
 }

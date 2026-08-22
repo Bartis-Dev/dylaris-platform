@@ -220,11 +220,25 @@ func (r *ACLReconciler) pruneOrphanNodeACLs(ctx context.Context, nodes []models.
 		log.Printf("acl reconciler: list ACL users for prune: %v", err)
 		return
 	}
-	tokens := make([]string, 0, len(nodes))
+	// The server list per node, because there is one shipper ACL user per server.
+	// A lookup failure for one node makes its shipper users look unexpected, and
+	// deleting them would cut Redis out from under that node's running
+	// containers - so skip the whole sweep rather than prune on a partial view.
+	serversByToken := make(map[string][]string, len(nodes))
 	for _, n := range nodes {
-		tokens = append(tokens, n.Token)
+		servers, lerr := r.store.ListServersByNode(n.ID)
+		if lerr != nil {
+			log.Printf("acl reconciler: prune skipped, list servers for node %d (%s): %v",
+				n.ID, tokenPrefix(n.Token), lerr)
+			return
+		}
+		uuids := make([]string, 0, len(servers))
+		for _, s := range servers {
+			uuids = append(uuids, s.UUID)
+		}
+		serversByToken[n.Token] = uuids
 	}
-	orphans := redisacl.UnknownNodeACLUsers(res, redisacl.ExpectedNodeACLUsers(tokens))
+	orphans := redisacl.UnknownNodeACLUsers(res, redisacl.ExpectedNodeACLUsers(serversByToken))
 	for _, u := range orphans {
 		// Named in full on purpose: this deletes a credential, and an operator
 		// needs to be able to tell afterwards which ones went and why.

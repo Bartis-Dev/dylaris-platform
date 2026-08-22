@@ -12,9 +12,11 @@ import (
 func TestACLGoldenVectors(t *testing.T) {
 	secret := []byte("0123456789abcdef0123456789abcdef")
 	const token = "node-a"
+	// The shipper credential is per SERVER, so the vector needs a server uuid too.
+	const vectorServer = "srv-1"
 	cases := []struct{ name, got, want string }{
 		{"node", aclNodePassword(secret, token), "713d2c1b3d181aaee59c162fccc84610e695262c79d2bfb3d738991e0aef8487"},
-		{"shipper", aclShipperPassword(secret, token), "a2fd4a4c4ae6cee28a0d72f89620f2c77680c075041706e5f61c9213e3201096"},
+		{"shipper", aclShipperPassword(secret, token, vectorServer), "16b3871d0705f9100a19d454d4d6c3b8b61d23b75c60206cc5c377f7d231cf55"},
 		{"proof", aclProof(secret, token), "dbed444099043c96ff66b685e59a489f532fb41387bcdba74e5b2e382f5f9ec9"},
 	}
 	for _, c := range cases {
@@ -22,7 +24,7 @@ func TestACLGoldenVectors(t *testing.T) {
 			t.Errorf("%s vector drift vs Core:\n got  %s\n want %s", c.name, c.got, c.want)
 		}
 	}
-	if aclNodeUsername("x") != "node-x" || aclShipperUsername("x") != "node-x-shipper" {
+	if aclNodeUsername("x") != "node-x" || aclShipperUsername("x", "s1") != "node-x-shipper-s1" {
 		t.Fatal("username format must match Core")
 	}
 }
@@ -102,5 +104,19 @@ func TestFirstBootPersistsIntoAMissingDir(t *testing.T) {
 		if perm := fi.Mode().Perm(); perm != 0755 {
 			t.Errorf("secret dir mode = %o, want 0755", perm)
 		}
+	}
+}
+
+// The node and Core derive this key in two separate Go modules that cannot
+// import each other, so each side pins the shape. A drift makes every SFTP
+// login fail with "user not found" and nothing else says why.
+func TestSFTPAuthKeyMatchesCore(t *testing.T) {
+	if got := sftpAuthKey("n1", "alice"); got != "sftp:auth:n1:alice" {
+		t.Errorf("sftpAuthKey = %q, want %q (core: redisacl.SFTPAuthKey)", got, "sftp:auth:n1:alice")
+	}
+	// Node-scoped by construction: a key that did not carry the token would be
+	// readable by every node under the old fleet-wide grant.
+	if got := sftpAuthKey("other-node", "alice"); got == sftpAuthKey("n1", "alice") {
+		t.Error("sftpAuthKey does not depend on the node token")
 	}
 }

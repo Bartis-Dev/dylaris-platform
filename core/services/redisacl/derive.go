@@ -15,18 +15,58 @@ import (
 	"strconv"
 )
 
+// SFTPAuthKeyPrefix is the Redis prefix under which Core publishes the SFTP
+// password hashes a given node is allowed to see: "sftp:auth:<token>:".
+//
+// The hashes used to live at "sftp:auth:<username>" with the node ACL granting
+// "%R~sftp:auth:*", so every node held the bcrypt hash of every account on the
+// platform - including a tenant's own BYON machine, for users with nothing on it.
+// Keying by node lets the grant be "%R~sftp:auth:<token>:*" instead, and lets
+// Core publish a hash only to the nodes where that user actually has a server.
+//
+// CROSS-MODULE: node/redisacl.go carries a byte-identical copy, because the node
+// agent is a separate Go module and cannot import this one. A drift in either
+// direction makes SFTP authentication fail with "user not found" on every node.
+func SFTPAuthKeyPrefix(nodeToken string) string { return "sftp:auth:" + nodeToken + ":" }
+
+// SFTPAuthKey is the full key holding one user's SFTP password hash for one node.
+func SFTPAuthKey(nodeToken, username string) string {
+	return SFTPAuthKeyPrefix(nodeToken) + username
+}
+
 // NodeUsername / ShipperUsername are the ACL usernames for a node.
-func NodeUsername(token string) string    { return "node-" + token }
-func ShipperUsername(token string) string { return "node-" + token + "-shipper" }
+func NodeUsername(token string) string { return "node-" + token }
+
+// ShipperUsername is the ACL username for ONE Minecraft container's log-shipper,
+// on one node.
+//
+// Per SERVER, not per node. The previous "node-<token>-shipper" was a single
+// user granted "~dylaris:server:<u>:*" for every server on the machine - and
+// "dylaris:server:<u>:input" is a stdin bridge into the JVM (log-shipper BLPops
+// it straight into the process). So the credential handed to one tenant's
+// container could read AND write a neighbouring tenant's console on the same
+// node. Splitting the user is what makes the per-server key grant mean
+// something.
+//
+// CROSS-MODULE: node/redisacl.go carries a byte-identical copy.
+func ShipperUsername(token, serverUUID string) string {
+	return "node-" + token + "-shipper-" + serverUUID
+}
 
 // NodePassword derives the node agent's Redis password from its per-node secret.
 func NodePassword(secret []byte, token string) string {
 	return derive(secret, "dylaris-redis-acl:v1:node:"+token)
 }
 
-// ShipperPassword derives the MC-container (log-shipper) Redis password.
-func ShipperPassword(secret []byte, token string) string {
-	return derive(secret, "dylaris-redis-acl:v1:shipper:"+token)
+// ShipperPassword derives one container's log-shipper Redis password.
+//
+// serverUUID is part of the derivation, not only of the username: two containers
+// on the same node must not be able to compute each other's credential, or
+// splitting the ACL user would buy nothing.
+//
+// CROSS-MODULE: node/redisacl.go carries a byte-identical copy.
+func ShipperPassword(secret []byte, token, serverUUID string) string {
+	return derive(secret, "dylaris-redis-acl:v1:shipper:"+token+":"+serverUUID)
 }
 
 // LinkUsername is the ACL username for a node's Link sidecar.

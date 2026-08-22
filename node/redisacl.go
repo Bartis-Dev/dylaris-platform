@@ -13,14 +13,37 @@ import (
 // These derivation functions MUST stay byte-identical to the Core side
 // (core/services/redisacl/derive.go). TestACLGoldenVectors pins the wire format;
 // a drift here silently breaks this node's Redis auth.
+// sftpAuthKey is where Core publishes one user's SFTP password hash FOR THIS
+// NODE: "sftp:auth:<nodeToken>:<username>".
+//
+// CROSS-MODULE: byte-identical to redisacl.SFTPAuthKey in core (a separate Go
+// module, so it cannot be imported). The hashes used to sit at
+// "sftp:auth:<username>" with every node granted "%R~sftp:auth:*", which handed
+// each node - a tenant's own BYON machine included - the bcrypt hash of every
+// account on the platform. A drift between the two copies makes every SFTP login
+// fail with "user not found".
+func sftpAuthKey(nodeToken, username string) string {
+	return "sftp:auth:" + nodeToken + ":" + username
+}
+
 func aclNodeUsername(token string) string    { return "node-" + token }
-func aclShipperUsername(token string) string { return "node-" + token + "-shipper" }
+// aclShipperUsername / aclShipperPassword are per SERVER, not per node.
+//
+// CROSS-MODULE: byte-identical to redisacl.ShipperUsername / ShipperPassword in
+// core. One user per node used to be granted every server's keys on the machine,
+// and dylaris:server:<u>:input is a stdin bridge into the JVM, so the credential
+// baked into one tenant's container could read and write a neighbour's console.
+// The server uuid is in the PASSWORD derivation too, not just the name, or two
+// containers on this node could still compute each other's credential.
+func aclShipperUsername(token, serverUUID string) string {
+	return "node-" + token + "-shipper-" + serverUUID
+}
 
 func aclNodePassword(secret []byte, token string) string {
 	return aclDerive(secret, "dylaris-redis-acl:v1:node:"+token)
 }
-func aclShipperPassword(secret []byte, token string) string {
-	return aclDerive(secret, "dylaris-redis-acl:v1:shipper:"+token)
+func aclShipperPassword(secret []byte, token, serverUUID string) string {
+	return aclDerive(secret, "dylaris-redis-acl:v1:shipper:"+token+":"+serverUUID)
 }
 func aclLinkUsername(token string) string { return "node-" + token + "-link" }
 func aclLinkPassword(secret []byte, token string) string {

@@ -366,23 +366,20 @@ func (dm *DockerManager) sidecarRedisAddr(netID string) (string, error) {
 // two differ on the warp proxy, where the node's is loopback and a container's
 // is the bridge gateway.
 func buildRedisEnv(uuid, subServer, sidecarAddr string) []string {
-	// Redis ACL is mandatory: MC containers always get the per-node SHIPPER user.
-	// Derived deterministically; Core provisions the matching user.
+	// Redis ACL is mandatory: every MC container gets a SHIPPER credential,
+	// derived deterministically here and provisioned by Core to match.
 	//
-	// The scope is PER NODE, not per server. BuildShipperACLRules (core/services/
-	// redisacl/rules.go) grants ~dylaris:server:<u>:* for EVERY server assigned to
-	// this node, with +@read +@write. On a shared platform node those are other
-	// tenants' servers, and dylaris:server:<u>:input is a stdin bridge into their
-	// JVM (log-shipper's forwardInput BLPops it straight into the process), so
-	// this credential reaches a neighbour's console - reading it and writing to
-	// it. What it genuinely does NOT reach is node-scoped keys or :cmds.
+	// Scoped PER SERVER. It used to be one user per node, granted
+	// ~dylaris:server:<u>:* for every server on the machine with +@read +@write.
+	// On a shared platform node those are other tenants' servers, and
+	// dylaris:server:<u>:input is a stdin bridge into their JVM (log-shipper's
+	// forwardInput BLPops it straight into the process) - so the credential baked
+	// into one tenant's container could read AND write a neighbour's console.
 	//
-	// This comment used to claim the opposite. Closing it needs a per-SERVER
-	// shipper user, which is a Core provisioning change (N users per node) rather
-	// than something this function can decide; until then, do not read the
-	// per-node scoping as tenant isolation.
-	user := aclShipperUsername(nodeID)
-	pass := aclShipperPassword(getNodeSecret(), nodeID)
+	// The uuid is part of the PASSWORD derivation as well as the username, so two
+	// containers on this node cannot compute each other's credential either.
+	user := aclShipperUsername(nodeID, uuid)
+	pass := aclShipperPassword(getNodeSecret(), nodeID, uuid)
 	env := []string{
 		fmt.Sprintf("REDIS_ADDR=%s", sidecarAddr),
 		fmt.Sprintf("REDIS_USER=%s", user),

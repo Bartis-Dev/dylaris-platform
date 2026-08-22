@@ -23,12 +23,14 @@ func TestOmittedUUIDIsARevocationNotASkip(t *testing.T) {
 	full := []string{"uuid-a", "uuid-b"}
 	short := []string{"uuid-a"} // uuid-b lost to a failed scan
 
+	// The shipper is no longer in this table: its rules are built for ONE server,
+	// so there is no list for a short read to truncate. Its per-server scoping is
+	// covered by TestBuildShipperACLRulesIsNarrow.
 	for _, tc := range []struct {
 		name  string
 		build func([]string) []interface{}
 	}{
 		{"node", func(u []string) []interface{} { return BuildNodeACLRules(token, "pw", u) }},
-		{"shipper", func(u []string) []interface{} { return BuildShipperACLRules("pw", u) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rules := tc.build(short)

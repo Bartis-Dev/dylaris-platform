@@ -3,6 +3,7 @@ package redisacl
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,16 +23,23 @@ func NewProvisioner(admin *redis.Client) *Provisioner { return &Provisioner{admi
 // a full reconcile sweep does one temp-file+rename, not one per node.
 func (p *Provisioner) EnsureNodeACLNoSave(ctx context.Context, token, tunnelToken string, secret []byte, serverUUIDs []string) error {
 	nodePw := NodePassword(secret, token)
-	shipPw := ShipperPassword(secret, token)
 	linkPw := LinkPassword(secret, token)
 
 	nodeArgs := SetUserArgs(NodeUsername(token), BuildNodeACLRules(token, nodePw, serverUUIDs))
 	if err := p.admin.Do(ctx, nodeArgs...).Err(); err != nil {
 		return err
 	}
-	shipArgs := SetUserArgs(ShipperUsername(token), BuildShipperACLRules(shipPw, serverUUIDs))
-	if err := p.admin.Do(ctx, shipArgs...).Err(); err != nil {
-		return err
+	// One shipper user per SERVER. A single per-node user was granted every
+	// server's keys on the machine, and dylaris:server:<u>:input is a stdin
+	// bridge into the JVM, so one tenant's container could write to a
+	// neighbour's console. Users for servers that left are not deleted here -
+	// the reconciler's prune sweep removes whatever ExpectedNodeACLUsers no
+	// longer lists, which also covers a server that moved to another node.
+	for _, u := range serverUUIDs {
+		shipArgs := SetUserArgs(ShipperUsername(token, u), BuildShipperACLRules(ShipperPassword(secret, token, u), u))
+		if err := p.admin.Do(ctx, shipArgs...).Err(); err != nil {
+			return err
+		}
 	}
 	linkArgs := SetUserArgs(LinkUsername(token), BuildLinkACLRules(linkPw, token, tunnelToken))
 	if err := p.admin.Do(ctx, linkArgs...).Err(); err != nil {
@@ -52,11 +60,27 @@ func (p *Provisioner) EnsureNodeACL(ctx context.Context, token, tunnelToken stri
 	return nil
 }
 
-// RemoveNodeACL drops all three users (e.g. node deleted). Best-effort.
+// RemoveNodeACL drops every user belonging to a node (e.g. node deleted).
+// Best-effort.
+//
+// The shipper users are enumerated rather than named: there is one per server
+// and this is also called on paths that no longer know the server list. Missing
+// one would leave a live credential for a deleted node's container - exactly
+// the leak the prune sweep exists to catch, and this is the cheaper place to
+// not create it.
 func (p *Provisioner) RemoveNodeACL(ctx context.Context, token string) {
 	_ = p.admin.Do(ctx, "ACL", "DELUSER", NodeUsername(token)).Err()
-	_ = p.admin.Do(ctx, "ACL", "DELUSER", ShipperUsername(token)).Err()
 	_ = p.admin.Do(ctx, "ACL", "DELUSER", LinkUsername(token)).Err()
+	// Pre-split deployments had one bare "node-<token>-shipper"; harmless if absent.
+	_ = p.admin.Do(ctx, "ACL", "DELUSER", "node-"+token+"-shipper").Err()
+	if users, err := p.admin.Do(ctx, "ACL", "USERS").StringSlice(); err == nil {
+		prefix := "node-" + token + "-shipper-"
+		for _, u := range users {
+			if strings.HasPrefix(u, prefix) {
+				_ = p.admin.Do(ctx, "ACL", "DELUSER", u).Err()
+			}
+		}
+	}
 	p.SaveACL(ctx)
 }
 

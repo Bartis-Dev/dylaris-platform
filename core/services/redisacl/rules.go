@@ -43,8 +43,37 @@ func globalReadKeys() []string {
 		"%R~beam:max_upload_bytes", "%R~beam:daily_upload_bytes",
 		"~dylaris:beam:daily:*",
 		"%R~dylaris:core:*",
-		"%R~sftp:auth:*",
-		"~dylaris:migration:*",
+	}
+}
+
+// migrationKeys are the migration grants, split by what the node actually does
+// with each sub-namespace instead of the single "~dylaris:migration:*" this
+// replaced - which was read+write over the WHOLE namespace, so any node,
+// tenant-owned BYON machines included, could rewrite any other server's
+// migration state or forge a peer's transfer endpoint.
+//
+// Scoped by SUB-NAMESPACE rather than per assigned server on purpose: the ACL is
+// rebuilt from ListServersByNode on a reconcile tick, so a server migrating IN is
+// not yet in the destination node's list at the moment that node has to write its
+// status. Per-server grants would make inbound migration fail until the next
+// sweep. Sub-namespace scoping keeps the write surface to the three keys the node
+// genuinely owns without depending on that timing.
+//
+// Verified against node/: it writes :status and :meta (migration_commands.go) and
+// its own endpoint (migration_server.go), reads a peer's endpoint to pull from it,
+// and never touches :orchestration or dylaris:migration:stream - so both stay out.
+func migrationKeys(token string) []string {
+	return []string{
+		// Its own transfer endpoint. Peers' endpoints are readable because a pull
+		// migration has to resolve the source node's address.
+		"~dylaris:migration:endpoint:" + token,
+		"%R~dylaris:migration:endpoint:*",
+		// Progress it reports for the server it is moving, in either direction.
+		"~dylaris:migration:*:status",
+		"~dylaris:migration:*:meta",
+		// Core-authoritative plan. The node reads nothing from it today; read-only
+		// so that stays true by construction rather than by convention.
+		"%R~dylaris:migration:*:orchestration",
 	}
 }
 
@@ -65,6 +94,16 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 	// Without this getUserServers gets NOPERM and every SFTP session sees an
 	// empty root, so SFTP is dead under mandatory ACL.
 	rules = append(rules, "%R~sftp:node:"+token+":*")
+	// SFTP password hashes for the users entitled to THIS node, written per node
+	// by core/services/sftp_sync.go.
+	//
+	// This replaced "%R~sftp:auth:*", which was keyed by username alone and so
+	// handed every node - a tenant's BYON machine included - the bcrypt hash of
+	// every account on the platform, whether or not that user had anything on it.
+	rules = append(rules, "%R~"+SFTPAuthKeyPrefix(token)+"*")
+	for _, k := range migrationKeys(token) {
+		rules = append(rules, k)
+	}
 	for _, u := range serverUUIDs {
 		rules = append(rules, "~dylaris:server:"+u+":*")
 	}
@@ -99,12 +138,10 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 // BuildShipperACLRules returns the ACL rules for the per-node shipper user:
 // ONLY the assigned servers' keys + their stats:live channel. No node-scoped
 // keys, no global reads, no :cmds.
-func BuildShipperACLRules(password string, serverUUIDs []string) []interface{} {
+func BuildShipperACLRules(password, serverUUID string) []interface{} {
 	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
-	for _, u := range serverUUIDs {
-		rules = append(rules, "~dylaris:server:"+u+":*")
-		rules = append(rules, "&dylaris:server:"+u+":stats:live")
-	}
+	rules = append(rules, "~dylaris:server:"+serverUUID+":*")
+	rules = append(rules, "&dylaris:server:"+serverUUID+":stats:live")
 	for _, c := range commandCats {
 		rules = append(rules, c)
 	}

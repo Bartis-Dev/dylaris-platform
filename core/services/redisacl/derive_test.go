@@ -15,10 +15,15 @@ func TestDeriveDeterministicAndDistinct(t *testing.T) {
 	if NodePassword(secret, "node-b") == p1 {
 		t.Fatal("different tokens must yield different passwords")
 	}
-	if ShipperPassword(secret, "node-a") == p1 {
+	if ShipperPassword(secret, "node-a", "srv-1") == p1 {
 		t.Fatal("node vs shipper passwords must differ")
 	}
-	if NodeUsername("x") != "node-x" || ShipperUsername("x") != "node-x-shipper" {
+	// Per SERVER: two containers on one node must not derive the same credential,
+	// or splitting the ACL user would buy nothing.
+	if ShipperPassword(secret, "node-a", "srv-1") == ShipperPassword(secret, "node-a", "srv-2") {
+		t.Fatal("two servers on the same node derive the same shipper password")
+	}
+	if NodeUsername("x") != "node-x" || ShipperUsername("x", "s1") != "node-x-shipper-s1" {
 		t.Fatal("username format wrong")
 	}
 }
@@ -31,11 +36,13 @@ func TestDeriveDeterministicAndDistinct(t *testing.T) {
 func TestGoldenVectors(t *testing.T) {
 	secret := []byte("0123456789abcdef0123456789abcdef")
 	const token = "node-a"
+	// The shipper credential is per SERVER, so the vector needs a server uuid too.
+	const vectorServer = "srv-1"
 	cases := []struct {
 		name, got, want string
 	}{
 		{"node", NodePassword(secret, token), "713d2c1b3d181aaee59c162fccc84610e695262c79d2bfb3d738991e0aef8487"},
-		{"shipper", ShipperPassword(secret, token), "a2fd4a4c4ae6cee28a0d72f89620f2c77680c075041706e5f61c9213e3201096"},
+		{"shipper", ShipperPassword(secret, token, vectorServer), "16b3871d0705f9100a19d454d4d6c3b8b61d23b75c60206cc5c377f7d231cf55"},
 		{"proof", Proof(secret, token), "dbed444099043c96ff66b685e59a489f532fb41387bcdba74e5b2e382f5f9ec9"},
 	}
 	for _, c := range cases {
