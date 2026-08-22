@@ -11,6 +11,7 @@ import {
     type WarpRegionView, type WarpKeyView,
 } from '@/lib/api/types';
 import { routeOnlyCompose, nodeCompose, deployCli, nodeIdFromLabel, EXTERNAL_NODE_PORTS } from '@/lib/warpDeploy';
+import type { DeployPlatform } from '@/lib/warpDeploy';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { API_URL } from '@/lib/api/core';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
@@ -653,6 +654,9 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
     // their own /nodes page.
     const [target, setTarget] = useState<DeployTarget>('external');
     const [copied, setCopied] = useState<string | null>(null);
+    // Route-only is the only kind that runs on Docker Desktop; a managed node
+    // drives the host's Docker socket, which is not covered there.
+    const [platform, setPlatform] = useState<DeployPlatform>('linux');
 
     const kind: 'node' | 'route-only' = target === 'route-only' ? 'route-only' : 'node';
     const input = {
@@ -662,6 +666,7 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
         // snippet is complete even before anyone visits Overlay Segmentation.
         tunnelSubnets: tunnelSubnets || config?.tunnelSubnets || '',
         nodeId: nodeIdFromLabel(name),
+        platform,
     };
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
     const cli = deployCli(kind);
@@ -758,6 +763,21 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
                     <div className="space-y-1">
                         <div className="flex items-center justify-between">
                             <label className="mono-label">{kind === 'node' ? 'byon-node.yml' : 'warp.yml'}</label>
+                            {kind === 'route-only' && (
+                                <div className="flex items-center gap-1" role="group" aria-label="Target machine">
+                                    {(['linux', 'windows'] as const).map((p) => (
+                                        <button
+                                            key={p}
+                                            type="button"
+                                            onClick={() => setPlatform(p)}
+                                            aria-pressed={platform === p}
+                                            className={`rounded-md px-2 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${platform === p ? 'bg-(--accent) text-(--base-00)' : 'bg-(--base-02) text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'}`}
+                                        >
+                                            {p === 'linux' ? 'Linux' : 'Docker Desktop'}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                             <button onClick={() => copy('compose', compose)} className="btn btn-secondary btn-sm">
                                 {copied === 'compose' ? <Check size={12} /> : <Copy size={12} />} Copy
                             </button>

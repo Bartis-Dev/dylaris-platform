@@ -38,7 +38,36 @@ export type WarpDeployInput = {
     nodeId?: string;
     /** Route-only: the local host the link may dial. Host only, no port. */
     localTarget?: string;
+    /**
+     * Which machine the snippet is for. Only route-only differs, and only in
+     * where the customer's own server is reachable from - see
+     * defaultLocalTarget. Defaults to linux.
+     */
+    platform?: DeployPlatform;
 };
+
+export type DeployPlatform = 'linux' | 'windows';
+
+/**
+ * Where the link can reach the customer's own Minecraft server.
+ *
+ * On Linux both containers are host-networked, so the host's loopback IS the
+ * customer's loopback and 127.0.0.1 is right.
+ *
+ * On Docker Desktop it is not. `network_mode: host` there joins the WSL2 VM's
+ * network namespace, not Windows', so 127.0.0.1 inside the link is the VM - a
+ * server running on Windows is simply not there. Docker Desktop publishes the
+ * Windows host as `host.docker.internal`, which is what actually reaches it.
+ * (Measured: a host-networked port is NOT reachable from Windows, while
+ * host.docker.internal resolves and connects.)
+ *
+ * warp and the link still find each other over the VM's 127.0.0.1 on both
+ * platforms, because they share that namespace - only the customer's own
+ * server sits outside it.
+ */
+export function defaultLocalTarget(platform: DeployPlatform | undefined): string {
+    return platform === 'windows' ? 'host.docker.internal' : '127.0.0.1';
+}
 
 const REG = 'ghcr.io/bartis-dev';
 
@@ -113,8 +142,13 @@ export function nodeIdFromLabel(label: string | undefined): string | undefined {
  * second secret has to be handed out and nothing secret lands on disk.
  */
 export function routeOnlyCompose(i: WarpDeployInput): string {
+    const target = or(i.localTarget, defaultLocalTarget(i.platform));
+    const header = i.platform === 'windows'
+        ? `# Docker Desktop. Host networking here joins the WSL2 VM, not Windows, so
+# your own server is reached at host.docker.internal rather than 127.0.0.1.`
+        : `# Linux. Kernel WireGuard needs host networking and NET_ADMIN.`;
     return `# route-only.yml  ->  docker compose -f route-only.yml up -d
-# Linux only: kernel WireGuard needs host networking and NET_ADMIN.
+${header}
 services:
   warp:
     image: ${REG}/dylaris-gateway-warp:latest
@@ -145,8 +179,8 @@ services:
       REDIS_USE_TLS: "false"
       # Your own Minecraft server. Host only, NO port - compared as an exact
       # string, so "127.0.0.1:25565" never matches.
-      LINK_ALLOWED_TARGETS: "${or(i.localTarget, '127.0.0.1')}"
-      LOCAL_HOST: "${or(i.localTarget, '127.0.0.1')}"
+      LINK_ALLOWED_TARGETS: "${target}"
+      LOCAL_HOST: "${target}"
       # Host networking, so the default ":25540" would put an unauthenticated
       # status endpoint on your LAN. Nothing reads it in route-only mode.
       LINK_PORT: "127.0.0.1:25540"

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink } from 'lucide-react';
 import { nodeCompose, routeOnlyCompose, deployCli } from '@/lib/warpDeploy';
+import type { DeployPlatform } from '@/lib/warpDeploy';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 
 // Shared by both halves of "my infrastructure". They used to be two pages with
@@ -98,12 +99,17 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
     nodeId?: string;
     config?: WarpDeployConfig | null;
 }) {
+    // Only route-only runs on Docker Desktop. A managed node drives the host's
+    // Docker socket to run Minecraft containers, which has its own path and port
+    // semantics there and is not covered, so the toggle stays off for it.
+    const [platform, setPlatform] = useState<DeployPlatform>('linux');
     const input = {
         apiKey: warpKey ?? '<your-warp-key>',
         enrollUrl,
         nodeEnrollToken,
         grpcTlsFingerprint,
         nodeId,
+        platform,
         // Undetermined values stay undefined so the snippet keeps its
         // placeholder: a blank tells the reader something is missing, an empty
         // string looks like a setting that was deliberately cleared.
@@ -117,10 +123,37 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
                 <Terminal size={15} className="text-(--accent-light)" />
                 Deploy it on your machine
             </div>
-            <p className="text-xs text-(--base-06)">
-                Linux only: the tunnel uses kernel WireGuard, which needs host networking and
-                NET_ADMIN. There is no Windows or macOS path for the machine itself.
-            </p>
+            {kind === 'route-only' ? (
+                <>
+                    <div className="flex items-center gap-1" role="group" aria-label="Target machine">
+                        {(['linux', 'windows'] as const).map((p) => (
+                            <button
+                                key={p}
+                                type="button"
+                                onClick={() => setPlatform(p)}
+                                aria-pressed={platform === p}
+                                className={`rounded-md px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
+                                    platform === p
+                                        ? 'bg-(--accent) text-(--base-00)'
+                                        : 'bg-(--base-02) text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'
+                                }`}
+                            >
+                                {p === 'linux' ? 'Linux' : 'Windows (Docker Desktop)'}
+                            </button>
+                        ))}
+                    </div>
+                    <p className="text-xs text-(--base-06)">
+                        {platform === 'linux'
+                            ? 'The tunnel uses kernel WireGuard, which needs host networking and NET_ADMIN.'
+                            : 'Host networking on Docker Desktop joins the WSL2 VM, not Windows, so the snippet points the link at host.docker.internal. Your Minecraft server keeps running on Windows as it does now.'}
+                    </p>
+                </>
+            ) : (
+                <p className="text-xs text-(--base-06)">
+                    Linux only: the node drives the host&apos;s Docker socket to run your Minecraft
+                    containers, which needs host networking and NET_ADMIN.
+                </p>
+            )}
             <Snippet title={kind === 'node' ? 'byon-node.yml' : 'route-only.yml'} body={compose} />
             <Snippet title="Commands" body={deployCli(kind)} />
         </div>

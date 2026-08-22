@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { routeOnlyCompose, nodeCompose, deployCli, nodeIdFromLabel, EXTERNAL_NODE_PORTS } from './warpDeploy';
+import { routeOnlyCompose, nodeCompose, deployCli, nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
 
@@ -197,5 +197,44 @@ describe('EXTERNAL_NODE_PORTS', () => {
         const fastpath = EXTERNAL_NODE_PORTS.find(p => p.port === 25523);
         expect(fastpath?.note).toContain('BEAM_LAN_FASTPATH=false');
         expect(nodeCompose(base)).toContain('BEAM_LAN_FASTPATH: "true"');
+    });
+});
+
+// Docker Desktop's `network_mode: host` joins the WSL2 VM, not Windows. A
+// snippet that kept 127.0.0.1 there would point the link at the VM's loopback
+// and never reach the server the customer actually runs - measured: a
+// host-networked port is not reachable from Windows, host.docker.internal is.
+describe('routeOnlyCompose on Docker Desktop', () => {
+    it('targets host.docker.internal instead of loopback', () => {
+        const out = routeOnlyCompose({ ...base, platform: 'windows' });
+        expect(out).toContain('LOCAL_HOST: "host.docker.internal"');
+        expect(out).toContain('LINK_ALLOWED_TARGETS: "host.docker.internal"');
+        expect(out).not.toContain('LOCAL_HOST: "127.0.0.1"');
+    });
+
+    it('says why, so the reader is not left guessing', () => {
+        const out = routeOnlyCompose({ ...base, platform: 'windows' });
+        expect(out).toContain('WSL2 VM');
+        expect(out).not.toContain('Linux only');
+    });
+
+    // warp and the link share the VM's namespace, so they still find each other
+    // on loopback - only the customer's own server sits outside it.
+    it('keeps warp\'s local proxy on loopback', () => {
+        const out = routeOnlyCompose({ ...base, platform: 'windows' });
+        expect(out).toContain('REDIS_ADDR: "127.0.0.1:25571"');
+        expect(out).toContain('LINK_PORT: "127.0.0.1:25540"');
+    });
+
+    it('still lets an explicit target win', () => {
+        const out = routeOnlyCompose({ ...base, platform: 'windows', localTarget: '192.168.1.50' });
+        expect(out).toContain('LOCAL_HOST: "192.168.1.50"');
+    });
+
+    it('defaults to the linux target when no platform is given', () => {
+        expect(defaultLocalTarget(undefined)).toBe('127.0.0.1');
+        expect(defaultLocalTarget('linux')).toBe('127.0.0.1');
+        expect(defaultLocalTarget('windows')).toBe('host.docker.internal');
+        expect(routeOnlyCompose(base)).toContain('LOCAL_HOST: "127.0.0.1"');
     });
 });
