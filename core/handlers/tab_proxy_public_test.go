@@ -170,6 +170,10 @@ type tabProxyPublicFakeStore struct {
 	db       *sql.DB
 	servers  map[int]*models.Server
 	settings map[string]string
+	// grants, when set for a user id, is what Resolve sees for that caller -
+	// the only way these fakes can produce a NON-owner who still holds some
+	// capabilities. Needed to tell overview.read apart from tabs.read.
+	grants map[string][]string
 }
 
 func (f *tabProxyPublicFakeStore) RawDB() *sql.DB { return f.db }
@@ -198,6 +202,13 @@ func (f *tabProxyPublicFakeStore) GetUserPanelAuthz(userID string) (*int, store.
 }
 
 func (f *tabProxyPublicFakeStore) GetServerGrant(serverID int, userID string) (*store.ServerGrant, error) {
+	if caps, ok := f.grants[userID]; ok {
+		return &store.ServerGrant{
+			ServerID:     &serverID,
+			UserID:       userID,
+			CapOverrides: store.CapOverrides{Grant: caps},
+		}, nil
+	}
 	return nil, nil
 }
 
@@ -316,7 +327,10 @@ func TestPublic_PublicVisibility_ServesAnonWhenAllowed(t *testing.T) {
 	})
 	rec := httptest.NewRecorder()
 
-	h.Public(rec, publicRequest("tok", "", nil))
+	// PublicIsolated, because reaching the mesh at all is what this asserts:
+	// Public (the panel-origin registration) deliberately stops at the gate
+	// and answers status-only, so it can never produce the 502 below.
+	h.PublicIsolated(rec, publicRequest("tok", "", nil))
 
 	// No gRPC registry wired in this fake AppState, so serve() will fail past
 	// the access gate - a 502 (not 404/401/403) is the signal that the
@@ -409,7 +423,7 @@ func TestPublic_PrivateVisibility_ValidScopedCookieAllowed(t *testing.T) {
 	cookie := &http.Cookie{Name: proxyCookieName, Value: ticket}
 	rec := httptest.NewRecorder()
 
-	h.Public(rec, publicRequest("tok", "", cookie))
+	h.PublicIsolated(rec, publicRequest("tok", "", cookie))
 
 	// Same reasoning as the anon-public test: no gRPC registry wired, so a
 	// 502 past the gate is the signal the ticket authorized the request.
@@ -467,7 +481,7 @@ func TestPublic_PrivateVisibility_ReadOnlyTicket_AllowsGETPastGate(t *testing.T)
 			})
 			rec := httptest.NewRecorder()
 
-			h.Public(rec, publicRequestMethod(method, "tok", "", cookie))
+			h.PublicIsolated(rec, publicRequestMethod(method, "tok", "", cookie))
 
 			if rec.Code != http.StatusBadGateway {
 				t.Fatalf("status = %d, want %d (%s on read-only ticket should pass the gate): %s", rec.Code, http.StatusBadGateway, method, rec.Body.String())
@@ -691,5 +705,122 @@ func TestMintPublicProxyAuth_RefusedWhenIsolationInactive(t *testing.T) {
 	}
 	if got := rec.Result().Cookies(); len(got) != 0 {
 		t.Fatalf("expected no cookie when isolation inactive, got %+v", got)
+	}
+}
+
+// --- the panel origin serves the gate's ANSWER, never the container ---
+
+// TestPublic_PanelOrigin_StatusOnlyNeverContent pins the finding this split
+// exists for: with origin isolation active, the root-router registration used
+// to run serve() and hand the browser the container's own response on the
+// PANEL origin - anonymously, for a public-visibility link. Measured on a live
+// stack before the fix: 200 with the container's HTML on the panel-origin
+// listener. A tenant supplies that HTML, so its JS ran where the panel keeps
+// its token.
+//
+// The two calls below are the whole contract: identical gate, different
+// dispatch. Public answers 200 with an EMPTY body (what the /c preflight
+// reads); PublicIsolated goes on to the mesh, which is unwired here and so
+// fails 502 - the same "past the gate" signal the tests above use.
+func TestPublic_PanelOrigin_StatusOnlyNeverContent(t *testing.T) {
+	row := shareTokenRow{
+		id: 2, serverID: 1, serverUUID: "srv-1-uuid", nodeID: 7, mode: "proxied",
+		targetPort: 8080, targetPath: "/", surface: "page", visibility: "public", enabled: true,
+	}
+
+	h, _, mock, _ := newTabProxyPublicTestHandler(t, true, true)
+	expectShareTokenQuery(mock, row)
+	rec := httptest.NewRecorder()
+	h.Public(rec, publicRequest("tok", "", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("panel-origin status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if body := rec.Body.String(); body != "" {
+		t.Errorf("panel-origin body = %q, want empty - the container's response must never be served on the panel origin", body)
+	}
+
+	h2, _, mock2, _ := newTabProxyPublicTestHandler(t, true, true)
+	expectShareTokenQuery(mock2, row)
+	rec2 := httptest.NewRecorder()
+	h2.PublicIsolated(rec2, publicRequest("tok", "", nil))
+	if rec2.Code != http.StatusBadGateway {
+		t.Fatalf("isolated-origin status = %d, want %d (must reach the mesh): %s", rec2.Code, http.StatusBadGateway, rec2.Body.String())
+	}
+}
+
+// TestPublic_PanelOrigin_RefusalsAreUnchanged: the status the /c page reads is
+// the point of the panel-origin registration, so every refusal must still come
+// through it verbatim. A status-only handler that answered 200 to a revoked or
+// private link would be worse than the content leak it replaced.
+func TestPublic_PanelOrigin_RefusalsAreUnchanged(t *testing.T) {
+	cases := []struct {
+		name string
+		row  shareTokenRow
+		want int
+	}{
+		{"disabled tab", shareTokenRow{
+			id: 2, serverID: 1, serverUUID: "u", nodeID: 7, mode: "proxied",
+			targetPort: 8080, targetPath: "/", surface: "page", visibility: "public", enabled: false,
+		}, http.StatusNotFound},
+		{"direct mode", shareTokenRow{
+			id: 2, serverID: 1, serverUUID: "u", nodeID: 7, mode: "direct",
+			targetPort: 8080, targetPath: "/", surface: "page", visibility: "public", enabled: true,
+		}, http.StatusNotFound},
+		{"dashboard-only surface", shareTokenRow{
+			id: 2, serverID: 1, serverUUID: "u", nodeID: 7, mode: "proxied",
+			targetPort: 8080, targetPath: "/", surface: "tab", visibility: "public", enabled: true,
+		}, http.StatusNotFound},
+		{"private without a ticket", shareTokenRow{
+			id: 2, serverID: 1, serverUUID: "u", nodeID: 7, mode: "proxied",
+			targetPort: 8080, targetPath: "/", surface: "page", visibility: "private", enabled: true,
+		}, http.StatusUnauthorized},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, _, mock, _ := newTabProxyPublicTestHandler(t, true, true)
+			expectShareTokenQuery(mock, c.row)
+			rec := httptest.NewRecorder()
+			h.Public(rec, publicRequest("tok", "", nil))
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestMintPublicProxyAuth_RequiresTabsRead is the cap half of the same
+// "two doors, one gate" problem. The route table gives the IN-DASHBOARD mint
+// tabs.read, and says why: a member refused when asking which tabs exist must
+// not be able to mint a ticket for one and read it anyway. This mint is the
+// other door to the same content and asked for overview.read, so on a live
+// stack a member with overview.read and no tabs.read got 403 listing the tabs,
+// 403 for a dashboard ticket - and 204 here, then 200 on the tab's content.
+func TestMintPublicProxyAuth_RequiresTabsRead(t *testing.T) {
+	cases := []struct {
+		name string
+		caps []string
+		want int
+	}{
+		{"overview.read alone is not enough", []string{"overview.read"}, http.StatusForbidden},
+		{"tabs.read is what this content needs", []string{"overview.read", "tabs.read"}, http.StatusNoContent},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, _, mock, fs := newTabProxyPublicTestHandler(t, true, true)
+			fs.grants = map[string][]string{"member-id": c.caps}
+			expectShareTokenQuery(mock, shareTokenRow{
+				id: 2, serverID: 1, serverUUID: "srv-1-uuid", nodeID: 7, mode: "proxied",
+				targetPort: 8080, targetPath: "/", surface: "page", visibility: "private", enabled: true,
+			})
+			req := withIdentity(httptest.NewRequest("GET", "/api/tabproxy/tok/auth", nil), "member", false, "member-id")
+			req = mux.SetURLVars(req, map[string]string{"token": "tok"})
+			rec := httptest.NewRecorder()
+
+			h.MintPublicProxyAuth(rec, req)
+
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, c.want, rec.Body.String())
+			}
+		})
 	}
 }

@@ -46,6 +46,16 @@ import (
 )
 
 const proxyCookieName = "dyl_tabproxy"
+
+// tabsReadCap is the capability that means "may see this server's tabs, and
+// what is inside them". Both mint endpoints hold to it: the in-dashboard one
+// through the route table (routes.go), the share-link one in MintPublicProxyAuth
+// below. It used to be tabs.read there and overview.read here, which reproduced
+// the exact split the route table's own comment describes - a member refused
+// when asking WHICH tabs exist could still mint a ticket for one and read it,
+// just through the other door. Measured live: 403 listing the tabs, 403 for a
+// dashboard ticket, 204 + 200 for the same tab's content via a share link.
+const tabsReadCap = "tabs.read"
 const proxyMaxRequestBody = 1 << 20 // 1 MB inline request-body cap
 const proxyMaxHTMLBuffer = 10 << 20 // 10 MB cap on buffered text/html (base-href injection); see serveHTTP.
 
@@ -709,7 +719,7 @@ func (h *ProxyHandler) MintPublicProxyAuth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
-	if rerr != nil || !res.HasCap("overview.read") {
+	if rerr != nil || !res.HasCap(tabsReadCap) {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -741,15 +751,44 @@ func (h *ProxyHandler) MintPublicProxyAuth(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Public: ANY /api/tabproxy/{token} and /api/tabproxy/{token}/{rest...} -
-// resolves the share token, applies the visibility gate, and dispatches to
-// the same mesh serve() path InDashboard uses. Registered on the ROOT
-// router (like /api/share) so it bypasses the /api subrouter's setup-lock +
-// maintenance middleware; auth on the private path is cookie-only via the
-// SAME ParseTabProxyTicket InDashboard trusts - there is no hand-rolled
-// session parsing here, and this handler never sets the cookie itself
-// (MintPublicProxyAuth does that, behind AuthMiddleware).
+// Public serves the share data plane's STATUS, and only its status, as reached
+// on the PANEL origin: it runs the full gate chain and answers with the
+// resulting code alone, never with a byte of the container's response. That is all this registration is for - the /c/<token>
+// page preflights this exact URL to pick which card to render (ready /
+// expired / forbidden / not found / needs-auth) and reads nothing but the
+// status code, because the isolated listener carries no CORS and cannot be
+// asked from the panel origin.
+//
+// Serving the CONTENT here is what the origin-isolation gate below was meant
+// to prevent and did not: it asks whether an isolated origin is CONFIGURED,
+// which is not the same question as whether this request ARRIVED on one.
+// Measured live with isolation active, a share link returned the container's
+// own HTML on the panel origin, anonymously, with no cookie - which is the
+// cross-tenant vector B5 exists to close, since a tenant's container serves
+// that HTML and its JS would run where the panel keeps its token. The origin a
+// request came in on is a server-side fact, so it is settled by which listener
+// registered the handler (see PublicIsolated) rather than by a header.
 func (h *ProxyHandler) Public(w http.ResponseWriter, r *http.Request) {
+	h.public(w, r, false)
+}
+
+// PublicIsolated is Public plus the actual proxying. main.go registers ONLY
+// this variant on the origin-isolated listener - the one origin where a
+// proxied container's JS is harmless because the panel's token lives on a
+// different one.
+func (h *ProxyHandler) PublicIsolated(w http.ResponseWriter, r *http.Request) {
+	h.public(w, r, true)
+}
+
+// public: ANY /api/tabproxy/{token} and /api/tabproxy/{token}/{rest...} -
+// resolves the share token, applies the visibility gate, and (only on the
+// isolated origin) dispatches to the same mesh serve() path InDashboard uses.
+// Registered on the ROOT router (like /api/share) so it bypasses the /api
+// subrouter's setup-lock + maintenance middleware; auth on the private path is
+// cookie-only via the SAME ParseTabProxyTicket InDashboard trusts - there is no
+// hand-rolled session parsing here, and this handler never sets the cookie
+// itself (MintPublicProxyAuth does that, behind AuthMiddleware).
+func (h *ProxyHandler) public(w http.ResponseWriter, r *http.Request, serveContent bool) {
 	vars := mux.Vars(r)
 	token := vars["token"]
 	subPath := vars["rest"]
@@ -821,6 +860,13 @@ func (h *ProxyHandler) Public(w http.ResponseWriter, r *http.Request) {
 	// The proxied page is per-share-link and, for a private link, per-ticket -
 	// never let a shared cache or the browser's disk cache keep it.
 	w.Header().Set("Cache-Control", "no-store")
+	if !serveContent {
+		// Panel origin: every gate above has now answered the only question
+		// the /c page asks of this URL. Going further would put the
+		// container's own HTML on the panel's origin - see Public.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	h.serve(w, r, tab, publicProxyBasePath(token), subPath)
 }
 

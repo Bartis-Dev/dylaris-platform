@@ -137,7 +137,7 @@ can still show what exists.
 
 - **472 routes** in 49 sections: 209 GET, 137 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
 - **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **320** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **320** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -800,9 +800,9 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| (any) | `/api/tabproxy/{token}` | **none** | _public_ | - | `ProxyHandler.Public` | ANY /api/tabproxy/{token} and /api/tabproxy/{token}/{rest...} - resolves the share token, applies the visibility gate, and dispatches to the same mesh serve() path InDashboard uses. |
-| GET | `/api/tabproxy/{token}/auth` | session | _no capability_ | - | `ProxyHandler.MintPublicProxyAuth` | registered on the NORMAL /api subrouter behind AuthMiddleware - like MintProxyAuth, this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) for free instead of re-implementing it. |
-| (any) | `/api/tabproxy/{token}/{rest:.*}` | **none** | _public_ | - | `ProxyHandler.Public` | ANY /api/tabproxy/{token} and /api/tabproxy/{token}/{rest...} - resolves the share token, applies the visibility gate, and dispatches to the same mesh serve() path InDashboard uses. |
+| (any) | `/api/tabproxy/{token}` | **none** | _public_ | - | `ProxyHandler.Public` | serves the share data plane's STATUS, and only its status, as reached on the PANEL origin: it runs the full gate chain and answers with the resulting code alone, never with a byte of the container's response. |
+| GET | `/api/tabproxy/{token}/auth` | session | _in-handler_ | - | `ProxyHandler.MintPublicProxyAuth` | registered on the NORMAL /api subrouter behind AuthMiddleware - like MintProxyAuth, this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) for free instead of re-implementing it. |
+| (any) | `/api/tabproxy/{token}/{rest:.*}` | **none** | _public_ | - | `ProxyHandler.Public` | serves the share data plane's STATUS, and only its status, as reached on the PANEL origin: it runs the full gate chain and answers with the resulting code alone, never with a byte of the container's response. |
 
 ## /api/ticket-canned-responses
 

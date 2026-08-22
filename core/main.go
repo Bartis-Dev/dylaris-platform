@@ -755,8 +755,12 @@ func main() {
 		tpRouter := mux.NewRouter()
 		tpRouter.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy", extras.proxyHandler.InDashboard)
 		tpRouter.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}", extras.proxyHandler.InDashboard)
-		tpRouter.HandleFunc("/api/tabproxy/{token}", extras.proxyHandler.Public)
-		tpRouter.HandleFunc("/api/tabproxy/{token}/{rest:.*}", extras.proxyHandler.Public)
+		// PublicIsolated, not Public: this listener is the only origin that may
+		// serve a share's CONTENT. The root router's Public runs the same gates
+		// and answers status-only, so the panel-origin preflight keeps working
+		// without putting a tenant's container on the panel origin.
+		tpRouter.HandleFunc("/api/tabproxy/{token}", extras.proxyHandler.PublicIsolated)
+		tpRouter.HandleFunc("/api/tabproxy/{token}/{rest:.*}", extras.proxyHandler.PublicIsolated)
 		tabProxySrv = &http.Server{
 			Addr:              ":" + cfg.TabProxyPort,
 			Handler:           tpRouter,

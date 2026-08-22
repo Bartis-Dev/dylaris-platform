@@ -645,9 +645,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// Standalone share-token twin of the above (Task 9): same bypass reasoning,
 	// but auth is per-share-link instead of per-dashboard-session. Public alone
-	// decides public-vs-private visibility; the mint route that sets its
-	// ticket cookie is registered on the /api subrouter instead (proxy-auth's
-	// sibling, see below), which is NOT shadowed by the {rest:.*} catch-all
+	// decides public-vs-private visibility. On THIS router it answers the gate's
+	// status and nothing else - the share's CONTENT is served only by
+	// PublicIsolated on the origin-isolated listener (main.go), because a
+	// container's HTML on the panel origin is the exact cross-tenant vector
+	// origin isolation exists to close. The /c page preflights this URL for the
+	// status alone, which is why the registration stays. The mint route that
+	// sets its ticket cookie is registered on the /api subrouter instead
+	// (proxy-auth's sibling, see below), which is NOT shadowed by the {rest:.*} catch-all
 	// here: gorilla/mux tried the whole /api subrouter (added to this root
 	// router once, at its own PathPrefix("/api") registration point, which is
 	// earlier in this router's route list than these two lines) before ever
