@@ -372,7 +372,8 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
-	if gErr := h.customDomainGate(r, userID, finalDomain, strings.TrimSpace(req.CustomDomain) != ""); gErr != nil {
+	ownershipNotice, gErr := h.customDomainGate(r, userID, finalDomain, strings.TrimSpace(req.CustomDomain) != "")
+	if gErr != nil {
 		http.Error(w, gErr.Error(), http.StatusForbidden)
 		return
 	}
@@ -438,6 +439,9 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "Route creation queued",
 		"domain":  finalDomain,
+		// Empty unless a custom-domain grant was just armed. The customer has
+		// four hours from here, and nothing else tells them.
+		"ownershipNotice": ownershipNotice,
 	})
 }
 

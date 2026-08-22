@@ -27,6 +27,11 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
     const [routesLoading, setRoutesLoading] = useState(false);
     const [newRoute, setNewRoute] = useState<CreateRouteRequest>({ targetPort: 25565 });
     const [routeError, setRouteError] = useState('');
+    // A route on an unproven custom domain is accepted but provisional: a
+    // four-hour clock starts and missing it deletes the route. Core returns the
+    // instruction; without showing it the customer's first sign is the route
+    // being gone.
+    const [routeNotice, setRouteNotice] = useState('');
     const [routeCreating, setRouteCreating] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<GatewayRoute | null>(null);
     const [deleteError, setDeleteError] = useState('');
@@ -88,6 +93,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
 
     const handleCreateRoute = async () => {
         setRouteError('');
+        setRouteNotice('');
         if (!hasRouteInput) { setRouteError('Domain is required'); return; }
         setRouteCreating(true);
         try {
@@ -97,6 +103,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                 setRouteCreating(false);
                 return;
             }
+            setRouteNotice((res as { ownershipNotice?: string }).ownershipNotice || '');
             const resolvedDomain: string | undefined = res.domain || newRoute.domain || newRoute.customDomain
                 || (newRoute.subdomain && newRoute.hosterDomain ? `${newRoute.subdomain}.${newRoute.hosterDomain}` : undefined);
             if (resolvedDomain) {
@@ -206,7 +213,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                         <div className="mono-label">Add Route</div>
                         <RouteDomainPicker
                             value={newRoute}
-                            onChange={next => { setNewRoute(next); setRouteError(''); }}
+                            onChange={next => { setNewRoute(next); setRouteError(''); setRouteNotice(''); }}
                             error={routeError}
                             portChildren={
                                 <div className="flex gap-2">
@@ -228,6 +235,10 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                                 </div>
                             }
                         />
+
+                        {routeNotice && (
+                            <p className="alert alert-warning text-xs">{routeNotice}</p>
+                        )}
 
                         {hasRouteInput && (
                             <div className="text-[11px] font-mono min-h-3.5">

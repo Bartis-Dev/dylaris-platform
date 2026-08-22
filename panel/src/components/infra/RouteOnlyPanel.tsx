@@ -129,7 +129,11 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
         try {
             const res = await createLinkRoute({ ...domainReq, linkId, targetPort, targetHost: targetHost.trim() });
             if (!res.success) throw new Error((res as { message?: string }).message || 'Failed to create route');
-            flashToast('Route created');
+            // On a custom domain the route is accepted but provisional: a four-hour
+            // clock is now running and missing it deletes the route. Core says so in
+            // ownershipNotice, and a fixed "Route created" would hide it.
+            const notice = (res as { ownershipNotice?: string }).ownershipNotice;
+            flashToast(notice ? `Route created. ${notice}` : 'Route created');
             await load();
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to create route');
