@@ -24,6 +24,13 @@ const (
 	AuditEventEntitlementGranted = "entitlement_granted"
 	AuditEventEntitlementRevoked = "entitlement_revoked"
 
+	// Account-wide grants: one person handed access to EVERY server in a realm,
+	// present and future. The per-server case belongs in that server's own audit
+	// log; this one has no single server to belong to, and is the more powerful
+	// of the two, so it lands here rather than nowhere.
+	AuditEventAccountGrantAssigned = "account_grant_assigned"
+	AuditEventAccountGrantRevoked  = "account_grant_revoked"
+
 	// 2FA / TOTP lifecycle. The "consumed" event distinguishes
 	// successful backup-code uses (rare, expected to drop ownership counts)
 	// from regular TOTP success (noisy, intentionally not audited).
@@ -43,11 +50,11 @@ const (
 	AuditEventSecurityAnswersFailedAtReset = "security_answers_failed_at_reset"
 
 	// Auto-delete of inactive users.
-	AuditEventDeletionWarningSent       = "deletion_warning_sent"
-	AuditEventUserAnonymized            = "user_anonymized"
-	AuditEventUserHardDeleted           = "user_hard_deleted"
-	AuditEventDeletionCancelledByAdmin  = "deletion_cancelled_by_admin"
-	AuditEventDeletionCancelledAtLogin  = "deletion_cancelled_at_login"
+	AuditEventDeletionWarningSent      = "deletion_warning_sent"
+	AuditEventUserAnonymized           = "user_anonymized"
+	AuditEventUserHardDeleted          = "user_hard_deleted"
+	AuditEventDeletionCancelledByAdmin = "deletion_cancelled_by_admin"
+	AuditEventDeletionCancelledAtLogin = "deletion_cancelled_at_login"
 
 	// Roles + maintenance.
 	AuditEventUserRoleChanged        = "user_role_changed"

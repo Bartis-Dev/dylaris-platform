@@ -29,6 +29,11 @@ type grantFakeStore struct {
 	deleteErr   error
 	grants      []store.OwnerGrant
 	mode        string
+
+	auditEnabled     bool
+	auditEnableCalls int
+	serverAudit      []models.ServerAuditEvent
+	identityAudit    []models.AuditEventIdentity
 }
 
 func (f *grantFakeStore) GetSetting(string) (string, error) {
@@ -84,6 +89,26 @@ func (f *grantFakeStore) DeleteServerGrant(*int, string, string) error {
 }
 func (f *grantFakeStore) ListGrantsByOwner(string) ([]store.OwnerGrant, error) {
 	return f.grants, nil
+}
+
+// The audit side. Handing someone access to a server had no audit row at all
+// through this route, so these exist to make the rows observable - and to keep
+// the handler from reaching the nil embedded store now that it writes them.
+func (f *grantFakeStore) GetServerAuditState(int) (bool, bool, int, error) {
+	return f.auditEnabled, false, len(f.serverAudit), nil
+}
+func (f *grantFakeStore) SetServerAuditEnabled(_ int, enabled bool) error {
+	f.auditEnabled = enabled
+	f.auditEnableCalls++
+	return nil
+}
+func (f *grantFakeStore) InsertServerAudit(ev *models.ServerAuditEvent) error {
+	f.serverAudit = append(f.serverAudit, *ev)
+	return nil
+}
+func (f *grantFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error {
+	f.identityAudit = append(f.identityAudit, *ev)
+	return nil
 }
 
 func grantState(fs *grantFakeStore) *AppState {
@@ -349,4 +374,142 @@ func TestAssignGrant_ModeGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Handing someone access to a server is the most security-relevant thing that
+// happens to one, and through this route it recorded nothing. The three member_*
+// events existed but were wired only to POST /servers/{id}/members - the legacy
+// route the panel does not call. Measured live before the fix: granting a
+// stranger files.delete + sftp.access left the audit row count unchanged.
+func TestAssignGrant_IsAudited(t *testing.T) {
+	t.Run("a first per-server grant reads as an invite", func(t *testing.T) {
+		fs := &grantFakeStore{
+			target: &models.User{ID: friendC, Username: "friend"},
+			server: serverOwnedBy(ownerA),
+		}
+		h := NewServerRolesHandler(grantState(fs))
+		rec := httptest.NewRecorder()
+		h.AssignGrant(rec, grantReq("POST", ownerA, false, map[string]interface{}{
+			"username": "friend", "serverId": 42, "grantCaps": []string{"files.delete", "sftp.access"},
+		}))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if len(fs.serverAudit) != 1 {
+			t.Fatalf("audit rows = %d, want 1: this is the gap - the grant was invisible", len(fs.serverAudit))
+		}
+		ev := fs.serverAudit[0]
+		if ev.EventType != ServerAuditEventMemberInvited {
+			t.Errorf("eventType = %q, want %q", ev.EventType, ServerAuditEventMemberInvited)
+		}
+		if ev.ServerID != 42 {
+			t.Errorf("serverId = %d, want 42", ev.ServerID)
+		}
+		if fs.auditEnableCalls != 1 {
+			t.Error("auditing was not switched on: on a server whose access was only ever granted here, the events had nowhere to land")
+		}
+	})
+
+	t.Run("a second grant to the same person reads as a change", func(t *testing.T) {
+		sid := 42
+		fs := &grantFakeStore{
+			target:     &models.User{ID: friendC, Username: "friend"},
+			server:     serverOwnedBy(ownerA),
+			actorGrant: &store.ServerGrant{ServerID: &sid, UserID: friendC},
+		}
+		h := NewServerRolesHandler(grantState(fs))
+		rec := httptest.NewRecorder()
+		h.AssignGrant(rec, grantReq("POST", ownerA, false, map[string]interface{}{
+			"username": "friend", "serverId": 42, "grantCaps": []string{"console.read"},
+		}))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if len(fs.serverAudit) != 1 || fs.serverAudit[0].EventType != ServerAuditEventMemberPermsChanged {
+			t.Fatalf("audit = %+v, want one %s", fs.serverAudit, ServerAuditEventMemberPermsChanged)
+		}
+	})
+
+	t.Run("an account-wide grant lands in the identity log", func(t *testing.T) {
+		// It has no single server to belong to, and is the more powerful of the
+		// two shapes - every server in the realm, present and future.
+		fs := &grantFakeStore{target: &models.User{ID: friendC, Username: "friend"}}
+		h := NewServerRolesHandler(grantState(fs))
+		rec := httptest.NewRecorder()
+		h.AssignGrant(rec, grantReq("POST", ownerA, false, map[string]interface{}{
+			"username": "friend", "grantCaps": []string{"files.delete"},
+		}))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if len(fs.serverAudit) != 0 {
+			t.Errorf("a server audit row was written for a grant that names no server: %+v", fs.serverAudit)
+		}
+		if len(fs.identityAudit) != 1 || fs.identityAudit[0].EventType != AuditEventAccountGrantAssigned {
+			t.Fatalf("identity audit = %+v, want one %s", fs.identityAudit, AuditEventAccountGrantAssigned)
+		}
+	})
+
+	t.Run("a refused grant records nothing", func(t *testing.T) {
+		sid := 42
+		fs := &grantFakeStore{
+			target: &models.User{ID: friendC, Username: "friend"},
+			server: serverOwnedBy(ownerA),
+			actorGrant: &store.ServerGrant{
+				ServerID: &sid, UserID: actorB,
+				CapOverrides: store.CapOverrides{Grant: []string{"members.write"}},
+			},
+		}
+		h := NewServerRolesHandler(grantState(fs))
+		rec := httptest.NewRecorder()
+		h.AssignGrant(rec, grantReq("POST", actorB, false, map[string]interface{}{
+			"username": "friend", "serverId": 42, "grantCaps": []string{"files.delete"},
+		}))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+		if len(fs.serverAudit) != 0 || len(fs.identityAudit) != 0 {
+			t.Error("an audit row was written for a grant that never happened")
+		}
+	})
+}
+
+// The other half of "when did they get it".
+//
+// auditEnabled is set here rather than left to the handler: LogServerAudit only
+// writes when the server has auditing on, and a revoke never turns it on -
+// deliberately, since the trigger for switching it on is somebody GAINING
+// access. In reality the matching assign has already done that.
+func TestRevokeGrant_IsAudited(t *testing.T) {
+	t.Run("per-server", func(t *testing.T) {
+		fs := &grantFakeStore{
+			target:       &models.User{ID: friendC, Username: "friend"},
+			server:       serverOwnedBy(ownerA),
+			auditEnabled: true,
+		}
+		h := NewServerRolesHandler(grantState(fs))
+		rec := httptest.NewRecorder()
+		h.RevokeGrant(rec, grantReq("DELETE", ownerA, false, map[string]interface{}{
+			"username": "friend", "serverId": 42,
+		}))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if len(fs.serverAudit) != 1 || fs.serverAudit[0].EventType != ServerAuditEventMemberRemoved {
+			t.Fatalf("audit = %+v, want one %s", fs.serverAudit, ServerAuditEventMemberRemoved)
+		}
+	})
+
+	t.Run("account-wide", func(t *testing.T) {
+		fs := &grantFakeStore{target: &models.User{ID: friendC, Username: "friend"}}
+		h := NewServerRolesHandler(grantState(fs))
+		rec := httptest.NewRecorder()
+		h.RevokeGrant(rec, grantReq("DELETE", ownerA, false, map[string]interface{}{"username": "friend"}))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if len(fs.identityAudit) != 1 || fs.identityAudit[0].EventType != AuditEventAccountGrantRevoked {
+			t.Fatalf("identity audit = %+v, want one %s", fs.identityAudit, AuditEventAccountGrantRevoked)
+		}
+	})
 }

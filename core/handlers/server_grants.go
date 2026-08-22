@@ -133,10 +133,50 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Read before the upsert: it is what tells a first grant apart from a change
+	// to an existing one, and after the write the answer is always "existed".
+	hadGrant := false
+	if req.ServerID != nil {
+		if g, gerr := h.state.Store.GetServerGrant(*req.ServerID, target.ID); gerr == nil && g != nil {
+			hadGrant = true
+		}
+	}
+
 	ov := store.CapOverrides{Grant: req.GrantCaps, Deny: req.DenyCaps}
 	if err := h.state.Store.UpsertServerGrant(req.ServerID, target.ID, ownerUserID, req.ServerRoleID, ov, req.Inherit); err != nil {
 		sendJSONError(w, "Failed to assign grant", 500)
 		return
+	}
+
+	// Handing someone access to a server is the most security-relevant thing
+	// that happens to one, and it was the only such action with no audit row.
+	// The three member_* events existed but were wired only to
+	// POST /servers/{id}/members - the legacy route the panel does not call. So
+	// granting a stranger files.delete + sftp.access through the route everyone
+	// actually uses recorded nothing at all; measured live, the row count did
+	// not move.
+	//
+	// EnableServerAuditIfNeeded for the same reason it is on the invite path: on
+	// a server whose access was only ever granted here, auditing was never
+	// switched on in the first place, so even the events that DO exist had
+	// nowhere to land.
+	auditMeta := map[string]interface{}{
+		"username":     target.Username,
+		"grantCaps":    req.GrantCaps,
+		"denyCaps":     req.DenyCaps,
+		"serverRoleId": req.ServerRoleID,
+		"inherit":      req.Inherit,
+	}
+	if req.ServerID != nil {
+		EnableServerAuditIfNeeded(h.state, *req.ServerID)
+		event := ServerAuditEventMemberInvited
+		if hadGrant {
+			event = ServerAuditEventMemberPermsChanged
+		}
+		LogServerAudit(h.state, r, *req.ServerID, event, idn.UserID, target.ID, auditMeta)
+	} else {
+		auditMeta["ownerUserId"] = ownerUserID
+		LogIdentityAudit(h.state, r, AuditEventAccountGrantAssigned, idn.UserID, target.ID, auditMeta)
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -205,6 +245,16 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 		}
 		sendJSONError(w, "Failed to revoke grant", 500)
 		return
+	}
+	// Revocation is audited for the same reason the grant is, and matters more
+	// when reconstructing an incident: "when did they stop having it" is the
+	// other half of "when did they get it".
+	if req.ServerID != nil {
+		LogServerAudit(h.state, r, *req.ServerID, ServerAuditEventMemberRemoved, idn.UserID, target.ID,
+			map[string]interface{}{"username": target.Username})
+	} else {
+		LogIdentityAudit(h.state, r, AuditEventAccountGrantRevoked, idn.UserID, target.ID,
+			map[string]interface{}{"username": target.Username, "ownerUserId": ownerUserID})
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
