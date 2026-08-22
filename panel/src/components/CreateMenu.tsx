@@ -75,7 +75,7 @@ function MenuEntry({
 }
 
 export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }) {
-    const { user, featureFlags, entitlement, gatewayEnabled } = useAppData();
+    const { user, featureFlags, entitlement, gatewayEnabled, byonEnabled } = useAppData();
     const [open, setOpen] = useState(false);
     const [deployableNodes, setDeployableNodes] = useState<number | null>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
@@ -87,7 +87,7 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
     // Only fetched when it can change the answer: with BYON off the server entry
     // is enabled regardless, and an admin is never blocked on it.
     useEffect(() => {
-        if (!featureFlags.byon || isAdmin) {
+        if (!byonEnabled || isAdmin) {
             setDeployableNodes(null);
             return;
         }
@@ -97,7 +97,7 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
             setDeployableNodes(res.success && Array.isArray(res.nodes) ? res.nodes.length : 0);
         });
         return () => { cancelled = true; };
-    }, [featureFlags.byon, isAdmin]);
+    }, [byonEnabled, isAdmin]);
 
     useEffect(() => {
         const handler = (e: MouseEvent) => {
@@ -109,7 +109,7 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
 
     const input: CreateOptionsInput = {
         isAdmin,
-        byonEnabled: featureFlags.byon,
+        byonEnabled,
         // entitlement is null until the first fetch lands. Treating that as
         // "entitled" would flash an option the user may not have; treating it as
         // "not entitled" only ever shows a reason that corrects itself a moment
@@ -127,7 +127,7 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
 
     // Nothing usable and nothing to explain: hide the control rather than offer a
     // button that only ever says no.
-    if (!hasAnyCreateOption(input) && !featureFlags.byon && !gatewayEnabled) return null;
+    if (!hasAnyCreateOption(input) && !byonEnabled && !gatewayEnabled) return null;
 
     const navigate = (href: string) => {
         setOpen(false);

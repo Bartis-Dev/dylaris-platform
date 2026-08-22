@@ -70,7 +70,7 @@ interface OwnNode {
 const NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
 
 function MyNodesInner() {
-    const { featureFlags, entitlement, user, gatewayEnabled } = useAppData();
+    const { featureFlags, entitlement, user, gatewayEnabled, byonEnabled } = useAppData();
     const router = useRouter();
     const searchParams = useSearchParams();
 
@@ -78,7 +78,7 @@ function MyNodesInner() {
 
     // What this reader HAS - separate from whether this ACCOUNT is entitled to
     // it, which the panels below answer for themselves.
-    const have = { external: isAdmin, machines: featureFlags.byon, routes: gatewayEnabled };
+    const have = { external: isAdmin, machines: byonEnabled, routes: gatewayEnabled };
 
     // The tab lives in the URL so Create can deep-link straight into the half it
     // means, and so a reload or a shared link lands where it left off.

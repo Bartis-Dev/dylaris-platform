@@ -975,6 +975,19 @@ export type FileAccessMode = 'sftp' | 'both' | 'beam';
 // flag, or the panel and Core disagree about whether the gateway is on.
 export const isGatewayRouting = (mode: RoutingMode): boolean =>
     mode === 'gateway' || mode === 'both';
+
+// feature_byon_enabled is the operator's INTENT; this is whether BYON can
+// actually work. A tenant node forces gateway routing and beam on its own side
+// (NODE_EXTERNAL), so on ip_port there is nothing for it to join. Reading the
+// raw flag let an operator with no gateway - which is every self-host build,
+// since the gateway is not part of the open-core stack - switch on a whole
+// tenant surface: enrolment screens for machines that can never connect, and
+// the Usage/Billing/Plans settings behind them.
+//
+// Same shape as autoMove, whose flag is documented as one "the panel ANDs with
+// the live routing mode".
+export const isByonUsable = (byonFlag: boolean, mode: RoutingMode): boolean =>
+    byonFlag && isGatewayRouting(mode);
 export const getRoutingMode = () => fetchAPI('/settings/routing-mode');
 export const saveRoutingMode = (data: { mode: RoutingMode; fileMode: FileAccessMode }) =>
     fetchAPI('/settings/routing-mode', { method: 'POST', body: JSON.stringify(data) });

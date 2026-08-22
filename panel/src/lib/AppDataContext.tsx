@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import {
     getProfile, getModules, getServers, getFeatureSettings, getRoutingMode, getBeamSettings,
-    AppModule, Server, User, RoutingMode, FileAccessMode, BeamSettings, isGatewayRouting,
+    AppModule, Server, User, RoutingMode, FileAccessMode, BeamSettings, isGatewayRouting, isByonUsable,
 } from '@/lib/api';
 import { listRegions, Region } from '@/lib/api/regions';
 import { API_URL, GATE_TIMEOUT_MS, getAuthHeader } from '@/lib/api/core';
@@ -40,6 +40,8 @@ interface AppData {
     refreshServers: () => Promise<void>;
     refreshSettings: () => Promise<void>;
     gatewayEnabled: boolean;
+    /** featureFlags.byon ANDed with live gateway routing: BYON cannot work without it. */
+    byonEnabled: boolean;
     libraryEnabled: boolean;
     // platform-wide feature toggles. Loaded on boot from
     // /api/system/features; refreshed when features.changed SSE fires.
@@ -257,6 +259,19 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     // sides disagree in both directions — a visible routes UI whose writes
     // 503, or a live gateway with its whole UI hidden.
     const gatewayEnabled = isGatewayRouting(routingMode);
+
+    // BYON is tenancy over the gateway, so the raw admin flag is intent, not
+    // capability: an external node FORCES gateway routing and beam locally
+    // (NODE_EXTERNAL), so with routing on ip_port there is no way for a tenant
+    // node to reach anything. The flag alone therefore let an operator with no
+    // gateway switch on a whole tenant surface that cannot work - enrolment
+    // screens for machines that can never join.
+    //
+    // Same shape as autoMove, whose flag is documented as "the panel ANDs this
+    // with the live routing mode". featureFlags.byon stays the raw value so the
+    // Features toggle keeps rendering the operator's actual setting.
+    const byonEnabled = isByonUsable(featureFlags.byon, routingMode);
+
     const libraryEnabled = modules.some(m => m.name === 'Library' && m.isEnabled);
 
     // Retry clears the error first, or a second failure would look like a
@@ -273,7 +288,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         apiUnreachable,
         retryBoot,
         refreshUser, refreshModules, refreshServers, refreshSettings,
-        gatewayEnabled, libraryEnabled,
+        gatewayEnabled, byonEnabled, libraryEnabled,
         featureFlags, refreshFeatureFlags,
         regions, coreInfo, refreshRegions,
         entitlement, refreshEntitlement,
