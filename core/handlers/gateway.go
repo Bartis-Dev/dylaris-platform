@@ -371,6 +371,12 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
+	if gErr := h.customDomainGate(r, userID, finalDomain, strings.TrimSpace(req.CustomDomain) != ""); gErr != nil {
+		http.Error(w, gErr.Error(), http.StatusForbidden)
+		return
+	}
+
 	// The gateway routes Minecraft TCP only (WS7): the HTTP/HTTPS edge ingress
 	// was removed, so web (80/443) target ports and wildcard domains - which
 	// only ever existed for that web data-plane - are no longer accepted. MC

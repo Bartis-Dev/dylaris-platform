@@ -138,6 +138,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := createGatewayTables(db); err != nil {
 		return err
 	}
+	if err := createCustomDomainTables(db); err != nil {
+		return err
+	}
 	if err := createLibraryDisabledTable(db); err != nil {
 		return err
 	}

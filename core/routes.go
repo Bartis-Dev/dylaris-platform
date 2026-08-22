@@ -488,7 +488,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	statsHandler := handlers.NewStatsHandler(appState)
 	memberHandler := handlers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
-	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret)
+	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret, cfg.ClusterSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesFeedURLPlatform, appState.UpdatesFeedURLGateway)
 	backupHandler := handlers.NewBackupHandler(appState)
 	storageConnectionsHandler := handlers.NewStorageConnectionsHandler(appState)
@@ -983,9 +983,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.UpdateProfileHandler)).Methods("PUT")
 	api.HandleFunc("/auth/2fa/setup", authHandler.AuthMiddleware(authHandler.SetupTOTPHandler)).Methods("POST")
-	api.HandleFunc("/auth/2fa/verify", authHandler.AuthMiddleware(authHandler.VerifyTOTPHandler)).Methods("POST")
-	api.HandleFunc("/auth/2fa/disable", authHandler.AuthMiddleware(authHandler.DisableTOTPHandler)).Methods("POST")
-	api.HandleFunc("/auth/2fa/regenerate-backup-codes", authHandler.AuthMiddleware(authHandler.RegenerateBackupCodesHandler)).Methods("POST")
+	// The three below compare the account password, so they are rate- and
+	// body-limited like every other credential endpoint: an authenticated
+	// session must not be a password-guessing oracle just because the guesser is
+	// already logged in (a borrowed laptop, a stolen token).
+	api.HandleFunc("/auth/2fa/verify", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(authHandler.VerifyTOTPHandler)))).Methods("POST")
+	api.HandleFunc("/auth/2fa/disable", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(authHandler.DisableTOTPHandler)))).Methods("POST")
+	api.HandleFunc("/auth/2fa/regenerate-backup-codes", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(authHandler.RegenerateBackupCodesHandler)))).Methods("POST")
 	api.HandleFunc("/auth/2fa/status", authHandler.AuthMiddleware(authHandler.Get2FAStatusHandler)).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/2fa", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(authHandler.AdminResetTOTPHandler))).Methods("DELETE")
 
@@ -1289,6 +1293,18 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// authed-exempt (Phase 4 controller decision #2); the in-handler owner
 	// filter (resolveOwnedLinkToken / ListLinkRoutes / DeleteLinkRoute ownership
 	// scan) is the boundary. A future links.* owner cap is a deferred follow-up.
+	// Custom-domain ownership proof. Scoped to the caller inside each handler -
+	// a claim is one user's relationship to one domain, and the block is per
+	// (user, domain) so nobody can lock a competitor's domain out globally.
+	customDomainHandler := handlers.NewCustomDomainHandler(appState, services.NewNetResolver())
+	api.HandleFunc("/gateway/custom-domains", authHandler.AuthMiddleware(customDomainHandler.List)).Methods("GET")
+	api.HandleFunc("/gateway/custom-domains/{domain:.+}/txt-token",
+		authHandler.AuthMiddleware(customDomainHandler.IssueTXTToken)).Methods("POST")
+	// Rate-limited: it triggers an outbound DNS lookup and is the way back from a
+	// permanent block, so it is the one endpoint here worth hammering.
+	api.HandleFunc("/gateway/custom-domains/{domain:.+}/verify-txt",
+		authLimiter.Limit(20, authHandler.AuthMiddleware(customDomainHandler.VerifyTXT))).Methods("POST")
+
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gatewayHandler.ListLinkRoutes)).Methods("GET")
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
 	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")

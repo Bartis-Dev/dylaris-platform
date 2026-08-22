@@ -301,6 +301,17 @@ type Store interface {
 	GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error)
 	ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error)
 	ListAllWarpPeers() ([]WarpPeer, error)
+	// Custom-domain ownership proof. Keyed on (user, domain) so a block can
+	// never be global - see database/db_custom_domains.go.
+	GetCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error)
+	StartCustomDomainClaim(userID, domain string, deadline time.Time) (*CustomDomainClaim, error)
+	MarkCustomDomainVerified(id int) error
+	FailCustomDomainClaim(id int) (string, error)
+	ListExpiredPendingClaims(now time.Time) ([]CustomDomainClaim, error)
+	ListPendingClaims() ([]CustomDomainClaim, error)
+	ListCustomDomainClaimsByUser(userID string) ([]CustomDomainClaim, error)
+	SetCustomDomainTXTToken(id int, token string) error
+
 	ListWarpPeersByRegion(region string) ([]WarpPeer, error)
 	SetWarpPeerAssignedLeader(pubkey, leaderID string) error
 	CountWarpPeersByRegion() (map[string]int, error)

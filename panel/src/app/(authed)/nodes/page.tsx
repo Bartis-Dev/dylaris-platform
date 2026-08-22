@@ -24,6 +24,7 @@ import { SkeletonCard } from '@/components/Skeleton';
 import { resolveInfraTab, showInfraTabBar, type InfraTab } from '@/lib/infraTab';
 import { DeployKit, NotIncluded, SecretField, usageLabel } from '@/components/infra/DeployKit';
 import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
+import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
 import ExternalNodesPanel from '@/components/infra/ExternalNodesPanel';
 
 // ---------------------------------------------------------------------------
@@ -368,14 +369,19 @@ function MyNodesInner() {
             {tab === 'external' ? (
                 <ExternalNodesPanel nodes={external.nodes} loading={external.loading} readAt={external.readAt} />
             ) : tab === 'routes' ? (
-                <RouteOnlyPanel
-                    enrollUrl={enrollUrl}
-                    config={deployConfig}
-                    storeUrl={storeUrl}
-                    allowed={routeOnlyAllowed}
-                    entitlementKnown={entitlementKnown}
-                    suspended={suspended}
-                />
+                <div className="space-y-4">
+                    <RouteOnlyPanel
+                        enrollUrl={enrollUrl}
+                        config={deployConfig}
+                        storeUrl={storeUrl}
+                        allowed={routeOnlyAllowed}
+                        entitlementKnown={entitlementKnown}
+                        suspended={suspended}
+                    />
+                    {/* Renders nothing until the account actually has a claim, so a
+                        tenant who only uses our subdomains never sees it. */}
+                    <CustomDomainsPanel cnameTarget={deployConfig?.cnameTarget} />
+                </div>
             ) : (
             /* The keys move into a column of their own once there are any, rather
                than pushing the form and the machine list down the page. There is

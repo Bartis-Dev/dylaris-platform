@@ -517,6 +517,31 @@ func main() {
 	// boot-time warp resync watcher + firewall-allowlist publish use the
 	// handlers/service buildAPIRouter just constructed.
 	extras.warpService.StartResyncWatcher(coreLeader.IsLeader)
+
+	// Custom-domain ownership proof. Tenants get a grant to point their own
+	// domain at us; this is what enforces the deadline and removes the route when
+	// it passes unproven.
+	//
+	// Leader-gated: every Core replica sees the same pending claims, and a
+	// non-leader running this too would race to delete the same routes and count
+	// the same failure more than once - which, at two failures, is the difference
+	// between a retry and a permanent block.
+	if coreLeader.IsLeader() {
+		customDomainVerifier := services.NewCustomDomainVerifier(
+			pgStore,
+			services.NewNetResolver(),
+			services.NewCustomDomainRouteRemover(redisClient, appState.Gateway),
+			func() ([]string, []string) {
+				cname, _ := pgStore.GetSetting("gateway_cname_target")
+				var targets []string
+				if c := strings.TrimSpace(cname); c != "" {
+					targets = append(targets, c)
+				}
+				return targets, services.OnlineEdgeIPs(context.Background(), redisClient)
+			},
+		)
+		customDomainVerifier.Start(context.Background())
+	}
 	// Publish the spoke firewall allowlist to the central Redis key the warp
 	// leaders read and poll, so a freshly (re)started leader gets the admin value
 	// rather than only its compiled-in fail-closed default. Always write (even
@@ -567,8 +592,12 @@ func main() {
 		aclProvisioner,
 		cfg.ClusterSecret,
 	)
-	// P0b-5 admission gate: consulted only on the ACL-on enroll path for unknown nodes.
+	// P0b-5 admission gate. The JOIN half is consulted on the ACL-on gRPC enroll
+	// path for unknown nodes; the NETWORK half runs on the warp enrol instead,
+	// which is the only place a BYON customer's real IP is visible (over gRPC the
+	// peer is the warp leader, identical for every customer).
 	admissionGate := services.NewAdmissionGate(pgStore)
+	appState.Admission = admissionGate
 	// Pre-placement ACL hook: re-apply a node's Redis ACL right before sending a
 	// server-placement command, closing the window where a freshly created
 	// server's keys are NOPERM for the node until its next reconnect. nil-safe.

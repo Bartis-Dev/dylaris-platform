@@ -226,6 +226,14 @@ var ExemptRoutes = map[string]bool{
 // authorization runs in-handler through the SAME resolver. Listed here so
 // strict coverage treats them as covered while documenting they are NOT public.
 var InHandlerAuthzRoutes = map[string]bool{
+	// Custom-domain ownership claims. The scope object is the CALLER: each
+	// handler reads userID from the session and only ever touches that user's
+	// rows. A capability would be the wrong shape here - there is no such thing
+	// as reading "someone else's" claim to gate.
+	"/api/gateway/custom-domains":                        true,
+	"/api/gateway/custom-domains/{domain:.+}/txt-token":  true,
+	"/api/gateway/custom-domains/{domain:.+}/verify-txt": true,
+
 	"/api/servers/{id:[0-9]+}/power":           true, // per-action power.* in-handler
 	"/api/files":                               true,
 	"/api/files/content":                       true,

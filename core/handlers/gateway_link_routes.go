@@ -149,6 +149,12 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
+	if gErr := h.customDomainGate(r, userID, finalDomain, strings.TrimSpace(req.CustomDomain) != ""); gErr != nil {
+		http.Error(w, gErr.Error(), http.StatusForbidden)
+		return
+	}
 	if strings.HasPrefix(finalDomain, "*.") {
 		http.Error(w, "Wildcard domains are not allowed for route-only", http.StatusBadRequest)
 		return
