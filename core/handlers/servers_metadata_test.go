@@ -67,11 +67,6 @@ func newServerMetadataHandler(fs *serverMetadataFakeStore) *ServerHandler {
 	return &ServerHandler{state: &AppState{Store: fs}}
 }
 
-func declareMetadataReq(serverID int, body map[string]interface{}) *httptest.ResponseRecorder {
-	fs := &serverMetadataFakeStore{}
-	return declareMetadataReqWithStore(fs, serverID, body)
-}
-
 func declareMetadataReqWithStore(fs *serverMetadataFakeStore, serverID int, body map[string]interface{}) *httptest.ResponseRecorder {
 	h := newServerMetadataHandler(fs)
 	b, _ := json.Marshal(body)
@@ -80,17 +75,6 @@ func declareMetadataReqWithStore(fs *serverMetadataFakeStore, serverID int, body
 	rec := httptest.NewRecorder()
 	h.DeclareServerLoaderMetadata(rec, r)
 	return rec
-}
-
-func decodeMetadataErr(t *testing.T, rec *httptest.ResponseRecorder) string {
-	t.Helper()
-	var out struct {
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode error body: %v (body=%s)", err, rec.Body.String())
-	}
-	return out.Message
 }
 
 func TestDeclareServerLoaderMetadata_ValidPersists(t *testing.T) {

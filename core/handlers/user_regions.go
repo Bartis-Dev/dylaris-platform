@@ -13,11 +13,6 @@ func NewUserRegionsHandler(state *AppState) *UserRegionsHandler {
 	return &UserRegionsHandler{state: state}
 }
 
-type userRegionsResponse struct {
-	AllRegions bool     `json:"allRegions"`
-	Regions    []string `json:"regions"`
-}
-
 // GetUserRegions GET /api/admin/users/{id}/regions - RequireCap("regions.read") at the route.
 func (h *UserRegionsHandler) GetUserRegions(w http.ResponseWriter, r *http.Request) {
 	userID, ok := parseUserID(w, r)

@@ -28,14 +28,13 @@ type App struct {
 
 	// connMu guards the session/connection pointers below. Wails dispatches
 	// each frontend binding call on its own goroutine, and the health-check
-	// goroutine touches them too, so client/relayClient/relayAddr are read and
+	// goroutine touches them too, so client and relayClient are read and
 	// written concurrently. The accessors keep critical sections to a single
 	// field read/write and never hold the lock across network I/O. panelURL is
 	// set once at startup and never mutated here, so it stays unguarded.
 	connMu      sync.Mutex
 	client      *CoreClient     // REST API client (login, config, tickets)
 	relayClient *BeamNodeClient // gRPC client via BeamRelay (file ops)
-	relayAddr   string          // cached relay address from GetBeamConfig
 	connMode    string          // active transport for the live tunnel: "lan-fastpath" | "relay" | "direct"; "" when not connected
 	panelURL    string          // URL the webview navigates to on startup (Panel)
 	apiURL      string          // Core API origin for the proxied Panel's CSP connect-src ("" = same-origin /api)
@@ -105,9 +104,11 @@ type userSettings struct {
 }
 
 // settingsPath returns the OS-appropriate config file location:
-//   Windows: %AppData%\dylaris-beam\config.json
-//   macOS:   ~/Library/Application Support/dylaris-beam/config.json
-//   Linux:   ~/.config/dylaris-beam/config.json
+//
+//	Windows: %AppData%\dylaris-beam\config.json
+//	macOS:   ~/Library/Application Support/dylaris-beam/config.json
+//	Linux:   ~/.config/dylaris-beam/config.json
+//
 // Errors fall back to a path next to the executable so the app stays
 // functional even on locked-down systems.
 func settingsPath() string {
@@ -145,9 +146,10 @@ func saveSettings(s userSettings) error {
 
 // GetPanelURL is exposed to the frontend stub so the embedded redirector
 // knows where to point its window.location. Resolution priority:
-//   1. Saved user setting (Settings dialog wrote it)
-//   2. Launch/build-time default (DYLARIS_PANEL_URL env or ldflags, on the App struct)
-//   3. The compiled-in defaultPanelURL (empty in the open-source build)
+//  1. Saved user setting (Settings dialog wrote it)
+//  2. Launch/build-time default (DYLARIS_PANEL_URL env or ldflags, on the App struct)
+//  3. The compiled-in defaultPanelURL (empty in the open-source build)
+//
 // May return "" when nothing is configured; the redirector then shows Settings.
 func (a *App) GetPanelURL() string {
 	if saved := strings.TrimSpace(loadSettings().PanelURL); saved != "" {
@@ -456,22 +458,10 @@ func (a *App) getRelay() *BeamNodeClient {
 	return a.relayClient
 }
 
-func (a *App) getRelayAddr() string {
-	a.connMu.Lock()
-	defer a.connMu.Unlock()
-	return a.relayAddr
-}
-
 func (a *App) setClient(c *CoreClient) {
 	a.connMu.Lock()
 	defer a.connMu.Unlock()
 	a.client = c
-}
-
-func (a *App) setRelayAddr(s string) {
-	a.connMu.Lock()
-	defer a.connMu.Unlock()
-	a.relayAddr = s
 }
 
 // setConnMode records the transport that won the preference chain for the live tunnel
@@ -523,7 +513,6 @@ func (a *App) resetSession() *BeamNodeClient {
 	old := a.relayClient
 	a.client = nil
 	a.relayClient = nil
-	a.relayAddr = ""
 	a.connMode = ""
 	return old
 }
@@ -677,11 +666,12 @@ func (a *App) runHealthCheck(serverUUID string, stop chan struct{}) {
 			if err == nil {
 				continue
 			}
-			// Ping failed — force a re-fetch of the relay address and
-			// reconnect. If Core hands us back the same dead relay
-			// (its Redis TTL hasn't expired yet) we'll just fail again
-			// on the next tick — eventually the dead one ages out.
-			a.setRelayAddr("")
+			// Ping failed - reconnect. ConnectToServer asks Core for the
+			// relay address on every call, so there is nothing to invalidate
+			// first: this used to clear a cached copy that no reader ever
+			// consulted. If Core hands us back the same dead relay (its Redis
+			// TTL has not expired yet) we just fail again on the next tick -
+			// eventually the dead one ages out.
 			if cErr := a.ConnectToServer(serverUUID); cErr != nil {
 				// Log to stderr; Wails apps don't have a UI for it but
 				// it surfaces when launched from a console / dev mode.
@@ -700,17 +690,17 @@ func (a *App) IsLoggedIn() bool {
 // ─── Beam Config ─────────────────────────────────────────────────────
 
 // GetBeamConfig returns the Beam relay address and branding from Core.
-// Also caches the relay address for ConnectToServer.
+//
+// It used to say it also cached the address "for ConnectToServer", and it did
+// store one - but ConnectToServer fetches the config itself on every connect
+// and never read the cached copy. The field was written and cleared and never
+// consulted, so it is gone along with the claim.
 func (a *App) GetBeamConfig() (*BeamConfig, error) {
 	client := a.getClient()
 	if client == nil {
 		return nil, fmt.Errorf("not logged in")
 	}
-	config, err := client.GetBeamConfig()
-	if err == nil && config.RelayAddress != "" {
-		a.setRelayAddr(config.RelayAddress)
-	}
-	return config, err
+	return client.GetBeamConfig()
 }
 
 // ─── Servers ─────────────────────────────────────────────────────────
@@ -726,12 +716,13 @@ func (a *App) GetServers() ([]BeamServer, error) {
 
 // ConnectToServer opens a file-ops tunnel to the Node hosting this server, trying
 // transports in a preference chain decided by Core's ticket + relay presence:
-//   1. LAN fast-path - a pinned-TLS dial to the node's LAN IPs when Core supplied a
-//      fingerprint and LAN IPs. Tried FIRST even when a relay is present, so a
-//      co-located client gets the fast path.
-//   2. Relay - the IP-hiding relay hop, when Core reports a relay address.
-//   3. Public-direct - a pinned-TLS dial to the node's public address, only when no
-//      relay is present.
+//  1. LAN fast-path - a pinned-TLS dial to the node's LAN IPs when Core supplied a
+//     fingerprint and LAN IPs. Tried FIRST even when a relay is present, so a
+//     co-located client gets the fast path.
+//  2. Relay - the IP-hiding relay hop, when Core reports a relay address.
+//  3. Public-direct - a pinned-TLS dial to the node's public address, only when no
+//     relay is present.
+//
 // Direct dials (1 and 3) only ever use the fingerprint-pinned TLS port, never the
 // plain overlay port, so a direct hop is encrypted and MITM-proof or it does not
 // happen. The winning transport is recorded (GetConnectionMode) for the UI badge.
@@ -761,7 +752,6 @@ func (a *App) ConnectToServer(serverUUID string) error {
 		return fmt.Errorf("beam config: %w", err)
 	}
 	relayAddr := strings.TrimSpace(config.RelayAddress)
-	a.setRelayAddr(relayAddr)
 
 	// Preference chain: LAN fast-path first (even with a relay), then the IP-hiding
 	// relay, then a public-direct dial. The pure beamConnectPlan decides the order and
@@ -1096,11 +1086,12 @@ func (a *App) BeamUploadStart(uploadID, path, filename, strategy string, totalSi
 
 // BeamUploadResume is the JS-driven retry path. JS calls it after a
 // chunk Send fails (relay restart, transient network blip), and it
-//   1. forces a fresh ConnectToServer — picks up a new relay address
-//      from Core / re-handshakes the JWT ticket
-//   2. opens a new UploadFile stream with the SAME uploadID
-//      (gRPC metadata "x-beam-upload-id") so the Node reattaches to
-//      the existing temp file at its current size
+//  1. forces a fresh ConnectToServer — picks up a new relay address
+//     from Core / re-handshakes the JWT ticket
+//  2. opens a new UploadFile stream with the SAME uploadID
+//     (gRPC metadata "x-beam-upload-id") so the Node reattaches to
+//     the existing temp file at its current size
+//
 // JS then continues WriteChunk from the offset it had reached before
 // the failure. The Node's WriteAt is idempotent on identical offsets,
 // so a re-sent partial chunk is harmless.

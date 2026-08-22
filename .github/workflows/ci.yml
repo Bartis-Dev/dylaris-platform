@@ -62,7 +62,16 @@ jobs:
         run: go vet ./...
 
       # staticcheck correctness gate (pinned). Runs the SA (correctness) checks
-      # only; the ST/S1/U/QF style families are intentionally not enforced.
+      # plus U1000; the ST/S1/QF style families are intentionally not enforced.
+      #
+      # U1000 (unused) is here because dead code is not a style question in this
+      # tree - it is how a feature silently fails to exist. customDomainDeadlineHint
+      # was written to be the one place two route handlers agreed on what they
+      # promised the customer, and had NO caller, so neither handler promised
+      # anything and a route on an unproven domain vanished four hours later with
+      # no warning. Nothing failed; the code was simply never reached. Deliberate
+      # exceptions take //lint:ignore U1000 with a reason, which is the point.
+      #
       # Three SA checks are excluded as pre-existing, deliberately-deferred
       # findings so the gate stays green and meaningful for NEW code:
       #   SA1019 - deprecated APIs still in use (go-redis SetNX, aws uploader,
@@ -73,7 +82,7 @@ jobs:
       # `go run ...@version` pins the tool and does not modify go.mod/go.sum.
       - name: staticcheck
         working-directory: ${{ matrix.module }}
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks 'SA*,-SA1019,-SA1029,-SA9003' ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks 'SA*,U1000,-SA1019,-SA1029,-SA9003' ./...
 
       - name: go test
         working-directory: ${{ matrix.module }}

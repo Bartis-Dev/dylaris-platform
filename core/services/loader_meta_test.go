@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// roundTripFunc adapts a function to http.RoundTripper so tests can stub
-// loaderMetaClient without a real listener.
-type roundTripFunc func(req *http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
-
 // stubTransport serves canned responses keyed by exact request URL and
 // records every URL requested, so tests can assert both the response
 // handling and which endpoints were (or were not) hit.

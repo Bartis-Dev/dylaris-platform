@@ -34,8 +34,12 @@ it fails the build.
   `beam/app`. Each cell runs `go build`, `go vet`, **staticcheck** and
   `go test`. staticcheck is a real gate and catches things the other three do
   not, so run it before pushing:
-  `go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks 'SA*,-SA1019,-SA1029,-SA9003' ./...`
+  `go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks 'SA*,U1000,-SA1019,-SA1029,-SA9003' ./...`
   from the module. A push has gone red on SA4000 with everything else green.
+  U1000 (unused) is in the gate because dead code here is not a style question:
+  a helper written so two route handlers could not drift apart on what they
+  promised the customer had no caller, so neither handler promised anything.
+  Deliberate exceptions take `//lint:ignore U1000 <reason>`.
   `beam/app` needs a stub `frontend/dist/index.html` to compile at all (`app.go`
   has a `//go:embed` on a Wails build artifact); the job creates one.
 - **`race-tests`** - `go test -race` over every Go module, run as a docker BUILD

@@ -242,11 +242,11 @@ func (s *AppState) SyncStorageGate() {
 //
 // Unused since the count-based host-path warning it backed was removed (a real
 // cross-Core round proves sharing now instead of guessing from a count) -
-// staticcheck here only runs the SA* checks, which do not flag dead code, so
-// this was not caught automatically. Kept anyway, deliberately: it is the
-// single most direct pointer to the literal-matching call sites listed above,
-// and storagereach.isPathBackend's own doc comment names it by this exact
-// identifier.
+// Kept deliberately: it is the single most direct pointer to the
+// literal-matching call sites listed above, and storagereach.isPathBackend's
+// own doc comment names it by this exact identifier.
+//
+//lint:ignore U1000 kept as the named reference for the literal call sites above
 func isHostPathBackend(backend string) bool {
 	return backend == "path" || backend == "local"
 }

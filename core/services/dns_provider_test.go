@@ -19,7 +19,6 @@ type fakeLibDNS struct {
 	zone    string
 	records []libdns.Record
 	getErr  error
-	lister  bool
 }
 
 func (f *fakeLibDNS) GetRecords(_ context.Context, zone string) ([]libdns.Record, error) {
