@@ -380,7 +380,7 @@ function MyNodesInner() {
                     />
                     {/* Renders nothing until the account actually has a claim, so a
                         tenant who only uses our subdomains never sees it. */}
-                    <CustomDomainsPanel cnameTarget={deployConfig?.cnameTarget} />
+                    <CustomDomainsPanel />
                 </div>
             ) : (
             /* The keys move into a column of their own once there are any, rather

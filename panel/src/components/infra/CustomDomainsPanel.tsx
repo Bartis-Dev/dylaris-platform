@@ -8,10 +8,18 @@ import {
   verifyCustomDomainTXT,
   type CustomDomain,
 } from '@/lib/api/customDomains';
+import { getGatewayRouteOptions } from '@/lib/api/types';
+import { cnameTargetsFor } from '@/lib/cnameTargets';
 
 // Plain language per state. The customer needs to know what to DO, not what the
 // state machine calls itself.
-function describe(d: CustomDomain, cnameTarget?: string): { tone: string; title: string; body: string } {
+//
+// cnameTargets are FULL names (route.eu.example.com), one per region. This used
+// to render the raw operator setting, which is only the label ("route"): the
+// instruction read "Add a CNAME to route", and a customer who followed it
+// created a record pointing nowhere - then watched the claim expire and the
+// route disappear on the deadline.
+function describe(d: CustomDomain, cnameTargets: string[]): { tone: string; title: string; body: string } {
   switch (d.state) {
     case 'verified':
       return {
@@ -19,14 +27,17 @@ function describe(d: CustomDomain, cnameTarget?: string): { tone: string; title:
         title: 'Verified',
         body: 'This domain points at us. You can add routes on it.',
       };
-    case 'pending':
-      return {
-        tone: 'text-(--warning)',
-        title: 'Waiting for DNS',
-        body: cnameTarget
-          ? `Add a CNAME to ${cnameTarget}, or an A record to one of our edge addresses. We check every 30 minutes.`
-          : 'Point this domain at us. We check every 30 minutes.',
-      };
+    case 'pending': {
+      let body = 'Point this domain at us. We check every 30 minutes.';
+      if (cnameTargets.length === 1) {
+        body = `Add a CNAME to ${cnameTargets[0]}, or an A record to one of our edge addresses. We check every 30 minutes.`;
+      } else if (cnameTargets.length > 1) {
+        // One target per region, and the choice decides which edges answer the
+        // customer's players - so they pick, we do not pick for them.
+        body = `Add a CNAME to whichever of these is your region - ${cnameTargets.join(', ')} - or an A record to one of our edge addresses. We check every 30 minutes.`;
+      }
+      return { tone: 'text-(--warning)', title: 'Waiting for DNS', body };
+    }
     case 'blocked':
       return {
         tone: 'text-(--warning)',
@@ -51,8 +62,9 @@ function timeLeft(deadlineAt?: string): string | null {
   return h > 0 ? `${h}h ${m}m left` : `${m}m left`;
 }
 
-export function CustomDomainsPanel({ cnameTarget }: { cnameTarget?: string }) {
+export function CustomDomainsPanel() {
   const [domains, setDomains] = useState<CustomDomain[] | null>(null);
+  const [cnameTargets, setCnameTargets] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<{ domain: string; text: string; ok: boolean } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -68,6 +80,16 @@ export function CustomDomainsPanel({ cnameTarget }: { cnameTarget?: string }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // The label alone is not an instruction. Combining it with the hoster bases is
+  // what turns it into a record the customer can actually create, and
+  // /gateway/route-options is the endpoint that carries both - the same one the
+  // route picker and the gateway settings tab read.
+  useEffect(() => {
+    getGatewayRouteOptions()
+      .then(o => setCnameTargets(cnameTargetsFor(o?.cnameTarget || '', o?.hosterDomains || [])))
+      .catch(() => setCnameTargets([]));
+  }, []);
 
   const getToken = async (domain: string) => {
     setBusy(domain);
@@ -118,7 +140,7 @@ export function CustomDomainsPanel({ cnameTarget }: { cnameTarget?: string }) {
 
       <ul className="space-y-3">
         {domains.map((d) => {
-          const info = describe(d, cnameTarget);
+          const info = describe(d, cnameTargets);
           const left = d.state === 'pending' ? timeLeft(d.deadlineAt) : null;
           return (
             <li key={d.domain} className="rounded-md border border-(--base-03) bg-(--base-02) p-3">

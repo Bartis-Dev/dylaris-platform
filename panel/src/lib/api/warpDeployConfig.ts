@@ -15,7 +15,6 @@ export interface WarpDeployConfig {
      * one. Absent means custom domains have no published target and the panel
      * must not invent one - a wrong record is worse than no instruction.
      */
-    cnameTarget?: string;
 }
 
 export async function getWarpDeployConfig(): Promise<{ success: boolean; config?: WarpDeployConfig; message?: string }> {

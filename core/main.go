@@ -532,12 +532,17 @@ func main() {
 			services.NewNetResolver(),
 			services.NewCustomDomainRouteRemover(redisClient, appState.Gateway),
 			func() ([]string, []string) {
-				cname, _ := pgStore.GetSetting("gateway_cname_target")
-				var targets []string
-				if c := strings.TrimSpace(cname); c != "" {
-					targets = append(targets, c)
+				// gateway_cname_target is a LABEL ("route"), never a usable name.
+				// Passing it through raw compared a resolved CNAME against
+				// "route", which no DNS answer can equal, so the CNAME half of
+				// the proof could not pass for anyone - see services.CNAMETargets.
+				hosters, _, cname := extras.settingsHandler.LoadGatewayDomainConfig()
+				bases := make([]string, 0, len(hosters))
+				for _, h := range hosters {
+					bases = append(bases, h.Domain)
 				}
-				return targets, services.OnlineEdgeIPs(context.Background(), redisClient)
+				return services.CNAMETargets(cname, bases),
+					services.OnlineEdgeIPs(context.Background(), redisClient)
 			},
 		)
 		customDomainVerifier.Start(context.Background())

@@ -26,11 +26,12 @@ import (
 // placeholder rather than a plausible wrong value.
 type DeployConfig struct {
 	TunnelSubnets string `json:"tunnelSubnets"`
-	// CNAMETarget is the name a tenant points their OWN domain at. Served here
-	// because this is already "what a deploy needs from Core", and the custom
-	// domain panel has to tell the customer the exact record to create - an
-	// instruction that is worse than useless if it is vague.
-	CNAMETarget string `json:"cnameTarget,omitempty"`
+	// There is deliberately no cnameTarget here any more. It carried
+	// gateway_cname_target verbatim, which is a LABEL ("route") and not a name,
+	// and its single reader printed it to the customer as the record to create.
+	// The custom-domain panel reads /api/gateway/route-options instead, which
+	// carries the hoster bases the label has to be combined with - the same
+	// source the route picker and the gateway settings tab already used.
 }
 
 // defaultCoreServiceName is the name Core answers to inside the overlay. It is
@@ -160,10 +161,6 @@ func (s *AppState) deployConfig() DeployConfig {
 	// is the normal case, not an edge one.
 	if out.TunnelSubnets == "" && s != nil {
 		out.TunnelSubnets = s.suggestTunnelSubnets().Suggested
-	}
-	if s != nil && s.Store != nil {
-		v, _ := s.Store.GetSetting("gateway_cname_target")
-		out.CNAMETarget = strings.TrimSpace(v)
 	}
 	return out
 }
