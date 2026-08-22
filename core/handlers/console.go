@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-pkg/validate"
 
 	"github.com/gorilla/mux"
@@ -16,6 +17,35 @@ import (
 
 type ConsoleHandler struct {
 	state *AppState
+}
+
+// consoleStreamKey resolves which log stream a console read should follow.
+//
+// The log shipper writes dylaris:server:<uuid>:logs:<sub> whenever the server
+// has a sub-server, and every real server has one. An explicit ?sub_server=
+// therefore wins, but an ABSENT one used to fall through to the un-suffixed
+// key, which for such a server does not exist - so the request answered 200
+// with an empty list while the server was running and its stream held
+// hundreds of lines.
+//
+// The write side never had that problem: SendCommand pushes to
+// dylaris:server:<uuid>:input, which is not per-sub-server, because only one
+// sub-server runs at a time. So a caller could send commands to a server and
+// hear nothing back, with neither call reporting an error. The read side now
+// resolves the same "whichever one is running" the write side already assumes.
+//
+// The panel is unaffected: ConsoleView already passes the active sub-server
+// on every request. This is for anyone who does not - the /api/external
+// console route above all, where the caller is an integrator reading API.md
+// and not a page that happens to hold the server object.
+func consoleStreamKey(srv *models.Server, subServer string) string {
+	if subServer == "" {
+		subServer = srv.ActiveSubServer
+	}
+	if subServer == "" {
+		return fmt.Sprintf("dylaris:server:%s:logs", srv.UUID)
+	}
+	return fmt.Sprintf("dylaris:server:%s:logs:%s", srv.UUID, subServer)
 }
 
 func NewConsoleHandler(state *AppState) *ConsoleHandler {
@@ -48,10 +78,7 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid sub_server", http.StatusBadRequest)
 		return
 	}
-	streamKey := fmt.Sprintf("dylaris:server:%s:logs", srv.UUID)
-	if subServer != "" {
-		streamKey = fmt.Sprintf("dylaris:server:%s:logs:%s", srv.UUID, subServer)
-	}
+	streamKey := consoleStreamKey(srv, subServer)
 	// XRevRangeN returns newest-first; we reverse to get chronological order
 	entries, err := h.state.Redis.XRevRangeN(r.Context(), streamKey, "+", "-", 1000).Result()
 	if err != nil {
@@ -112,10 +139,7 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid sub_server", http.StatusBadRequest)
 		return
 	}
-	streamKey := fmt.Sprintf("dylaris:server:%s:logs", srv.UUID)
-	if subServer != "" {
-		streamKey = fmt.Sprintf("dylaris:server:%s:logs:%s", srv.UUID, subServer)
-	}
+	streamKey := consoleStreamKey(srv, subServer)
 	// "$" means: only deliver messages that arrive after this connection opens.
 	lastID := "$"
 
