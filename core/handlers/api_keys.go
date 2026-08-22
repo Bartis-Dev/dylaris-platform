@@ -489,12 +489,13 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 // work. Resolve's own admin and owner short-circuits then answer those cases
 // without touching a grant table.
 //
-// Only server-scoped requests are checked: OWNER caps act on the key holder's
-// own realm, which they hold by definition, and there is no key-authed
-// OWNER-scoped route today (see the note on authz.ResolveAPIKey). Both lookups
-// fail closed, matching AuthMiddleware: a vanished account or server is a 401,
-// and a database fault is a 503 rather than a 403 that would read as a
-// permissions problem.
+// Both route shapes are checked. A server route resolves against that server;
+// an owner route resolves against serverID 0, the key holder's own realm. The
+// owner-route case is not a formality: the operator gate above runs for every
+// key-authed request, and an account that has lost its admin flag resolves
+// differently than it did at mint time. Both lookups fail closed, matching
+// AuthMiddleware: a vanished account or server is a 401, and a database fault
+// is a 503 rather than a 403 that would read as a permissions problem.
 func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request, key *models.APIKey, serverUUID, requiredPerm string) bool {
 	if h.state == nil || h.state.Authz == nil || h.state.Store == nil {
 		return true

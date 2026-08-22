@@ -197,9 +197,15 @@ func (h *APIKeysHandler) APIKeyPowerGate(next http.HandlerFunc) http.HandlerFunc
 // leaving it out bounds the response to exactly the UUIDs the key was already
 // minted for.
 //
-// isAdmin is hard-false: a key is an owner-scoped automation credential, not a
-// staff principal (see authz.ValidKeyCap), so the key of an admin lists that
-// admin's own servers rather than the whole fleet.
+// The owner is resolved with their REAL admin flag. Hard-coding false here read
+// as a safeguard and was not one: the allowlist above already bounds the answer
+// - an empty scope returns early and a non-empty one is intersected below, so
+// this query can never widen past the UUIDs the key was minted for. What the
+// hard-false actually did was hide servers the key demonstrably works on: an
+// operator's support key scoped to a customer's server answered 200 on
+// /external/servers/{uuid} (the middleware resolves the owner as the admin they
+// are) while this listing called the same key empty. A listing that disagrees
+// with the routes it is a directory for is worse than no listing.
 func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Request) {
 	ownerID := APIKeyCallerID(r)
 	if ownerID == "" {
@@ -217,7 +223,12 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 	for _, u := range allowed {
 		inScope[u] = true
 	}
-	servers, err := h.state.Store.ListServersForUser(ownerID, false)
+	owner, err := h.state.Store.GetUserByID(ownerID)
+	if err != nil || owner == nil {
+		sendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
+		return
+	}
+	servers, err := h.state.Store.ListServersForUser(ownerID, owner.IsAdmin)
 	if err != nil {
 		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return

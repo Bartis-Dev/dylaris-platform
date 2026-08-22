@@ -16,11 +16,14 @@ func ValidKeyCap(capID string) bool {
 // minted with. Routing key checks through this + HasCap unifies key auth with
 // session auth on the one decision function.
 //
-// Note: ownerCaps here are not bound to a specific owner realm. The only
-// key-authed route today is server-scoped (rcon.exec). If a future OWNER-scoped
-// route is ever wired to APIKeyMiddleware, it MUST bind the owner realm to the
-// key's UserID (the creator), or an owner-cap key could act on another owner's
-// realm.
+// Note: ownerCaps here are not bound to a specific owner realm, so every
+// OWNER-scoped key route MUST bind that realm to the key's UserID (the
+// creator) itself, or an owner-cap key could act on another owner's realm.
+// The two that exist do: handlers.ExternalOwnerRoute rewrites the request
+// identity to the key owner before the session handler runs, and
+// ListExternalServers queries by the key's UserID directly. Anything new wired
+// to APIKeyOwnerRoute has to do the same - this function cannot do it for you,
+// because it never sees the key.
 func ResolveAPIKey(perms []string, serverAllowed bool) *Resolution {
 	res := &Resolution{
 		panelCaps:  map[string]bool{},

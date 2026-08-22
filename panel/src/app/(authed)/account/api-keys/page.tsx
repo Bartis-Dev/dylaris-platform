@@ -222,12 +222,22 @@ export default function ApiKeysPage() {
             {creating && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setCreating(false)}>
                     <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
+                        {/* .modal-header sets padding and a divider, no layout, so a
+                            header with a title AND a close button stacks them and the X
+                            lands under the heading. Every modal that carries one adds
+                            the row itself; this matches AssignOrphanModal. */}
+                        <div className="modal-header flex items-start justify-between gap-3">
                             <h3 className="modal-title flex items-center gap-2">
                                 <Key size={16} />
                                 New API Key
                             </h3>
-                            <button onClick={() => setCreating(false)} className="text-(--base-06)"><X size={16} /></button>
+                            <button
+                                onClick={() => setCreating(false)}
+                                aria-label="Close"
+                                className="shrink-0 p-1 rounded text-(--base-06) hover:bg-(--base-03) hover:text-(--base-08) transition-colors"
+                            >
+                                <X size={16} />
+                            </button>
                         </div>
                         <div className="modal-body space-y-4">
                             <div>

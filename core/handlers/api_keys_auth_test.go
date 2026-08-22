@@ -56,6 +56,10 @@ type apiKeysAuthFakeStore struct {
 	backupJobs map[int]*models.BackupJob
 	// ownedServers backs ListServersForUser for the external listing route.
 	ownedServers []models.Server
+	// fleetServers is what ListServersForUser returns for an ADMIN caller, the
+	// way the real store answers that branch with the whole fleet rather than a
+	// per-owner query. Kept separate so a test can tell the two apart.
+	fleetServers []models.Server
 }
 
 func (f *apiKeysAuthFakeStore) GetSetting(key string) (string, error) {

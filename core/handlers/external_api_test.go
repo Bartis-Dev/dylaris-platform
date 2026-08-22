@@ -21,6 +21,9 @@ func (f *apiKeysAuthFakeStore) GetBackupJob(id int) (*models.BackupJob, error) {
 }
 
 func (f *apiKeysAuthFakeStore) ListServersForUser(userID string, isAdmin bool) ([]models.Server, error) {
+	if isAdmin {
+		return f.fleetServers, nil
+	}
 	return f.ownedServers, nil
 }
 
@@ -187,6 +190,42 @@ func TestListExternalServers_FiltersToTheKeyAllowlist(t *testing.T) {
 	for _, out := range []string{"uuid-b", "uuid-c"} {
 		if strings.Contains(body, out) {
 			t.Errorf("body = %s, want %s excluded: the key is not scoped to it", body, out)
+		}
+	}
+}
+
+// An operator's support key, scoped to a customer's server. The per-server
+// routes answer it - the middleware re-resolves the key owner, who is an admin,
+// and admins hold everything. The listing has to agree, or it reports the key as
+// having nothing to act on while every other route in the surface works.
+//
+// The allowlist, not the owner query, is what bounds this: fleetServers holds
+// three servers the owner does not own and only the allowlisted one comes back.
+func TestListExternalServers_AnAdminsKeyListsWhatItCanActOn(t *testing.T) {
+	owner := &models.User{ID: "owner-1", Username: "root", IsAdmin: true}
+	fs := externalFixture(nil, []string{"uuid-a"}, owner, nil)
+	fs.ownedServers = nil // the admin owns none of them
+	fs.fleetServers = []models.Server{
+		{ID: 10, UUID: "uuid-a", Name: "customer-server"},
+		{ID: 20, UUID: "uuid-b", Name: "another-tenant"},
+		{ID: 30, UUID: "uuid-c", Name: "third-tenant"},
+	}
+	h := newAPIKeysAuthHandler(fs)
+	wrapped := h.APIKeyOwnerRoute("")(h.ListExternalServers)
+
+	rec := httptest.NewRecorder()
+	wrapped(rec, externalRequest("GET", "/api/external/servers", nil, ""))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "uuid-a") {
+		t.Errorf("body = %s, want the allowlisted server: the key answers 200 for it on every other route", body)
+	}
+	for _, out := range []string{"uuid-b", "uuid-c"} {
+		if strings.Contains(body, out) {
+			t.Errorf("body = %s, want %s excluded: an admin's key is still bounded by its allowlist", body, out)
 		}
 	}
 }
