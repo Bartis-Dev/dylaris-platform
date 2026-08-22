@@ -67,10 +67,10 @@ const (
 	// a slow scan, but expires on its own if this node dies while holding a
 	// server down - the guard re-evaluates within one cycle when it comes back,
 	// so a stale marker can never strand a server whose space was freed.
-	diskFullMarkerTTL = 1 * time.Hour
-	historyBatchInterval  = 2 * time.Minute
-	pingTimeout           = 3 * time.Second
-	watchCacheDuration    = 2 * time.Second
+	diskFullMarkerTTL    = 1 * time.Hour
+	historyBatchInterval = 2 * time.Minute
+	pingTimeout          = 3 * time.Second
+	watchCacheDuration   = 2 * time.Second
 )
 
 // statsWriteProtectedStatuses are statuses the stats collector must NOT
@@ -86,6 +86,30 @@ var statsWriteProtectedStatuses = map[string]bool{
 	"pending_setup": true,
 	"stopping":      true,
 	"disk_full":     true,
+}
+
+// statusWriteHeld reports whether something is deliberately holding this
+// server's status, so the stats collector must not write its own over it.
+//
+// It exists because the two places the collector writes a status did not agree.
+// Both read the status key, but that key is a MAILBOX: Core's watcher drains it
+// every 5 seconds, so a moment after anything posts a hold there the key is
+// empty and statsWriteProtectedStatuses has nothing to match. The
+// stop-tracking branch learned that and started consulting the durable markers;
+// the "online" branch kept reading the drained mailbox alone. Measured, from
+// Core's own log, five seconds apart:
+//
+//	19:51:43  stopping  -> disk_full
+//	19:51:48  disk_full -> online
+//
+// The second line left a stopped server showing as online, which also silenced
+// the power route's storage-limit gate, since that gate keys on the status.
+//
+// One function so the next hold added here reaches both callers. isNodeBusy is
+// deliberately NOT part of it: only the stop-tracking branch makes a promise
+// ("restarting") that a busy node would break.
+func statusWriteHeld(ctx context.Context, rdb *redis.Client, uuid, currentStatus string) bool {
+	return statsWriteProtectedStatuses[currentStatus] || isDiskFull(ctx, rdb, uuid)
 }
 
 // containerSnapshot holds the latest stats for a container (used for batching).
@@ -191,7 +215,7 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				// isDiskFull for the same reason as isNodeBusy: without it this
 				// writes "restarting" over a server the guard is deliberately
 				// holding down, promising a restart that is not coming.
-				if !statsWriteProtectedStatuses[currentStatus] && !isNodeBusy(ctx, rdb, uuid) && !isDiskFull(ctx, rdb, uuid) {
+				if !statusWriteHeld(ctx, rdb, uuid, currentStatus) && !isNodeBusy(ctx, rdb, uuid) {
 					desiredKey := fmt.Sprintf("dylaris:server:%s:desired_state", uuid)
 					desired, _ := rdb.Get(ctx, desiredKey).Result()
 					if desired == "online" {
@@ -416,9 +440,9 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		// Container is running and collecting stats → online
 		newStatus := "online"
 		if newStatus != lastWrittenStatus || time.Since(statusCacheTime) > 15*time.Second {
-			// Check protected statuses before overwriting
+			// The status key alone cannot answer this - see statusWriteHeld.
 			currentStatus, _ := rdb.Get(ctx, statusKey).Result()
-			if !statsWriteProtectedStatuses[currentStatus] {
+			if !statusWriteHeld(ctx, rdb, uuid, currentStatus) {
 				rdb.Set(ctx, statusKey, newStatus, 30*time.Second)
 				lastWrittenStatus = newStatus
 			}
