@@ -151,8 +151,8 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
-	ownershipNotice, gErr := h.customDomainGate(r, userID, finalDomain, strings.TrimSpace(req.CustomDomain) != "")
-	if gErr != nil {
+	isCustomDomain := strings.TrimSpace(req.CustomDomain) != ""
+	if gErr := h.customDomainGate(r, userID, finalDomain, isCustomDomain); gErr != nil {
 		http.Error(w, gErr.Error(), http.StatusForbidden)
 		return
 	}
@@ -175,6 +175,9 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
+	// After the route exists, not before - see armCustomDomainClaim.
+	ownershipNotice := h.armCustomDomainClaim(r, userID, finalDomain, isCustomDomain)
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Route created",
 		"domain": finalDomain, "ownershipNotice": ownershipNotice})

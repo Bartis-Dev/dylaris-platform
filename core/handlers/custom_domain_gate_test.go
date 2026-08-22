@@ -1,8 +1,14 @@
 package handlers
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"dylaris-core/store"
 )
 
 // The hint had no caller at all, so neither route handler told the customer
@@ -37,6 +43,94 @@ func TestCustomDomainDeadlineHint(t *testing.T) {
 		}
 		if strings.Contains(got, "CNAME to ") {
 			t.Errorf("hint promises a CNAME target it does not have: %q", got)
+		}
+	})
+}
+
+// claimFakeStore records what the gate does to the claim table.
+type claimFakeStore struct {
+	store.Store
+	settings map[string]string
+	claim    *store.CustomDomainClaim
+	started  []string
+}
+
+func (f *claimFakeStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
+
+func (f *claimFakeStore) GetCustomDomainClaim(_, _ string) (*store.CustomDomainClaim, error) {
+	if f.claim == nil {
+		return nil, store.ErrNoClaim
+	}
+	return f.claim, nil
+}
+
+func (f *claimFakeStore) StartCustomDomainClaim(_, domain string, _ time.Time) (*store.CustomDomainClaim, error) {
+	f.started = append(f.started, domain)
+	return &store.CustomDomainClaim{Domain: domain, State: store.ClaimPending}, nil
+}
+
+func claimHandler(fs *claimFakeStore) *GatewayHandler {
+	return &GatewayHandler{state: &AppState{Store: fs}}
+}
+
+func userRequest() *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/api/gateway/link-routes", nil)
+	//lint:ignore SA1029 the handlers read a plain string key; the tests match them.
+	return r.WithContext(context.WithValue(r.Context(), "isAdmin", false))
+}
+
+// The check and the arm are separate because the gate runs BEFORE the port
+// check, the per-account route cap and the create itself. Arming there left a
+// live four-hour claim behind every refused request - and the verifier counts a
+// missed deadline whether or not any route exists, so two refusals could
+// permanently block a domain the customer never managed to route.
+func TestCustomDomainGateDoesNotArmTheClaim(t *testing.T) {
+	settings := map[string]string{
+		"gateway_cname_target":   "route",
+		"gateway_hoster_domains": `[{"domain":"eu.dylaris.com","validation":"alphanumeric"}]`,
+	}
+
+	t.Run("the check writes nothing", func(t *testing.T) {
+		fs := &claimFakeStore{settings: settings}
+		if err := claimHandler(fs).customDomainGate(userRequest(), "u1", "mc.example.com", true); err != nil {
+			t.Fatalf("gate refused a fresh domain: %v", err)
+		}
+		if len(fs.started) != 0 {
+			t.Errorf("the check armed %v; a request that is refused further down would leave that claim behind", fs.started)
+		}
+	})
+
+	t.Run("arming happens once, and names the expanded target", func(t *testing.T) {
+		fs := &claimFakeStore{settings: settings}
+		notice := claimHandler(fs).armCustomDomainClaim(userRequest(), "u1", "mc.example.com", true)
+		if len(fs.started) != 1 || fs.started[0] != "mc.example.com" {
+			t.Fatalf("started = %v, want [mc.example.com]", fs.started)
+		}
+		if !strings.Contains(notice, "route.eu.dylaris.com") {
+			t.Errorf("notice does not name the real target: %q", notice)
+		}
+	})
+
+	t.Run("a permanently blocked domain is refused by the check", func(t *testing.T) {
+		fs := &claimFakeStore{settings: settings,
+			claim: &store.CustomDomainClaim{Domain: "mc.example.com", State: store.ClaimPermablocked, Attempts: 2}}
+		err := claimHandler(fs).customDomainGate(userRequest(), "u1", "mc.example.com", true)
+		if err == nil {
+			t.Fatal("a permanently blocked domain was allowed through")
+		}
+		if len(fs.started) != 0 {
+			t.Error("a refused request still touched the claim")
+		}
+	})
+
+	t.Run("a proven domain is not re-armed", func(t *testing.T) {
+		fs := &claimFakeStore{settings: settings,
+			claim: &store.CustomDomainClaim{Domain: "mc.example.com", State: store.ClaimVerified}}
+		if notice := claimHandler(fs).armCustomDomainClaim(userRequest(), "u1", "mc.example.com", true); notice != "" {
+			t.Errorf("a verified domain was put back on a clock: %q", notice)
+		}
+		if len(fs.started) != 0 {
+			t.Errorf("started = %v, want none", fs.started)
 		}
 	})
 }

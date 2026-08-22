@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -12,13 +13,9 @@ import (
 
 // customDomainGate decides whether this caller may point `domain` at us.
 //
-// Returns a non-nil error to refuse, with a message meant for the customer, and
-// otherwise a notice to show them when a grant was just armed.
-//
-// The notice is not decoration. Arming a claim starts a four-hour clock that
-// ends with the route being deleted and, on a second miss, the domain being
-// blocked for this account - and until now nothing told the customer any of
-// that. The route was simply accepted, and hours later it was gone.
+// Returns a non-nil error to refuse, with a message meant for the customer.
+// It only READS: arming the grant is armCustomDomainClaim, called after the
+// route actually exists.
 //
 // ADMINS ARE EXEMPT ENTIRELY - not "checked and usually passing", but never
 // checked. The proof exists to stop a tenant from claiming a domain they do not
@@ -28,45 +25,69 @@ import (
 //
 // It is also a no-op for anything that is not a custom domain: a subdomain of a
 // hoster domain is already ours, so there is nothing to prove.
-func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string, isCustom bool) (string, error) {
+func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string, isCustom bool) error {
 	if !isCustom || IsAdmin(r) {
-		return "", nil
+		return nil
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	if domain == "" {
-		return "", nil
+		return nil
 	}
 
 	claim, err := h.state.Store.GetCustomDomainClaim(userID, domain)
 	if err != nil && err != store.ErrNoClaim {
 		// Fail CLOSED. Not knowing whether this user is blocked is not a reason
 		// to assume they are not.
-		return "", fmt.Errorf("could not check the ownership status of %s", domain)
+		return fmt.Errorf("could not check the ownership status of %s", domain)
 	}
-
-	if claim != nil {
-		switch claim.State {
-		case store.ClaimVerified:
-			return "", nil
-		case store.ClaimPermablocked:
-			return "", fmt.Errorf("%s is blocked for your account after %d failed ownership checks. "+
-				"To unblock it, add the TXT record shown under Custom domains in your panel",
-				domain, claim.Attempts)
-		}
+	if claim != nil && claim.State == store.ClaimPermablocked {
+		return fmt.Errorf("%s is blocked for your account after %d failed ownership checks. "+
+			"To unblock it, add the TXT record shown under Custom domains in your panel",
+			domain, claim.Attempts)
 	}
+	return nil
+}
 
-	// pending, blocked, or brand new: (re-)arm the grant. StartCustomDomainClaim
-	// refuses to re-arm a permanent block, so a retry cannot launder one.
+// armCustomDomainClaim starts the four-hour grant and returns the instruction
+// the customer needs. Call it AFTER the route exists, never before.
+//
+// Arming used to happen inside the gate, which runs before the port check, the
+// per-account route cap and the create itself. So a request refused with
+// "Route limit reached" still left a live claim on the customer's own domain,
+// with a deadline they were not told about and no route to justify it. The
+// verifier fails a pending claim on its deadline whether or not any route
+// exists, and two failures block the domain for that account permanently - so
+// two refused attempts could permanently block a domain the customer had never
+// managed to route at all.
+//
+// Idempotent for a domain already proven (returns no notice), and
+// StartCustomDomainClaim refuses to re-arm a permanent block, so a retry
+// cannot launder one.
+func (h *GatewayHandler) armCustomDomainClaim(r *http.Request, userID, domain string, isCustom bool) string {
+	if !isCustom || IsAdmin(r) {
+		return ""
+	}
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" {
+		return ""
+	}
+	claim, err := h.state.Store.GetCustomDomainClaim(userID, domain)
+	if err == nil && claim != nil && claim.State == store.ClaimVerified {
+		return "" // already proven; nothing to wait for
+	}
 	if _, err := h.state.Store.StartCustomDomainClaim(userID, domain,
 		time.Now().Add(services.CustomDomainGrant)); err != nil {
-		return "", fmt.Errorf("could not record the ownership check for %s", domain)
+		// The route is already created; failing the request now would be worse
+		// than an unclaimed domain, which the next create re-arms.
+		log.Printf("custom-domain: could not arm the claim for %s (user %s): %v", domain, userID, err)
+		return ""
 	}
 	hosters, _, cname := h.loadGatewayDomainConfig()
 	bases := make([]string, 0, len(hosters))
 	for _, hd := range hosters {
 		bases = append(bases, hd.Domain)
 	}
-	return customDomainDeadlineHint(services.CNAMETargets(cname, bases)), nil
+	return customDomainDeadlineHint(services.CNAMETargets(cname, bases))
 }
 
 // customDomainDeadlineHint is the one-line instruction shown after a route on an

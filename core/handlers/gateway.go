@@ -372,8 +372,8 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
-	ownershipNotice, gErr := h.customDomainGate(r, userID, finalDomain, strings.TrimSpace(req.CustomDomain) != "")
-	if gErr != nil {
+	isCustomDomain := strings.TrimSpace(req.CustomDomain) != ""
+	if gErr := h.customDomainGate(r, userID, finalDomain, isCustomDomain); gErr != nil {
 		http.Error(w, gErr.Error(), http.StatusForbidden)
 		return
 	}
@@ -434,6 +434,11 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
+
+	// Armed only now that the route exists: every rejection above would
+	// otherwise have left a live claim, and its deadline counts against the
+	// customer whether or not they ever got a route.
+	ownershipNotice := h.armCustomDomainClaim(r, userID, finalDomain, isCustomDomain)
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
