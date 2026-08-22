@@ -37,14 +37,20 @@ func NewAdmissionGate(st store.Store) *AdmissionGate {
 // stable, non-leaky reason code. Unset settings fall back to the inert defaults
 // (open + allow); real DB errors propagate (fail-closed for the caller).
 func (g *AdmissionGate) CheckNewRegistration(ctx context.Context, ip net.IP) (bool, string, error) {
-	// Network gate.
-	ipAllowed, err := g.ipAllowed(ip)
-	if err != nil {
-		return false, "", err
-	}
-	if !ipAllowed {
-		return false, "admission_ip_denied", nil
-	}
+	// The NETWORK gate is deliberately NOT evaluated here any more; it lives on
+	// the warp enrol (handlers/warp.go Enroll), and CheckNetwork is what runs it.
+	//
+	// A BYON node reaches this gRPC endpoint through the warp tunnel, so `ip` is
+	// the warp LEADER's overlay address, identical for every customer - measured
+	// at 10.20.0.11 for every denial. Matching an operator's CIDR list against it
+	// could only ever be all-or-nothing, which made the setting look like a
+	// per-customer control while being none. The warp enrol sees the customer's
+	// real address because it happens over HTTPS before the tunnel exists.
+	//
+	// `ip` is still accepted (and still the gRPC peer) so callers and tests keep
+	// their shape, and so a future check that genuinely wants the tunnel-side
+	// address has it.
+	_ = ip
 
 	// Join gate.
 	mode, err := g.store.GetSetting(settingNodeJoinMode)
@@ -90,6 +96,23 @@ func (g *AdmissionGate) ConsumeJoinSlot(ctx context.Context) error {
 	}
 	_, err = g.store.ConsumeOneShotJoin()
 	return err
+}
+
+// CheckNetwork evaluates ONLY the network gate, against an address the caller
+// vouches for. It is called from the warp enrol, which is reached over HTTPS
+// before any tunnel exists and therefore sees the customer's real IP.
+//
+// Returns the same stable reason code the gRPC path used, so an operator reading
+// logs across the two sees one vocabulary.
+func (g *AdmissionGate) CheckNetwork(ctx context.Context, ip net.IP) (bool, string, error) {
+	allowed, err := g.ipAllowed(ip)
+	if err != nil {
+		return false, "", err
+	}
+	if !allowed {
+		return false, "admission_ip_denied", nil
+	}
+	return true, "", nil
 }
 
 // ipAllowed implements the allow/deny rule: allow-mode always admits (the CIDR

@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -277,5 +281,146 @@ func TestVerifyTOTPOrBackup_PersistErrorPropagates(t *testing.T) {
 	}
 	if ok {
 		t.Fatalf("persist failure must not report acceptance, got ok=true")
+	}
+}
+
+// postJSONAs runs an authed handler directly, with the username the auth
+// middleware would have put in the context.
+func postJSONAs(t *testing.T, h http.HandlerFunc, username string, body interface{}) *httptest.ResponseRecorder {
+	return postJSONAsPurpose(t, h, username, "", body)
+}
+
+// postJSONAsPurpose is the same, with the JWT purpose the middleware would have
+// attached ("" = a normal session, "2fa_setup" = a fresh password login).
+func postJSONAsPurpose(t *testing.T, h http.HandlerFunc, username, purpose string, body interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req := httptest.NewRequest("POST", "/", bytes.NewReader(raw))
+	ctx := context.WithValue(req.Context(), "username", username) //nolint:staticcheck // matches the middleware's key
+	ctx = context.WithValue(ctx, tokenPurposeKey, purpose)
+	rr := httptest.NewRecorder()
+	h(rr, req.WithContext(ctx))
+	return rr
+}
+
+// enrolFakeStore serves one user to VerifyTOTPHandler and records the enable.
+type enrolFakeStore struct {
+	totpFakeStore
+	user *models.User
+}
+
+func (f *enrolFakeStore) GetUserByUsername(string) (*models.User, error) { return f.user, nil }
+
+// Enrolment is the step that decides who holds the second factor from then on,
+// so it must re-authenticate. Without the password a stolen session alone could
+// bind the ATTACKER's authenticator to the account, take the one-time backup
+// codes and lock the owner out - a temporary session compromise turned into
+// durable takeover, using the security feature as the lock. Disable and
+// RegenerateBackupCodes always asked; enrolment did not.
+func TestVerifyTOTPRequiresPassword(t *testing.T) {
+	const password = "correct-horse-battery"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	secret := freshTOTPSecret(t)
+
+	newStore := func() *enrolFakeStore {
+		return &enrolFakeStore{user: &models.User{
+			ID: "u1", Username: "alice", Password: string(hash),
+		}}
+	}
+	validCode := func(t *testing.T) string {
+		t.Helper()
+		code, cerr := totp.GenerateCode(secret, time.Now())
+		if cerr != nil {
+			t.Fatalf("generate code: %v", cerr)
+		}
+		return code
+	}
+
+	t.Run("a valid code without the password does not enable 2FA", func(t *testing.T) {
+		fs := newStore()
+		h := newTOTPTestAuthHandler(&fs.totpFakeStore)
+		h.state.Store = fs
+		body := VerifyTOTPRequest{Secret: secret, Code: validCode(t)}
+		rr := postJSONAs(t, h.VerifyTOTPHandler, "alice", body)
+		if rr.Code != 401 {
+			t.Errorf("status = %d, want 401", rr.Code)
+		}
+		if fs.setCalls != 0 {
+			t.Error("2FA was enabled without the account password")
+		}
+	})
+
+	t.Run("a wrong password does not enable 2FA", func(t *testing.T) {
+		fs := newStore()
+		h := newTOTPTestAuthHandler(&fs.totpFakeStore)
+		h.state.Store = fs
+		body := VerifyTOTPRequest{Secret: secret, Code: validCode(t), Password: "wrong"}
+		rr := postJSONAs(t, h.VerifyTOTPHandler, "alice", body)
+		if rr.Code != 401 || fs.setCalls != 0 {
+			t.Errorf("status = %d, setCalls = %d; want 401 and no write", rr.Code, fs.setCalls)
+		}
+	})
+
+	t.Run("the right password plus a valid code enables it", func(t *testing.T) {
+		fs := newStore()
+		h := newTOTPTestAuthHandler(&fs.totpFakeStore)
+		h.state.Store = fs
+		body := VerifyTOTPRequest{Secret: secret, Code: validCode(t), Password: password}
+		rr := postJSONAs(t, h.VerifyTOTPHandler, "alice", body)
+		if rr.Code != 200 {
+			t.Fatalf("status = %d, want 200 (body %s)", rr.Code, rr.Body.String())
+		}
+		if fs.setCalls != 1 || !fs.lastSetEnabled || fs.lastSetSecret != secret {
+			t.Errorf("enable not persisted as expected: calls=%d enabled=%v secret=%q",
+				fs.setCalls, fs.lastSetEnabled, fs.lastSetSecret)
+		}
+	})
+
+	// The password must not be checked before the code: a caller who only knows
+	// the password should not learn it is right by watching the error change.
+	t.Run("a bad code with the right password still fails", func(t *testing.T) {
+		fs := newStore()
+		h := newTOTPTestAuthHandler(&fs.totpFakeStore)
+		h.state.Store = fs
+		body := VerifyTOTPRequest{Secret: secret, Code: invalidTOTPCode(t, secret), Password: password}
+		rr := postJSONAs(t, h.VerifyTOTPHandler, "alice", body)
+		if rr.Code == 200 || fs.setCalls != 0 {
+			t.Errorf("status = %d, setCalls = %d; want a rejection", rr.Code, fs.setCalls)
+		}
+	})
+}
+
+// The forced-enrolment flow must not be blocked by the new password prompt. Its
+// token is minted by the login handler only after a successful password check,
+// expires in 15 minutes and reaches three paths, so the password is already
+// proven - asking again would demand something the user answered seconds ago.
+func TestVerifyTOTPSetupTokenSkipsPassword(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	secret := freshTOTPSecret(t)
+	code, cerr := totp.GenerateCode(secret, time.Now())
+	if cerr != nil {
+		t.Fatalf("code: %v", cerr)
+	}
+
+	fs := &enrolFakeStore{user: &models.User{ID: "u1", Username: "alice", Password: string(hash)}}
+	h := newTOTPTestAuthHandler(&fs.totpFakeStore)
+	h.state.Store = fs
+
+	rr := postJSONAsPurpose(t, h.VerifyTOTPHandler, "alice", "2fa_setup",
+		VerifyTOTPRequest{Secret: secret, Code: code})
+	if rr.Code != 200 {
+		t.Fatalf("status = %d, want 200 (body %s)", rr.Code, rr.Body.String())
+	}
+	if fs.setCalls != 1 || !fs.lastSetEnabled {
+		t.Errorf("forced enrolment did not enable 2FA: calls=%d enabled=%v", fs.setCalls, fs.lastSetEnabled)
 	}
 }

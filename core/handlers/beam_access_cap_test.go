@@ -24,6 +24,13 @@ import (
 // files.read without files.write; "operator" holds no file capability at all.
 // Both had unrestricted write access through beam.
 
+// GetNodeSecretEnc is what keys the beam LAN certificate: the ticket handler
+// derives the pinned fingerprint from the node's PER-NODE secret rather than the
+// fleet JWT secret. The embedded store.Store is nil, so without this the call
+// panics instead of reporting "no secret". Empty = this node has none, which is
+// the path that leaves the ticket with no direct hints.
+func (f *beamAccessFakeStore) GetNodeSecretEnc(int) (string, error) { return "", nil }
+
 type beamAccessFakeStore struct {
 	store.Store
 
@@ -118,7 +125,7 @@ func (f *beamAccessFakeStore) GetAccountGrant(ownerUserID, userID string) (*stor
 // manifest from GitHub on every ticket request, which a unit test must not do;
 // an unexpired cache entry short-circuits that fetch (beam_manifest.go).
 func newBeamAccessHandler(fs *beamAccessFakeStore) *BeamHandler {
-	h := NewBeamHandler(&AppState{Store: fs, Authz: authz.NewResolver(fs)}, "beam-test-secret")
+	h := NewBeamHandler(&AppState{Store: fs, Authz: authz.NewResolver(fs)}, "beam-test-secret", "test-cluster-secret")
 	h.minCacheVal = ""
 	h.minCacheAt = time.Now()
 	return h

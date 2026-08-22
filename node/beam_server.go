@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,11 +160,18 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 	// LAN fast-path TLS listener (opt-in, default on). The plain :25521 listener
 	// above is reached only via the encrypted overlay (relay hop). Direct LAN
 	// clients (the Beam app on the same network) instead hit this TLS listener so
-	// the hop is encrypted; the cert is deterministically derived from the beam
-	// secret + node ID, and Core hands the app the matching fingerprint to pin,
-	// which also defeats MITM. Same handler/auth (the JWT ticket) as the relay path.
+	// the hop is encrypted; the cert is deterministically derived, and Core hands
+	// the app the matching fingerprint to pin, which also defeats MITM. Same
+	// handler/auth (the JWT ticket) as the relay path.
+	//
+	// Keyed on the PER-NODE secret, not BEAM_JWT_SECRET. A BYON machine never gets
+	// fleet secrets - the deploy snippet withholds them deliberately - so the old
+	// derivation failed with "auth: empty secret" on every customer node while the
+	// snippet still set BEAM_LAN_FASTPATH=true and the panel still advertised the
+	// port. The per-node secret is the one Core and this node already share, and
+	// it never crosses the wire.
 	if os.Getenv("BEAM_LAN_FASTPATH") != "false" {
-		go startBeamLANListener(ctx, bs, jwtSecret, nodeID)
+		go startBeamLANListener(ctx, bs, nodeID)
 	}
 
 	go func() {
@@ -179,12 +187,20 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 // startBeamLANListener serves the BeamNodeService over TLS on the LAN fast-path
 // port using the deterministic pinned certificate. Failures are non-fatal — the
 // relay path keeps working regardless.
-func startBeamLANListener(ctx context.Context, bs *beamServer, jwtSecret, nodeID string) {
+func startBeamLANListener(ctx context.Context, bs *beamServer, nodeID string) {
 	lanPort := os.Getenv("BEAM_LAN_PORT")
 	if lanPort == "" {
 		lanPort = "25523"
 	}
-	cert, fp, derr := beamauth.DeriveLANCert(jwtSecret, nodeID)
+	// The per-node secret arrives over the authenticated gRPC bootstrap, which
+	// can lag this goroutine on a cold start. Wait for it rather than deriving
+	// from an empty secret and disabling the listener for the process' lifetime.
+	secret, ok := waitForNodeSecret(ctx, 2*time.Minute)
+	if !ok {
+		log.Printf("beam-server: LAN fast-path disabled, no per-node secret after 2m")
+		return
+	}
+	cert, fp, derr := beamauth.DeriveLANCert(hex.EncodeToString(secret), nodeID)
 	if derr != nil {
 		log.Printf("beam-server: LAN fast-path disabled, cert derive failed: %v", derr)
 		return

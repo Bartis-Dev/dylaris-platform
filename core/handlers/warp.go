@@ -105,6 +105,38 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Node admission's NETWORK gate belongs here, not on the gRPC node-enroll.
+	//
+	// A BYON node reaches Core's gRPC through the warp tunnel, so the TCP peer
+	// there is the warp LEADER - measured: every denied enrol logged the same
+	// 10.20.0.11 regardless of which customer it came from. An IP allowlist
+	// evaluated on that address cannot tell two customers apart: enter a real
+	// customer IP and everyone is locked out, enter the overlay range and
+	// everyone is admitted.
+	//
+	// This request is different: it arrives over HTTPS, BEFORE any tunnel exists,
+	// so clientIP(r) is the customer's real address (and is spoofing-resistant -
+	// it only believes X-Forwarded-For from a configured trusted proxy).
+	//
+	// Node keys only. The setting is "node admission", and a route-only link kit
+	// is not a node; gating link kits here would be a surprise to anyone reading
+	// the setting's name. The JOIN gate (open / one-shot / disabled) stays on the
+	// gRPC path, where it can be consumed exactly once per successful node enrol.
+	if h.state.Admission != nil && strings.HasPrefix(key.NodeID, "node-") {
+		allowed, reason, aerr := h.state.Admission.CheckNetwork(r.Context(), net.ParseIP(clientIP(r)))
+		if aerr != nil {
+			// Fail closed: a DB fault must not silently open admission.
+			log.Printf("warp enroll: admission check failed for key %d: %v", key.ID, aerr)
+			sendJSONError(w, "Could not verify admission", http.StatusInternalServerError)
+			return
+		}
+		if !allowed {
+			log.Printf("warp enroll: rejected key %d (%s) from %s", key.ID, reason, clientIP(r))
+			sendJSONError(w, "This machine's network is not allowed to join", http.StatusForbidden)
+			return
+		}
+	}
+
 	res, err := h.svc.Enroll(r.Context(), key, req.PublicKey, req.TunnelSubnets)
 	if err != nil {
 		// 409 only for a genuine connection-limit conflict; everything else is

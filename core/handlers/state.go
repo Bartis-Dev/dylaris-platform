@@ -22,6 +22,11 @@ type AppState struct {
 	GRPCRegistry     *nodegrpc.Registry
 	Gateway          services.GatewayProvider
 	RoutingMigration *services.RoutingMigrationService
+	// Admission evaluates the node-admission NETWORK gate on the warp enrol,
+	// which is the only place that sees a BYON customer's real IP (the gRPC
+	// node-enrol arrives through the tunnel, so its peer is the warp leader).
+	// nil = no admission configured, and the gate is skipped.
+	Admission *services.AdmissionGate
 	// FrontendURL is the panel base URL — used by mailers to build absolute
 	// links into the UI (verify-email, password-reset, ticket replies, etc).
 	FrontendURL string

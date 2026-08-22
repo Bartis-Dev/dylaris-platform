@@ -1,13 +1,19 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"dylaris-core/store"
@@ -179,4 +185,99 @@ func TestEffectiveMinVersion(t *testing.T) {
 	if got := hDead.effectiveMinVersion(context.Background()); got != "" {
 		t.Errorf("unreachable manifest floor = %q, want \"\" (fail-open)", got)
 	}
+}
+
+// beam.download_link used to return before the manifest was ever fetched, so
+// the override served an executable that nothing had verified. It is a
+// settings.write string (a delegatable capability, not admin) and the download
+// route is unauthenticated, so that was an arbitrary binary handed to every
+// downloading user over Core's own trusted TLS.
+func TestVerifiedBeamBody(t *testing.T) {
+	payload := []byte("this is a beam binary")
+	sum := sha256.Sum256(payload)
+	good := hex.EncodeToString(sum[:])
+
+	t.Run("matching digest is delivered", func(t *testing.T) {
+		rc, n, err := verifiedBeamBody(bytes.NewReader(payload), good)
+		if err != nil {
+			t.Fatalf("verifiedBeamBody: %v", err)
+		}
+		defer rc.Close()
+		if n != int64(len(payload)) {
+			t.Errorf("size = %d, want %d", n, len(payload))
+		}
+		got, _ := io.ReadAll(rc)
+		if !bytes.Equal(got, payload) {
+			t.Error("delivered bytes differ from the source")
+		}
+	})
+
+	t.Run("a mirror serving something else is refused", func(t *testing.T) {
+		if _, _, err := verifiedBeamBody(bytes.NewReader([]byte("not the binary")), good); err == nil {
+			t.Fatal("a mismatched binary was accepted")
+		}
+	})
+
+	// Fail closed: no digest means nothing vouches for the bytes, which is
+	// exactly the state this function exists to refuse.
+	t.Run("an empty digest is refused, not skipped", func(t *testing.T) {
+		if _, _, err := verifiedBeamBody(bytes.NewReader(payload), ""); err == nil {
+			t.Fatal("an unverifiable download was accepted")
+		}
+	})
+
+	t.Run("digest comparison is case-insensitive", func(t *testing.T) {
+		rc, _, err := verifiedBeamBody(bytes.NewReader(payload), strings.ToUpper(good))
+		if err != nil {
+			t.Fatalf("uppercase digest rejected: %v", err)
+		}
+		rc.Close()
+	})
+
+	// A hostile or misconfigured mirror must not be able to fill the disk by
+	// answering with an endless body.
+	t.Run("an endless body is cut off", func(t *testing.T) {
+		endless := io.MultiReader(bytes.NewReader(payload), neverEndingReader{})
+		if _, _, err := verifiedBeamBody(endless, good); err == nil {
+			t.Fatal("an oversized body was accepted")
+		}
+	})
+
+	// Nothing may be left behind on either path.
+	t.Run("the temp file is removed on success and on failure", func(t *testing.T) {
+		before := countBeamTempFiles(t)
+		rc, _, err := verifiedBeamBody(bytes.NewReader(payload), good)
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		rc.Close()
+		_, _, _ = verifiedBeamBody(bytes.NewReader([]byte("wrong")), good)
+		if after := countBeamTempFiles(t); after != before {
+			t.Errorf("temp files leaked: %d before, %d after", before, after)
+		}
+	})
+}
+
+type neverEndingReader struct{}
+
+func (neverEndingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
+}
+
+func countBeamTempFiles(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		t.Skipf("cannot read temp dir: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "beam-dl-") {
+			n++
+		}
+	}
+	return n
 }

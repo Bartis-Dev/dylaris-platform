@@ -67,6 +67,10 @@ func (h *AuthHandler) SetupTOTPHandler(w http.ResponseWriter, r *http.Request) {
 type VerifyTOTPRequest struct {
 	Secret string `json:"secret"`
 	Code   string `json:"code"`
+	// Password re-authenticates the account holder before 2FA is switched on.
+	// Disable and RegenerateBackupCodes have always asked for it; enrolment did
+	// not, which was the wrong way round - see VerifyTOTPHandler.
+	Password string `json:"password"`
 }
 
 type VerifyTOTPResponse struct {
@@ -102,6 +106,29 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 	if req.Secret == "" || req.Code == "" {
 		sendJSONError(w, "Secret and code required", http.StatusBadRequest)
 		return
+	}
+
+	// Re-authenticate before enabling. Without this, a session token alone was
+	// enough to enrol 2FA: the caller supplies the secret, so a stolen or
+	// borrowed session could bind the ATTACKER's authenticator to the account,
+	// collect the one-time backup codes, and lock the real owner out - turning a
+	// temporary session compromise into durable account takeover, using the
+	// security feature as the lock.
+	//
+	// The sibling operations already worked this way (DisableTOTPHandler,
+	// RegenerateBackupCodesHandler both compare the password first); enrolment
+	// was the one that did not, which is backwards - it is the step that decides
+	// who owns the second factor from then on.
+	// Exception: a 2fa_setup token. AuthMiddleware only ever sees one because
+	// the login handler minted it moments earlier for THIS user after checking
+	// the password, it expires in 15 minutes and it reaches only three paths. The
+	// password is already proven for its bearer, and asking again would block the
+	// forced-enrolment flow behind a prompt the user just answered.
+	if TokenPurpose(r) != "2fa_setup" {
+		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+			sendJSONError(w, "Invalid password", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	if !totp.Validate(req.Code, req.Secret) {

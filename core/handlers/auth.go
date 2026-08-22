@@ -160,6 +160,21 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// tokenPurposeKey carries the JWT's Purpose claim to handlers that need to tell
+// a fresh password login apart from a long-lived session. Typed, unlike the
+// string keys beside it, so it cannot collide with a request-scoped value set
+// elsewhere.
+type contextKey string
+
+const tokenPurposeKey contextKey = "tokenPurpose"
+
+// TokenPurpose returns the purpose of the JWT that authenticated this request
+// ("" for a normal session).
+func TokenPurpose(r *http.Request) string {
+	p, _ := r.Context().Value(tokenPurposeKey).(string)
+	return p
+}
+
 // purposes whitelisted for setup-token JWTs. Anything else gets 403'd
 // by AuthMiddleware so the bearer of a setup token can't access regular
 // endpoints just because they have a valid signature.
@@ -327,6 +342,12 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		ctx := context.WithValue(r.Context(), "username", claims.Username)
 		ctx = context.WithValue(ctx, "isAdmin", claims.IsAdmin)
+		// Handlers that re-authenticate need to know WHICH kind of token this is.
+		// A 2fa_setup token is minted only by a successful password login, lives
+		// 15 minutes and reaches three paths, so the password is already proven
+		// for its bearer; a normal session token is long-lived and stealable and
+		// proves nothing about who is holding it right now.
+		ctx = context.WithValue(ctx, tokenPurposeKey, claims.Purpose)
 
 		// Resolve userID from DB for invite checks.
 		//

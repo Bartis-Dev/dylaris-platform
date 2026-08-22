@@ -181,12 +181,17 @@ func TestCheckNewRegistration(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name:       "ip denied short-circuits before join gate",
-			ipMode:     "deny",
-			cidrs:      nil,
-			ip:         net.ParseIP("203.0.113.7"),
-			wantOK:     false,
-			wantReason: "admission_ip_denied",
+			// The NETWORK gate no longer runs here - it moved to the warp enrol,
+			// which is the only place a BYON customer's real IP is visible. Over
+			// gRPC the peer is the warp leader, so an allowlist evaluated here
+			// could only ever be all-or-nothing. Denying the IP must therefore
+			// NOT block the join gate any more; TestCheckNetwork covers the gate
+			// itself.
+			name:   "ip denied no longer blocks here (network gate moved to warp enrol)",
+			ipMode: "deny",
+			cidrs:  nil,
+			ip:     net.ParseIP("203.0.113.7"),
+			wantOK: true,
 		},
 		{
 			name:   "ip allowed + join unset defaults open",
@@ -219,10 +224,13 @@ func TestCheckNewRegistration(t *testing.T) {
 			wantOK:   true,
 		},
 		{
-			name:      "ip-mode DB error propagates",
+			// Same move: this path no longer reads the ip-mode setting at all, so
+			// a fault reading it cannot fail the join check. TestCheckNetwork
+			// pins that CheckNetwork still fails closed on that error.
+			name:      "ip-mode DB error is irrelevant here",
 			ipModeErr: errors.New("db down"),
 			ip:        net.ParseIP("203.0.113.7"),
-			wantErr:   true,
+			wantOK:    true,
 		},
 		{
 			name:        "join-mode DB error propagates (ip gate passed)",
@@ -355,6 +363,103 @@ func TestConsumeJoinSlot(t *testing.T) {
 			}
 			if fs.consumeCalled != tc.wantConsumed {
 				t.Fatalf("ConsumeOneShotJoin called %d times, want %d", fs.consumeCalled, tc.wantConsumed)
+			}
+		})
+	}
+}
+
+// TestCheckNetwork pins the network gate at its new home. It is the half the
+// warp enrol calls, where clientIP(r) is the customer's real address rather than
+// the warp leader every BYON node shares.
+func TestCheckNetwork(t *testing.T) {
+	cases := []struct {
+		name       string
+		ipMode     string
+		ipModeErr  error
+		cidrs      []store.AdmissionCIDR
+		ip         net.IP
+		wantOK     bool
+		wantReason string
+		wantErr    bool
+	}{
+		{
+			name:   "allow mode admits anything, cidrs advisory",
+			ipMode: "allow",
+			cidrs:  []store.AdmissionCIDR{{CIDR: "10.0.0.0/8"}},
+			ip:     net.ParseIP("203.0.113.7"),
+			wantOK: true,
+		},
+		{
+			name:   "unset defaults to allow (inert)",
+			ip:     net.ParseIP("203.0.113.7"),
+			wantOK: true,
+		},
+		{
+			name:       "deny mode with no cidrs admits nobody",
+			ipMode:     "deny",
+			ip:         net.ParseIP("203.0.113.7"),
+			wantOK:     false,
+			wantReason: "admission_ip_denied",
+		},
+		{
+			name:   "deny mode admits an ip inside a listed cidr",
+			ipMode: "deny",
+			cidrs:  []store.AdmissionCIDR{{CIDR: "203.0.113.0/24"}},
+			ip:     net.ParseIP("203.0.113.7"),
+			wantOK: true,
+		},
+		{
+			name:       "deny mode refuses an ip outside every listed cidr",
+			ipMode:     "deny",
+			cidrs:      []store.AdmissionCIDR{{CIDR: "198.51.100.0/24"}},
+			ip:         net.ParseIP("203.0.113.7"),
+			wantOK:     false,
+			wantReason: "admission_ip_denied",
+		},
+		{
+			// An unresolvable client address must not pass a deny-mode gate.
+			name:       "deny mode refuses a nil ip",
+			ipMode:     "deny",
+			cidrs:      []store.AdmissionCIDR{{CIDR: "0.0.0.0/0"}},
+			ip:         nil,
+			wantOK:     false,
+			wantReason: "admission_ip_denied",
+		},
+		{
+			name:      "db error fails closed",
+			ipModeErr: errors.New("db down"),
+			ip:        net.ParseIP("203.0.113.7"),
+			wantErr:   true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &admissionFakeStore{
+				settings:   map[string]string{},
+				settingErr: map[string]error{},
+				cidrs:      tc.cidrs,
+			}
+			if tc.ipMode != "" {
+				fs.settings[settingNodeAdmissionIPMode] = tc.ipMode
+			}
+			if tc.ipModeErr != nil {
+				fs.settingErr[settingNodeAdmissionIPMode] = tc.ipModeErr
+			}
+			g := NewAdmissionGate(fs)
+
+			ok, reason, err := g.CheckNetwork(context.Background(), tc.ip)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (reason=%q)", ok, tc.wantOK, reason)
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
 			}
 		})
 	}

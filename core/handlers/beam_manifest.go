@@ -67,6 +67,12 @@ type beamManifest struct {
 	MinVersion string `json:"minVersion"`
 	Platforms  map[string]struct {
 		URL string `json:"url"`
+		// Sha256 is the hex digest over the binary itself, produced by
+		// cmd/beam-release and covered by the manifest signature. The app's
+		// updater has always checked it; Core now does too, so that an operator
+		// mirror (beam.download_link) can change WHERE the bytes come from
+		// without changing WHAT they are allowed to be.
+		Sha256 string `json:"sha256"`
 	} `json:"platforms"`
 }
 
@@ -78,23 +84,34 @@ type beamManifest struct {
 // (that would lock every client out), but it equally must not be the source of
 // a URL Core hands an executable down from. No manifest, no download.
 func fetchVerifiedBeamPlatformURL(ctx context.Context, manifestURL, pubB64, platform string) (string, error) {
+	u, _, err := fetchVerifiedBeamPlatformArtifact(ctx, manifestURL, pubB64, platform)
+	return u, err
+}
+
+// fetchVerifiedBeamPlatformArtifact returns the URL AND the expected hex sha256
+// for one platform, both out of the signature-verified manifest.
+//
+// The digest is what lets beam.download_link stay useful without being a hole:
+// the manifest decides what the bytes must be, the setting only decides where
+// they are fetched from.
+func fetchVerifiedBeamPlatformArtifact(ctx context.Context, manifestURL, pubB64, platform string) (url, sha256Hex string, err error) {
 	body, err := httpGetBeamManifestBytes(ctx, manifestURL)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	sig, err := httpGetBeamManifestBytes(ctx, manifestURL+".sig")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	m, err := verifyBeamManifest(pubB64, body, sig)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	p, ok := m.Platforms[platform]
 	if !ok || strings.TrimSpace(p.URL) == "" {
-		return "", fmt.Errorf("signed manifest has no entry for %s", platform)
+		return "", "", fmt.Errorf("signed manifest has no entry for %s", platform)
 	}
-	return strings.TrimSpace(p.URL), nil
+	return strings.TrimSpace(p.URL), strings.ToLower(strings.TrimSpace(p.Sha256)), nil
 }
 
 // verifyBeamManifest verifies sigB64 (base64-std, over the exact body bytes)

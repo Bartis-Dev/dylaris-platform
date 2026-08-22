@@ -346,6 +346,9 @@ type EnableStep = 'loading' | 'scan' | 'backup';
 function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete: () => void }) {
   const [step, setStep] = useState<EnableStep>('loading');
   const [secret, setSecret] = useState('');
+  // Enabling 2FA re-authenticates: a session token alone must not be enough to
+  // bind a new authenticator to the account and take the backup codes.
+  const [password, setPassword] = useState('');
   const [otpURL, setOtpURL] = useState('');
   const [code, setCode] = useState('');
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
@@ -383,7 +386,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
     setError('');
     setBusy(true);
     try {
-      const res = await verifyTOTP(secret, code.replace(/\s/g, ''));
+      const res = await verifyTOTP(secret, code.replace(/\s/g, ''), password);
       if (res?.success && Array.isArray(res.backupCodes)) {
         setBackupCodes(res.backupCodes);
         setStep('backup');
@@ -465,7 +468,21 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
                   className="input-field input-mono w-full text-center tracking-widest"
                 />
               </div>
-              <button type="submit" disabled={busy || code.replace(/\s/g, '').length < 6} className="btn btn-primary w-full">
+              <div className="flex flex-col gap-[5px]">
+                <label className="input-label">Your password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  placeholder="Confirm it is you"
+                  className="input-field w-full"
+                />
+                <p className="text-xs text-(--base-06)">
+                  Confirms it is you before this authenticator becomes the second factor on your account.
+                </p>
+              </div>
+              <button type="submit" disabled={busy || code.replace(/\s/g, '').length < 6 || !password} className="btn btn-primary w-full">
                 {busy ? 'Verifying…' : 'Verify & Enable'}
               </button>
             </form>

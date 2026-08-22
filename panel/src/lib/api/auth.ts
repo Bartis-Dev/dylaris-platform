@@ -69,11 +69,14 @@ export const setupTOTP = async () => {
   return handleResponse(res);
 };
 
-export const verifyTOTP = async (secret: string, code: string) => {
+// The password re-authenticates the account holder. Core requires it for a
+// normal session; the forced-enrolment flow below is exempt, because its setup
+// token is minted by a password login moments earlier (verifyTOTPWithToken).
+export const verifyTOTP = async (secret: string, code: string, password: string) => {
   const res = await fetch(`${API_URL}/auth/2fa/verify`, {
     method: 'POST',
     headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ secret, code }),
+    body: JSON.stringify({ secret, code, password }),
   });
   return handleResponse(res);
 };

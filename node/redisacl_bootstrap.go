@@ -52,6 +52,30 @@ func getNodeSecret() []byte {
 	return nodeSecret
 }
 
+// waitForNodeSecret blocks until the per-node secret is available, the context
+// is cancelled, or the timeout elapses. Returns ok=false in the latter two.
+//
+// The secret arrives over the authenticated gRPC bootstrap, so anything keyed on
+// it that starts concurrently with boot can observe it as empty. Polling beats
+// reading it once: a caller that gave up would stay disabled for the whole
+// process lifetime even though the secret showed up a second later.
+func waitForNodeSecret(ctx context.Context, timeout time.Duration) ([]byte, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if s := getNodeSecret(); len(s) > 0 {
+			return s, true
+		}
+		if time.Now().After(deadline) {
+			return nil, false
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(time.Second):
+		}
+	}
+}
+
 // getLinkCreds returns the current Link tunnel token + discovery proof. Safe
 // for concurrent use.
 func getLinkCreds() (secret, proof string) {

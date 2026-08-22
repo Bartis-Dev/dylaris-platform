@@ -2,19 +2,25 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"dylaris-core/authz"
 	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
 	beamauth "dylaris-pkg/beam/auth"
 	"github.com/redis/go-redis/v9"
 )
@@ -176,6 +182,10 @@ func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, public
 type BeamHandler struct {
 	state     *AppState
 	jwtSecret string
+	// clusterSecret unwraps a node's stored per-node secret, which keys the LAN
+	// fast-path certificate. Not the same secret as jwtSecret on purpose - see
+	// the derivation in GetBeamTicket.
+	clusterSecret string
 
 	// Auto min-version cache: in beam.min_version_mode=auto the force-update
 	// floor is the signed manifest's minVersion, fetched+verified at most once
@@ -186,8 +196,8 @@ type BeamHandler struct {
 	minCacheAt  time.Time
 }
 
-func NewBeamHandler(state *AppState, jwtSecret string) *BeamHandler {
-	return &BeamHandler{state: state, jwtSecret: jwtSecret}
+func NewBeamHandler(state *AppState, jwtSecret, clusterSecret string) *BeamHandler {
+	return &BeamHandler{state: state, jwtSecret: jwtSecret, clusterSecret: clusterSecret}
 }
 
 // beamAccessCap is the capability a caller must hold on a server before Core
@@ -396,13 +406,30 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fingerprint of the node's deterministic LAN TLS cert so the app can pin it
-	// (encryption + MITM protection on the direct hop, LAN or public). Derived from
-	// the same beam secret + node ID the node uses to serve that listener. Needed
-	// for any direct target, so derive it up front; an error leaves it empty and
+	// (encryption + MITM protection on the direct hop, LAN or public). Needed for
+	// any direct target, so derive it up front; an error leaves it empty and
 	// buildBeamDirectHints then advertises no direct path.
+	//
+	// Keyed on the PER-NODE secret, not the fleet JWT secret. That secret is the
+	// one Core and this node already share, it never crosses the wire, and it is
+	// the only one a BYON machine has: the deploy snippet withholds fleet secrets
+	// on purpose, so the old derivation left every customer node starting its LAN
+	// listener and failing with "cert derive failed: auth: empty secret" - a
+	// documented, advertised port that could never work.
+	//
+	// It is also the better key for platform-owned nodes. JWT_SECRET signs panel
+	// sessions, and deriving from it meant any node holding it could reproduce
+	// EVERY other node's LAN private key. Per-node, a compromise stops at that
+	// machine.
 	directFingerprint := ""
-	if fp, ferr := beamauth.LANCertFingerprint(h.jwtSecret, nodeDiscoveryID); ferr == nil {
-		directFingerprint = fp
+	if server.NodeID != 0 {
+		if secret, ok, serr := redisacl.LoadNodeSecret(h.state.Store, h.clusterSecret, server.NodeID); serr != nil {
+			log.Printf("beam ticket: node %d secret load failed, no direct path advertised: %v", server.NodeID, serr)
+		} else if ok {
+			if fp, ferr := beamauth.LANCertFingerprint(hex.EncodeToString(secret), nodeDiscoveryID); ferr == nil {
+				directFingerprint = fp
+			}
+		}
 	}
 
 	// Presence-driven gate: the node's LAN IPs are handed out regardless of relay
@@ -643,7 +670,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	// the beam.download_link override. Relays have not served binaries since
 	// eeff445; the loop below survives because the override may still name
 	// several hosts in future, and one attempt is the normal case.
-	candidates := resolveDownloadCandidates(r.Context(), h.state.Redis, getSetting, platform)
+	candidates, expectedSHA := resolveDownloadCandidates(r.Context(), h.state.Redis, getSetting, platform)
 	if len(candidates) == 0 {
 		// Naming the real subsystem matters here: this fires when the signed
 		// manifest is missing, unreachable, or its signature does not verify -
@@ -695,6 +722,25 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	log.Printf("beam-download: streaming %s (%s) for platform=%s", winningURL, resp.Header.Get("Content-Length"), platform)
 
+	// Buffer and verify BEFORE a single byte reaches the browser.
+	//
+	// Streaming straight through and hashing on the way would only let us abort
+	// mid-file: the user would already hold most of an executable we have just
+	// discovered we cannot vouch for, and a truncated download reads as a flaky
+	// network, not as a rejected artifact. A Beam binary is tens of megabytes, and
+	// this runs once per user per release, so a temp file is the cheap side of
+	// that trade.
+	verified, size, vErr := verifiedBeamBody(resp.Body, expectedSHA)
+	if vErr != nil {
+		log.Printf("beam-download: REFUSING %s for platform=%s: %v", winningURL, platform, vErr)
+		sendJSONError(w, "The Beam binary served for "+platform+
+			" does not match the signed release manifest, so it was not delivered."+
+			" If beam.download_link is set, that mirror is serving something else.",
+			http.StatusBadGateway)
+		return
+	}
+	defer verified.Close()
+
 	// Mirror the relay's content headers so the browser saves the file
 	// with the right filename and gets a real Content-Length progress bar.
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
@@ -707,11 +753,71 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="beam-%s"`, platform))
 	}
-	if cl := resp.Header.Get("Content-Length"); cl != "" {
-		w.Header().Set("Content-Length", cl)
-	}
+	// The verified size, not the upstream's header: they are the same for an
+	// honest upstream, and where they differ the header is the one we cannot
+	// trust.
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, resp.Body)
+	if _, err := io.Copy(w, verified); err != nil {
+		log.Printf("beam-download: send to client failed for platform=%s: %v", platform, err)
+	}
+}
+
+// maxBeamBinaryBytes caps what Core will buffer for one download. Well above any
+// real Beam build, low enough that a hostile or misconfigured mirror cannot fill
+// the disk by answering with an endless body.
+const maxBeamBinaryBytes = 512 << 20 // 512 MiB
+
+// verifiedBeamBody spools src to a temp file while hashing it, and returns a
+// reader positioned at the start ONLY if the digest matches expectedSHA.
+//
+// The returned Close removes the file, so a caller that defers it never leaves
+// one behind, on the success path or the failure one.
+func verifiedBeamBody(src io.Reader, expectedSHA string) (io.ReadCloser, int64, error) {
+	if expectedSHA == "" {
+		// Fail closed. An empty digest means the manifest carried no sha256 for
+		// this platform, and serving an unverifiable executable is the exact
+		// thing this function exists to stop.
+		return nil, 0, errors.New("signed manifest carries no sha256 for this platform")
+	}
+	f, err := os.CreateTemp("", "beam-dl-*")
+	if err != nil {
+		return nil, 0, fmt.Errorf("create temp: %w", err)
+	}
+	cleanup := func() {
+		f.Close()
+		os.Remove(f.Name())
+	}
+
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(src, maxBeamBinaryBytes+1))
+	if err != nil {
+		cleanup()
+		return nil, 0, fmt.Errorf("read upstream: %w", err)
+	}
+	if n > maxBeamBinaryBytes {
+		cleanup()
+		return nil, 0, fmt.Errorf("upstream body exceeds %d bytes", int64(maxBeamBinaryBytes))
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(got, expectedSHA) {
+		cleanup()
+		return nil, 0, fmt.Errorf("sha256 mismatch: got %s, manifest says %s", got, expectedSHA)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		cleanup()
+		return nil, 0, fmt.Errorf("rewind temp: %w", err)
+	}
+	return &tempFileReader{File: f}, n, nil
+}
+
+// tempFileReader deletes the backing file on Close.
+type tempFileReader struct{ *os.File }
+
+func (t *tempFileReader) Close() error {
+	name := t.Name()
+	err := t.File.Close()
+	os.Remove(name)
+	return err
 }
 
 // resolveDownloadCandidates returns an ordered list of upstream URLs the
@@ -730,24 +836,36 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 //  2. The platform URL from the GitHub manifest (beam.release_manifest, default
 //     https://github.com/Bartis-Dev/dylaris-platform/releases/latest/download/latest.json).
 //     Public once the repo is public, so Core fetches it without auth.
-func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSetting func(string) string, platform string) []string {
-	if link := strings.TrimSpace(getSetting("beam.download_link")); link != "" {
-		base := strings.TrimRight(link, "/")
-		if strings.Contains(base, "/download/") {
-			return []string{base}
-		}
-		return []string{base + "/download/" + platform}
-	}
-
+func resolveDownloadCandidates(ctx context.Context, rdb *redis.Client, getSetting func(string) string, platform string) ([]string, string) {
 	manifestURL := strings.TrimSpace(getSetting("beam.release_manifest"))
 	if manifestURL == "" {
 		manifestURL = defaultBeamManifestURL
 	}
-	// Signature-checked: this URL is where an executable comes from.
-	u, err := fetchVerifiedBeamPlatformURL(ctx, manifestURL, beamUpdatePublicKeyB64, platform)
+	// The signed manifest is consulted FIRST and always, even when an override
+	// exists, because it is the only thing that says what these bytes are
+	// allowed to be.
+	//
+	// beam.download_link used to return before this ran, which meant the
+	// override served an executable with no signature check anywhere in the
+	// path. It is a settings.write string - a delegatable panel capability, not
+	// admin - and this route is deliberately unauthenticated, so a holder of
+	// that capability could have had Core hand every downloading user an
+	// arbitrary binary over Core's own trusted TLS.
+	//
+	// Now the override only moves the LOCATION. The digest below still has to
+	// match, so a mirror serves the same artifact or it serves nothing.
+	u, sha, err := fetchVerifiedBeamPlatformArtifact(ctx, manifestURL, beamUpdatePublicKeyB64, platform)
 	if err != nil {
 		log.Printf("beam-download: no verified manifest entry for %s: %v", platform, err)
-		return nil
+		return nil, ""
 	}
-	return []string{u}
+
+	if link := strings.TrimSpace(getSetting("beam.download_link")); link != "" {
+		base := strings.TrimRight(link, "/")
+		if !strings.Contains(base, "/download/") {
+			base = base + "/download/" + platform
+		}
+		return []string{base}, sha
+	}
+	return []string{u}, sha
 }
