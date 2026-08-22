@@ -133,3 +133,65 @@ func TestPollIntervalFitsInsideTheGrant(t *testing.T) {
 			CustomDomainGrant/CustomDomainPollEvery)
 	}
 }
+
+// flippingElection is a leader flag that can change while the verifier holds
+// it, which is the whole point: leadership is not a boot-time fact.
+// (The package already has an immutable fakeElection.)
+type flippingElection struct{ leader bool }
+
+func (f *flippingElection) IsLeader() bool { return f.leader }
+
+// A follower must not touch a claim.
+//
+// The gate was a one-shot check around Start in main.go, which is not what
+// leadership is: the lease is acquired asynchronously, so on a cold start
+// IsLeader() is still false and the verifier was never started at all - and
+// after a failover the new leader had not started it at its own boot either.
+// Both failures are silent. Claims simply stop being looked at.
+func TestVerifierOnlyActsAsLeader(t *testing.T) {
+	past := time.Now().Add(-time.Minute)
+	newVerifier := func(fs *verifierFakeStore, rm *fakeRemover) *CustomDomainVerifier {
+		res := &fakeResolver{cname: map[string]string{"mc.example.com": "route.eu.dylaris.com."}}
+		return NewCustomDomainVerifier(fs, res, rm, func() ([]string, []string) {
+			return []string{"route.eu.dylaris.com"}, nil
+		})
+	}
+
+	t.Run("a follower skips the pass entirely", func(t *testing.T) {
+		fs := &verifierFakeStore{pending: []store.CustomDomainClaim{claim(1, "mc.example.com", past)}}
+		rm := &fakeRemover{}
+		v := newVerifier(fs, rm)
+		v.SetLeader(&flippingElection{leader: false})
+		if v.shouldRun() {
+			t.Fatal("a follower would run the pass and race the leader on the same claims")
+		}
+	})
+
+	t.Run("the leader runs it, and a follower promoted later does too", func(t *testing.T) {
+		fs := &verifierFakeStore{pending: []store.CustomDomainClaim{claim(1, "mc.example.com", past)}}
+		rm := &fakeRemover{}
+		v := newVerifier(fs, rm)
+		// The exact cold-start shape: not leader yet when Start would have been
+		// called, leader by the time a tick fires.
+		el := &flippingElection{leader: false}
+		v.SetLeader(el)
+		if v.shouldRun() {
+			t.Fatal("ran before the lease was acquired")
+		}
+		el.leader = true
+		if !v.shouldRun() {
+			t.Fatal("did not resume once the lease was acquired; this is the failover hole")
+		}
+		v.RunOnce(context.Background())
+		if len(fs.verified) != 1 || fs.verified[0] != 1 {
+			t.Errorf("verified = %v, want [1]", fs.verified)
+		}
+	})
+
+	t.Run("no election wired means ungated", func(t *testing.T) {
+		v := newVerifier(&verifierFakeStore{}, &fakeRemover{})
+		if !v.shouldRun() {
+			t.Error("a verifier with no election must still run")
+		}
+	})
+}

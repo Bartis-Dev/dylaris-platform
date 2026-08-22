@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
 )
 
@@ -36,6 +37,25 @@ type CustomDomainVerifier struct {
 	// configured domain may point at. A function, not a snapshot: an operator
 	// can add an edge while this is running.
 	targets func() (cnameTargets, edgeAddrs []string)
+
+	// leader gates each pass, like every other Core singleton. Nil means
+	// ungated, which is what the tests want.
+	leader leader.Election
+}
+
+// SetLeader gates the poll loop so only one Core acts on a claim.
+//
+// The gate used to be a one-shot `if coreLeader.IsLeader()` around Start in
+// main.go, and leadership is not a boot-time fact. Two ways that lost the
+// verifier entirely: the lease is acquired by a goroutine started ~200 lines
+// earlier, so a follower - or, if Redis was slow, BOTH replicas - simply never
+// started it; and after any failover the new leader had not started it at ITS
+// boot either. Nothing logged, nothing errored. Claims just stopped being
+// looked at, sitting pending until someone noticed their domain never verified.
+func (v *CustomDomainVerifier) SetLeader(l leader.Election) { v.leader = l }
+
+func (v *CustomDomainVerifier) shouldRun() bool {
+	return v.leader == nil || v.leader.IsLeader()
 }
 
 // NewCustomDomainVerifier wires the verifier.
@@ -51,13 +71,19 @@ func (v *CustomDomainVerifier) Start(ctx context.Context) {
 		defer t.Stop()
 		// One pass immediately: after a Core restart a claim could otherwise sit
 		// unproven for a whole interval even though its DNS has been right for
-		// hours.
-		v.RunOnce(ctx)
+		// hours. Skipped on a follower, and on a leader that has not acquired
+		// its lease yet - the next tick picks it up either way.
+		if v.shouldRun() {
+			v.RunOnce(ctx)
+		}
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				if !v.shouldRun() {
+					continue
+				}
 				v.RunOnce(ctx)
 			}
 		}

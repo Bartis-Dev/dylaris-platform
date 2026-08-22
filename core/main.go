@@ -526,7 +526,7 @@ func main() {
 	// non-leader running this too would race to delete the same routes and count
 	// the same failure more than once - which, at two failures, is the difference
 	// between a retry and a permanent block.
-	if coreLeader.IsLeader() {
+	{
 		customDomainVerifier := services.NewCustomDomainVerifier(
 			pgStore,
 			services.NewNetResolver(),
@@ -545,6 +545,10 @@ func main() {
 					services.OnlineEdgeIPs(context.Background(), redisClient)
 			},
 		)
+		// Gated per pass, not once at boot: coreLeader.Start above only launches
+		// the election goroutine, so IsLeader() is still false here on a cold
+		// start, and leadership moves at runtime anyway.
+		customDomainVerifier.SetLeader(coreLeader)
 		customDomainVerifier.Start(context.Background())
 	}
 	// Publish the spoke firewall allowlist to the central Redis key the warp
