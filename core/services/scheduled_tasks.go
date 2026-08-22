@@ -191,6 +191,26 @@ func (s *ScheduledTaskService) execute(ctx context.Context, t *models.ScheduledT
 		if t.Payload == "" {
 			return fmt.Errorf("say task has empty payload")
 		}
+		// A firing that cannot be delivered is an error, not something to
+		// stockpile. The stdin queue is a plain Redis list with no cap and no
+		// expiry, and this used to push into it whatever state the server was
+		// in, reporting "ok" every time. Measured: a minutely task on a stopped
+		// server added one entry a minute forever, and on the next start the
+		// node drained the whole backlog at once into a server that was still
+		// booting - the log filled with "Command exception: /say ..." for the
+		// ones that arrived too early, and with a wall of stale messages for
+		// the rest.
+		//
+		// Only "online" passes. "starting" is exactly the state that threw
+		// those exceptions, so a firing during a restart is reported rather
+		// than delivered; the task runs again on its next tick.
+		//
+		// The interactive console deliberately still queues to a stopped server
+		// - a person typing there can see the state and means it. What makes
+		// this different is that it repeats unattended.
+		if srv.Status != "online" {
+			return fmt.Errorf("server is %s, not accepting commands; message not sent", srv.Status)
+		}
 		// Same path as the live Console "send command" handler — push into
 		// the per-server stdin queue. Node forwards to the container.
 		queueKey := fmt.Sprintf("dylaris:server:%s:input", srv.UUID)

@@ -205,7 +205,10 @@ func TestRunDue_RestartTask_Success(t *testing.T) {
 
 func TestRunDue_SayTask_Success(t *testing.T) {
 	fs := &schedTaskFakeStore{
-		servers: map[int]models.Server{2: {ID: 2, UUID: "srv-2"}},
+		// Status matters now: a say is only queued to a server that is
+		// running. This test never named a state, which is how it passed
+		// while the executor queued to stopped servers too.
+		servers: map[int]models.Server{2: {ID: 2, UUID: "srv-2", Status: "online"}},
 		due: []models.ScheduledTask{
 			{ID: 200, ServerID: 2, TaskType: "say", ScheduleCron: "@hourly", Payload: "hello world"},
 		},
@@ -529,7 +532,7 @@ func TestRunDue_RestartTask_BillingUnreadable_IsSkipped(t *testing.T) {
 // exactly - no stricter, no looser.
 func TestRunDue_SayTask_SuspendedOwner_StillRuns(t *testing.T) {
 	fs := &schedTaskFakeStore{
-		servers: map[int]models.Server{2: {ID: 2, UUID: "srv-2", OwnerID: "owner-1"}},
+		servers: map[int]models.Server{2: {ID: 2, UUID: "srv-2", OwnerID: "owner-1", Status: "online"}},
 		billing: map[string]*store.UserBilling{"owner-1": {UserID: "owner-1", Status: "suspended"}},
 		due: []models.ScheduledTask{
 			{ID: 501, ServerID: 2, TaskType: "say", ScheduleCron: "@hourly", Payload: "hi"},
@@ -546,5 +549,73 @@ func TestRunDue_SayTask_SuspendedOwner_StillRuns(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != "say hi" {
 		t.Errorf("stdin queue = %v, want [\"say hi\"]", got)
+	}
+}
+
+// The stdin queue is an uncapped Redis list with no expiry, and a say task
+// used to push into it whatever state the server was in, recording "ok".
+// Measured on a live instance: a minutely task on a stopped server added an
+// entry a minute, and the next start drained the whole backlog into a server
+// that was still booting - "Command exception: /say ..." for the ones that
+// landed too early and a wall of stale messages for the rest.
+func TestRunDue_SayTask_OnlyQueuesToARunningServer(t *testing.T) {
+	tests := []struct {
+		status    string
+		wantQueue bool
+		why       string
+	}{
+		{status: "online", wantQueue: true, why: "the whole point is that a running server still gets its message"},
+		{status: "stopped", wantQueue: false, why: "this is the case that accumulated forever and reported ok every minute"},
+		{status: "starting", wantQueue: false, why: "this is exactly the state that answered with Command exception"},
+		{status: "offline", wantQueue: false, why: "the node is gone; nothing will drain this until it returns"},
+		{status: "pending_setup", wantQueue: false, why: "there is no server behind it yet"},
+		{status: "installing", wantQueue: false, why: "the container is being rebuilt under it"},
+		{status: "", wantQueue: false, why: "an unknown state is not a running one"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			fs := &schedTaskFakeStore{
+				servers: map[int]models.Server{2: {ID: 2, UUID: "srv-2", Status: tt.status}},
+				due: []models.ScheduledTask{
+					{ID: 600, ServerID: 2, TaskType: "say", ScheduleCron: "@hourly", Payload: "hi"},
+				},
+			}
+			svc, done := newSchedTestService(t, fs)
+			defer done()
+
+			svc.runDue(context.Background())
+
+			got, err := svc.redis.LRange(context.Background(), "dylaris:server:srv-2:input", 0, -1).Result()
+			if err != nil {
+				t.Fatalf("LRange: %v", err)
+			}
+			if tt.wantQueue && len(got) != 1 {
+				t.Fatalf("stdin queue = %v, want one message: %s", got, tt.why)
+			}
+			if !tt.wantQueue && len(got) != 0 {
+				t.Fatalf("stdin queue = %v, want nothing queued: %s", got, tt.why)
+			}
+
+			if len(fs.runRecords) != 1 {
+				t.Fatalf("runRecords = %+v, want exactly one", fs.runRecords)
+			}
+			rr := fs.runRecords[0]
+			wantStatus := "ok"
+			if !tt.wantQueue {
+				wantStatus = "error"
+			}
+			if rr.status != wantStatus {
+				t.Errorf("recorded status = %q, want %q: a firing that was not delivered must not read as ok", rr.status, wantStatus)
+			}
+			if !tt.wantQueue && rr.errMsg == "" {
+				t.Error("no reason was recorded, so the owner cannot tell why the message never arrived")
+			}
+			// The task must keep its schedule either way - a server that is
+			// down for an hour must not lose its task.
+			if rr.nextRun == nil {
+				t.Error("next run was cleared; the task would stop firing once the server came back")
+			}
+		})
 	}
 }
