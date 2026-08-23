@@ -146,15 +146,19 @@ func (s *BillingLifecycleService) Start(ctx context.Context) {
 	ticker := time.NewTicker(s.interval)
 	go func() {
 		defer ticker.Stop()
+		// One pass immediately, then on the ticker. Without it a restart bought
+		// every tenant up to a full interval of unenforced time - a grace window
+		// that elapsed while Core was down was not acted on until an hour after it
+		// came back. Every action here is already time-gated, so an early pass can
+		// only do what was due anyway. Matches the ticket retention service.
 		for {
+			if s.leader == nil || s.leader.IsLeader() {
+				s.runOnce(ctx)
+			}
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if s.leader != nil && !s.leader.IsLeader() {
-					continue
-				}
-				s.runOnce(ctx)
 			}
 		}
 	}()
