@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -98,6 +99,32 @@ func canMutate(perms EffectivePermissions) bool {
 	return perms.IsAdmin || perms.IsSupport
 }
 
+// mayAttachServer reports whether this caller may name serverUUID on a ticket.
+// The bar is the same one that decides whether they can see the server at all
+// anywhere else in the panel - overview.read through the resolver, which admins
+// and owners satisfy by construction - so a ticket can only ever point at a
+// server its author could already open.
+//
+// Deliberately boolean: the caller must answer "no such server" to both an
+// unknown uuid and someone else's, so this must not report which it was.
+func (h *TicketsHandler) mayAttachServer(userID, username, serverUUID string) bool {
+	if h.state == nil || h.state.Store == nil || h.state.Authz == nil {
+		return false
+	}
+	srv, err := h.state.Store.GetServerByUUID(serverUUID)
+	if err != nil || srv == nil {
+		return false
+	}
+	perms := LoadEffectivePermissions(h.state, userID)
+	res, rerr := h.state.Authz.Resolve(authz.Identity{
+		UserID: userID, Username: username, IsAdmin: perms.IsAdmin,
+	}, srv.ID)
+	if rerr != nil {
+		return false
+	}
+	return res.HasCap("overview.read")
+}
+
 // ── Create ───────────────────────────────────────────────────────────
 
 type createTicketRequest struct {
@@ -140,6 +167,7 @@ func normalizeTicketSubject(kind, ref string) (string, string) {
 // the ticket audit trail.
 func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
+	username, _ := r.Context().Value("username").(string)
 	if userID == "" {
 		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
@@ -167,6 +195,24 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	if cat.RequiresServer && strings.TrimSpace(req.ServerUUID) == "" {
 		sendJSONError(w, "This category requires you to attach a server", http.StatusBadRequest)
 		return
+	}
+	// A UUID the caller cannot reach must not be attachable. Nothing checked
+	// this, so any account could file a ticket naming ANY server: the response
+	// came back carrying that server's NAME and internal id (measured - a
+	// stranger's UUID answered "golden-ibis-797d", id 1, while a made-up one
+	// answered with neither), which made this endpoint an existence-and-name
+	// oracle for anyone holding a UUID - a former member, say, whose access was
+	// revoked. The row also persists: ListServersViaActiveTickets hands a
+	// supporter every server named by a ticket assigned to them, joined on the
+	// uuid alone with no relationship to who wrote it.
+	//
+	// Same answer for "no such server" and "not yours", or the fix would leave
+	// the oracle in place with an extra step.
+	if uuid := strings.TrimSpace(req.ServerUUID); uuid != "" {
+		if !h.mayAttachServer(userID, username, uuid) {
+			sendJSONError(w, "Server not found", http.StatusBadRequest)
+			return
+		}
 	}
 	priority := strings.TrimSpace(req.Priority)
 	if priority == "" {
