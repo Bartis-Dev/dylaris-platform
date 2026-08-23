@@ -405,6 +405,7 @@ type Store interface {
 	// GetUserSecurityQuestionsRaw returns the stored JSON for verification
 	// — caller bcrypt-compares answer-by-answer.
 	GetUserSecurityQuestionsRaw(userID string) (string, error)
+	CountUsersMissingSecurityQuestions() (missing int, total int, err error)
 
 	// --- Roles + granular permissions ---
 	// SetUserRole writes both role and the legacy is_admin flag so handlers

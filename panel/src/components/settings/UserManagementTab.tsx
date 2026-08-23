@@ -119,6 +119,9 @@ function DemoAccountSection() {
 
 function AuthPolicySection() {
     const [policy, setPolicy] = useState<AuthPolicy | null>(null);
+    // How many accounts the reset requirement does not actually cover. Core
+    // sends it alongside the policy; see the note on that toggle below.
+    const [uncovered, setUncovered] = useState<{ missing: number; total: number } | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -126,6 +129,9 @@ function AuthPolicySection() {
     useEffect(() => {
         getAuthPolicy().then(res => {
             if (res.success) setPolicy(res.policy);
+            if (typeof res.accountsMissingSecurityQuestions === 'number') {
+                setUncovered({ missing: res.accountsMissingSecurityQuestions, total: res.accountsTotal ?? 0 });
+            }
             setLoading(false);
         });
     }, []);
@@ -253,6 +259,19 @@ function AuthPolicySection() {
                     value={policy.securityQuestionsRequiredAtReset}
                     onChange={v => setPolicy({ ...policy, securityQuestionsRequiredAtReset: v })}
                 />
+                {/* "Users without questions skip this step" and "37 of 40 accounts
+                    skip this step" are the same sentence and very different facts.
+                    The moment this is switched on, the second one is every account
+                    that existed before it. */}
+                {policy.securityQuestionsRequiredAtReset && uncovered && uncovered.missing > 0 && (
+                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light) -mt-1">
+                        <CircleAlert size={12} className="mt-0.5 shrink-0" />
+                        <span>
+                            {uncovered.missing} of {uncovered.total} accounts have no questions stored,
+                            so their password reset still needs nothing but the email link.
+                        </span>
+                    </p>
+                )}
                 <div className="flex items-center gap-3">
                     <label className="input-label mb-0 shrink-0">Required answers</label>
                     <input

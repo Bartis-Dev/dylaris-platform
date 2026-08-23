@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -156,10 +157,29 @@ func LoadAuthPolicy(state *AppState) AuthPolicy {
 
 // GetAuthPolicy GET /api/admin/settings/auth - PANEL settings.read (RequireCap at the route).
 func (h *AuthSettingsHandler) GetAuthPolicy(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	out := map[string]interface{}{
 		"success": true,
 		"policy":  LoadAuthPolicy(h.state),
-	})
+	}
+	// How many accounts "Require during password reset" does not actually
+	// cover. That toggle skips any user with no questions stored - deliberately,
+	// so it cannot lock out accounts that predate it - and the screen says so.
+	// What it could not say is the scale, which the moment it is switched on is
+	// EVERY existing account. Measured on the testbed: with the policy on, an
+	// account with none on file reset with no answers at all, and the
+	// validate-token call did not even mention that answers were required.
+	//
+	// Best-effort: a count that cannot be read is not a reason to fail the
+	// settings screen, it just means the hint is omitted.
+	if h.state.Store != nil {
+		if missing, total, err := h.state.Store.CountUsersMissingSecurityQuestions(); err == nil {
+			out["accountsMissingSecurityQuestions"] = missing
+			out["accountsTotal"] = total
+		} else {
+			log.Printf("auth-settings: could not count accounts without security questions: %v", err)
+		}
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 // SaveAuthPolicy PUT /api/admin/settings/auth - PANEL settings.write (RequireCap at the route).

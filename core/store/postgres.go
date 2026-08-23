@@ -2068,6 +2068,28 @@ func (s *PostgresStore) GetUserSecurityQuestionsRaw(userID string) (string, erro
 	return raw, err
 }
 
+// CountUsersMissingSecurityQuestions returns how many accounts have no security
+// questions on file, and how many accounts there are.
+//
+// "Require during password reset" skips any user who has none stored, so the
+// policy does not lock out accounts that predate it - a deliberate choice the
+// settings screen already spells out. What it did NOT say is the SCALE, and the
+// moment the toggle is flipped that is every existing account: "some users skip
+// this step" and "37 of 40 accounts skip this step" are the same sentence and
+// very different facts. This is the number that tells them apart.
+//
+// Deleted accounts are excluded from both figures - they cannot reset anything,
+// so counting them would only make the ratio look better than it is.
+func (s *PostgresStore) CountUsersMissingSecurityQuestions() (missing int, total int, err error) {
+	err = s.db.QueryRow(`
+		SELECT
+			COUNT(*) FILTER (WHERE security_questions IS NULL OR security_questions::text IN ('[]', 'null')),
+			COUNT(*)
+		FROM users
+		WHERE COALESCE(deletion_status, 'active') <> 'deleted'`).Scan(&missing, &total)
+	return missing, total, err
+}
+
 func (s *PostgresStore) SetUserSecurityQuestions(userID string, qaJSON string) error {
 	if qaJSON == "" {
 		qaJSON = "[]"
