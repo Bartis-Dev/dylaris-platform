@@ -61,6 +61,27 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go vet ./...
 
+      # gofmt gate. Formatting drifts on its own: 38 files across four modules
+      # had drifted before this existed, because build, vet, test and
+      # staticcheck all pass happily on unformatted code and nothing else was
+      # looking.
+      #
+      # -l lists files differing from gofmt's output; a non-empty list fails the
+      # job and prints the diff, so the fix is one `gofmt -w` away. The vendored
+      # Wails tree is excluded - it is a third-party snapshot carried on purpose
+      # (beam/app/VENDOR.md) and is not ours to reformat.
+      - name: gofmt
+        working-directory: ${{ matrix.module }}
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^third_party/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            echo
+            gofmt -d $unformatted
+            exit 1
+          fi
+
       # staticcheck correctness gate (pinned). Runs the SA (correctness) checks
       # plus U1000; the ST/S1/QF style families are intentionally not enforced.
       #
