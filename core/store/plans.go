@@ -185,6 +185,28 @@ func (s *PostgresStore) SetUserLimitOverrides(userID string, maxNodes, maxLinks,
 	return err
 }
 
+// SetUserPurchasedEntitlement upserts ONLY the node/link overrides, and only for
+// the dimensions the caller actually named. The store is the source of truth for
+// what a tenant BOUGHT (a node count, and routes on a manual grant); an admin may
+// independently have set traffic or R2 overrides, and a purchase must not wipe
+// those. Passing set=false for a dimension leaves that column exactly as it was,
+// which is why this cannot reuse SetUserLimitOverrides (that one owns all five
+// columns and writes NULL for anything the PATCH body omitted).
+//
+// A nil value with set=true CLEARS the override, dropping the tenant back to the
+// plan baseline - that is how a subscription ending returns them to free limits.
+func (s *PostgresStore) SetUserPurchasedEntitlement(userID string, maxNodes *int64, setNodes bool, maxLinks *int64, setLinks bool) error {
+	_, err := s.db.Exec(`
+		INSERT INTO user_billing (user_id, max_nodes, max_links, updated_at)
+		VALUES ($1,$2,$3,NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			max_nodes  = CASE WHEN $4::bool THEN $2 ELSE user_billing.max_nodes END,
+			max_links  = CASE WHEN $5::bool THEN $3 ELSE user_billing.max_links END,
+			updated_at = NOW()`,
+		userID, maxNodes, maxLinks, setNodes, setLinks)
+	return err
+}
+
 // CountNodesByOwner returns how many nodes a tenant owns (for the max_nodes gate).
 func (s *PostgresStore) CountNodesByOwner(ownerID string) (int, error) {
 	var n int

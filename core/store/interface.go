@@ -101,6 +101,7 @@ type Store interface {
 	GetUserPlanID(userID string) (*int, error)
 	SetUserPlan(userID string, planID *int) error
 	SetUserLimitOverrides(userID string, maxNodes, maxLinks, trafficEdge, trafficRelay, trafficCombined *int64) error
+	SetUserPurchasedEntitlement(userID string, maxNodes *int64, setNodes bool, maxLinks *int64, setLinks bool) error
 	CountNodesByOwner(ownerID string) (int, error)
 	CountLinkKitsByOwner(ownerID string) (int, error)
 	CountNodeWarpKeysByOwner(ownerID string) (int, error)
@@ -637,6 +638,10 @@ type Store interface {
 	// CountPrivateSolderPacks counts Solder-capable packs (have a solder_slug)
 	// that are private or hidden - used to warn before enabling public delivery.
 	CountPrivateSolderPacks() (int, error)
+	// AnyPublishedSolderModKey returns one storage key reachable through a
+	// published Solder build, or "" when there is none - the public-delivery
+	// probe needs a real object to ask a definitive question.
+	AnyPublishedSolderModKey() (string, error)
 	// Access-controlled Solder pack listings (Phase 3c).
 	ListAllSolderPacks(ownerID string) ([]models.Pack, error)
 	ListSolderPacksForClient(clientID int) ([]models.Pack, error)

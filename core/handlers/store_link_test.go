@@ -35,6 +35,17 @@ type storeLinkFakeStore struct {
 
 	setUserPlanCalls []storeLinkSetPlanCall
 	setUserPlanErr   error
+
+	entitlementCalls []storeLinkEntitlementCall
+	entitlementErr   error
+}
+
+type storeLinkEntitlementCall struct {
+	userID   string
+	maxNodes *int64
+	setNodes bool
+	maxLinks *int64
+	setLinks bool
 }
 
 type storeLinkBillingStatusCall struct {
@@ -72,6 +83,11 @@ func (f *storeLinkFakeStore) SetUserBillingStatus(userID, status string, graceUn
 		userID: userID, status: status, hasGrace: graceUntil != nil, hasSuspend: suspendedAt != nil,
 	})
 	return f.setUserBillingStatusErr
+}
+
+func (f *storeLinkFakeStore) SetUserPurchasedEntitlement(userID string, maxNodes *int64, setNodes bool, maxLinks *int64, setLinks bool) error {
+	f.entitlementCalls = append(f.entitlementCalls, storeLinkEntitlementCall{userID, maxNodes, setNodes, maxLinks, setLinks})
+	return f.entitlementErr
 }
 
 func (f *storeLinkFakeStore) SetUserPlan(userID string, planID *int) error {

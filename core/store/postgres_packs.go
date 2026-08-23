@@ -231,6 +231,34 @@ func (s *PostgresStore) ListPublicSolderPacks() ([]models.Pack, error) {
 // CountPrivateSolderPacks returns how many Solder-capable packs (have a
 // solder_slug) are private or hidden. Used to warn the operator that public
 // delivery mode would place these packs' files in a publicly readable bucket.
+// AnyPublishedSolderModKey returns the storage key of one mod file that is
+// actually reachable through a published Solder build, or "" when the install
+// has none yet.
+//
+// It exists so the public-delivery probe can ask a definitive question. Probing
+// the mirror BASE cannot answer it: a base URL is not an object, so a correctly
+// configured public bucket legitimately 404s there, and Cloudflare R2's S3
+// endpoint answers 400 to any unauthenticated request - measured, on the base
+// AND on a real object. The probe therefore reported "reachable" for a base no
+// player can read a single byte from.
+func (s *PostgresStore) AnyPublishedSolderModKey() (string, error) {
+	var key string
+	err := s.db.QueryRow(`
+		SELECT mv.storage_key
+		FROM build_modversions bm
+		JOIN pack_builds b  ON b.id = bm.build_id
+		JOIN packs p        ON p.id = b.pack_id
+		JOIN modversions mv ON mv.id = bm.modversion_id
+		WHERE b.solder_published = true
+		  AND p.solder_slug <> ''
+		  AND mv.storage_key <> ''
+		LIMIT 1`).Scan(&key)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return key, err
+}
+
 func (s *PostgresStore) CountPrivateSolderPacks() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM packs

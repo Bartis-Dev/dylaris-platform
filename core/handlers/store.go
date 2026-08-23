@@ -200,10 +200,33 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// parseEntitlement decodes one purchased-entitlement field into the (value, set)
+// pair SetUserPurchasedEntitlement wants. It has to distinguish three inbound
+// states that Go's usual *int64 collapses into two: the field being absent (do
+// not touch this column), an explicit null (clear the override), and a number.
+//
+// A non-positive count is treated as "clear", not as the literal value: 0 in
+// user_billing means UNLIMITED, so writing a store's "0 nodes granted" straight
+// through would hand the tenant an uncapped account.
+func parseEntitlement(raw json.RawMessage) (*int64, bool, error) {
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	var v *int64
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, false, err
+	}
+	if v == nil || *v <= 0 {
+		return nil, true, nil
+	}
+	return v, true, nil
+}
+
 // Provision POST /api/store/provision — store-key. The store (source of truth
 // for payment) drives the Core billing lifecycle for a linked tenant:
 //
-//	action "activate" -> billing active (+ optional plan assignment)
+//	action "activate" -> billing active (+ optional plan assignment, + the
+//	                     node/route entitlement the tenant actually bought)
 //	action "past_due" -> dunning grace window starts
 //	action "suspend"  -> mark suspended now; servers stop + route-only links
 //	                     are torn down after the grace window elapses (no data
@@ -226,6 +249,13 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		UUID   string `json:"uuid"`
 		Action string `json:"action"`
 		PlanID *int   `json:"planId,omitempty"`
+		// MaxNodes/MaxLinks carry the PURCHASED entitlement. The store sells a node
+		// COUNT (quantity x per-node price), not one of Core's plans, so the number
+		// the customer paid for arrives here rather than as a planId. Omitted =
+		// "the store did not say", which leaves the column alone; explicit null =
+		// clear the override and fall back to the plan.
+		MaxNodes json.RawMessage `json:"maxNodes,omitempty"`
+		MaxLinks json.RawMessage `json:"maxLinks,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		sendJSONError(w, "Invalid request", http.StatusBadRequest)
@@ -247,6 +277,18 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		if req.PlanID != nil && *req.PlanID > 0 {
 			if err := h.state.Store.SetUserPlan(req.UUID, req.PlanID); err != nil {
 				sendJSONError(w, "Activated but failed to assign plan", http.StatusInternalServerError)
+				return
+			}
+		}
+		nodes, setNodes, nerr := parseEntitlement(req.MaxNodes)
+		links, setLinks, lerr := parseEntitlement(req.MaxLinks)
+		if nerr != nil || lerr != nil {
+			sendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
+			return
+		}
+		if setNodes || setLinks {
+			if err := h.state.Store.SetUserPurchasedEntitlement(req.UUID, nodes, setNodes, links, setLinks); err != nil {
+				sendJSONError(w, "Activated but failed to apply entitlement", http.StatusInternalServerError)
 				return
 			}
 		}

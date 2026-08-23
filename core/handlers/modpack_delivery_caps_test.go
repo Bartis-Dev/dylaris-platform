@@ -4,21 +4,37 @@ import "testing"
 
 func TestClassifyReachable(t *testing.T) {
 	tt := []struct {
-		name   string
-		status int
-		err    error
-		want   *bool
+		name     string
+		status   int
+		err      error
+		isObject bool
+		want     *bool
 	}{
-		{"transport error is unknown", 0, errTest, nil},
-		{"401 is not reachable", 401, nil, boolp(false)},
-		{"403 is not reachable", 403, nil, boolp(false)},
-		{"200 is reachable", 200, nil, boolp(true)},
-		{"404 is reachable", 404, nil, boolp(true)},
-		{"302 is reachable", 302, nil, boolp(true)},
+		// Probing the BASE: only an unambiguous refusal counts against it,
+		// because a correctly configured public bucket 404s on its base path.
+		{"transport error is unknown", 0, errTest, false, nil},
+		{"base: 401 is not reachable", 401, nil, false, boolp(false)},
+		{"base: 403 is not reachable", 403, nil, false, boolp(false)},
+		{"base: 200 is reachable", 200, nil, false, boolp(true)},
+		{"base: 404 is reachable", 404, nil, false, boolp(true)},
+		{"base: 302 is reachable", 302, nil, false, boolp(true)},
+
+		// Probing a REAL published mod file answers the actual question - can a
+		// player download this - so only a 2xx is a yes. R2's S3 endpoint
+		// answers 400 to any unauthenticated request, measured against the real
+		// bucket, and the old base-only rule called that reachable.
+		{"object: 200 is reachable", 200, nil, true, boolp(true)},
+		{"object: 206 is reachable", 206, nil, true, boolp(true)},
+		{"object: 400 is NOT reachable", 400, nil, true, boolp(false)},
+		{"object: 401 is NOT reachable", 401, nil, true, boolp(false)},
+		{"object: 403 is NOT reachable", 403, nil, true, boolp(false)},
+		{"object: 404 is NOT reachable", 404, nil, true, boolp(false)},
+		{"object: 302 is NOT reachable", 302, nil, true, boolp(false)},
+		{"object: transport error stays unknown", 0, errTest, true, nil},
 	}
 	for _, c := range tt {
 		t.Run(c.name, func(t *testing.T) {
-			got := classifyReachable(c.status, c.err)
+			got := classifyReachable(c.status, c.err, c.isObject)
 			if (got == nil) != (c.want == nil) {
 				t.Fatalf("nil mismatch: got %v want %v", got, c.want)
 			}

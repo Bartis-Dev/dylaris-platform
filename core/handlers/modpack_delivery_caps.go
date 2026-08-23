@@ -21,14 +21,34 @@ type deliveryCapabilities struct {
 	Notes            map[string]string `json:"notes"`
 }
 
-// classifyReachable maps a SafeHead result to the publicReachable tri-state:
-// transport error => unknown (nil); 401/403 => not publicly readable (false);
-// anything else (2xx/3xx/404/...) => reachable (true).
-func classifyReachable(status int, err error) *bool {
+// classifyReachable maps a SafeHead result to the publicReachable tri-state.
+//
+// probedObject says whether the URL was a REAL published mod file or merely the
+// mirror base, and the two deserve different rules:
+//
+//   - A real object answers the actual question, so only a 2xx means "a player
+//     can download this". Anything else is a no.
+//   - The BASE cannot answer it: a correctly configured public bucket
+//     legitimately 404s on its base path, so only the unambiguous "you are not
+//     allowed" statuses count against it.
+//
+// The distinction is load-bearing rather than tidy. Probing the base reported
+// REACHABLE for Cloudflare R2's S3 endpoint, which answers 400 to any
+// unauthenticated request - measured against the real bucket, on the base and
+// on a real object alike. The panel then offered public delivery for a base no
+// player can read a single byte from, and every launcher would have failed.
+//
+// A transport error stays unknown (nil) either way.
+func classifyReachable(status int, err error, probedObject bool) *bool {
 	if err != nil {
 		return nil
 	}
-	b := status != http.StatusUnauthorized && status != http.StatusForbidden
+	var b bool
+	if probedObject {
+		b = status >= 200 && status < 300
+	} else {
+		b = status != http.StatusUnauthorized && status != http.StatusForbidden
+	}
 	return &b
 }
 
@@ -44,7 +64,11 @@ func buildDeliveryCapabilities(canPresign bool, mirrorURL string, reach *bool, p
 	if !publicConfigured {
 		notes["public"] = "Set a valid public Solder mirror URL to use public delivery."
 	} else if reach != nil && !*reach {
-		notes["public"] = "The configured mirror URL is not publicly readable (it returned 401/403)."
+		// Deliberately does not name a status code. The probe now fetches a real
+		// pack object, so "unreadable" covers every non-2xx answer - and the one
+		// that actually shows up in practice is R2's S3 endpoint replying 400 to an
+		// unsigned request, not the 401/403 this note used to promise.
+		notes["public"] = "The configured mirror URL did not serve a pack file publicly. Anonymous readers would not be able to download from it."
 	}
 	return deliveryCapabilities{
 		CanPresign:       canPresign,
@@ -71,8 +95,17 @@ func (h *ModpackSettingsHandler) DeliveryCapabilities(w http.ResponseWriter, r *
 	mirrorURL := strings.TrimSpace(get("solder_mirror_url"))
 	var reach *bool
 	if mirrorURL != "" && validatePublicBaseURL("solder mirror URL", mirrorURL) == nil {
-		status, err := services.SafeHead(r.Context(), mirrorURL, 5*time.Second)
-		reach = classifyReachable(status, err)
+		// Prefer a REAL published mod file over the bare base - see
+		// classifyReachable for why the base cannot answer this. Still the
+		// SAVED config being probed, never a caller-supplied URL, so this is
+		// not an SSRF lever either way.
+		probeURL, probedObject := mirrorURL, false
+		if key, kerr := h.state.Store.AnyPublishedSolderModKey(); kerr == nil && key != "" {
+			probeURL = strings.TrimRight(mirrorURL, "/") + "/" + strings.TrimLeft(key, "/")
+			probedObject = true
+		}
+		status, err := services.SafeHead(r.Context(), probeURL, 5*time.Second)
+		reach = classifyReachable(status, err, probedObject)
 	}
 
 	privatePacks, _ := h.state.Store.CountPrivateSolderPacks()
