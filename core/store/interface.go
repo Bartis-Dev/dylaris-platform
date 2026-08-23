@@ -30,6 +30,8 @@ type Store interface {
 	GetUserByUsername(username string) (*models.User, error)
 	GetUserByID(id string) (*models.User, error)
 	CreateUser(user *models.User) error
+	UsernameTaken(username, excludeUserID string) (bool, error)
+	ListUsernameCaseCollisions() ([][]string, error)
 	UpdateUser(user *models.User) error
 	UpdateUserPassword(id string, hashedPassword string) error
 	DeleteUser(id string) error

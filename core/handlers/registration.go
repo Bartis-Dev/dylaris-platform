@@ -98,7 +98,10 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	// Username uniqueness is hard-checked (the DB UNIQUE constraint would
 	// kick in anyway — surface it as a clean error).
-	if existing, _ := h.state.Store.GetUserByUsername(username); existing != nil {
+	// Case-INSENSITIVE, so `NewComer` cannot be claimed beside an existing
+	// `newcomer`. The database has the last word (unique index on
+	// LOWER(username)); this is the friendly message.
+	if taken, _ := h.state.Store.UsernameTaken(username, ""); taken {
 		sendJSONError(w, "Username is taken", http.StatusConflict)
 		return
 	}

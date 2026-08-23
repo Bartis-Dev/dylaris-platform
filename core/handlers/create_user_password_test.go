@@ -20,9 +20,16 @@ type createUserFakeStore struct {
 	store.Store
 
 	created *models.User
+	taken   bool
 }
 
 func (f *createUserFakeStore) GetSetting(string) (string, error) { return "", nil }
+
+// The create path now asks whether the name is claimed, without case. This fake
+// says no; the taken case has its own test below.
+func (f *createUserFakeStore) UsernameTaken(username, excludeUserID string) (bool, error) {
+	return f.taken, nil
+}
 
 func (f *createUserFakeStore) CreateUser(u *models.User) error {
 	u.ID = "new-user-1"

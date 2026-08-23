@@ -97,6 +97,15 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", 400)
 		return
 	}
+	// The fourth door onto a username, and the only one that never checked at
+	// all - it leaned entirely on the DB constraint, which was case-SENSITIVE,
+	// so an admin could create `NewComer` beside an existing `newcomer`. The
+	// unique index on LOWER(username) is the real guard now; this is the
+	// message that says which name the collision is with.
+	if taken, _ := h.state.Store.UsernameTaken(req.Username, ""); taken {
+		sendJSONError(w, "Username is taken", 409)
+		return
+	}
 	if req.Password == "" {
 		sendJSONError(w, "Password is required", 400)
 		return

@@ -203,6 +203,68 @@ func (s *PostgresStore) GetUserByID(id string) (*models.User, error) {
 	return scanUser(s.db.QueryRow(query, id).Scan)
 }
 
+// UsernameTaken reports whether a username is claimed, comparing WITHOUT case.
+// excludeUserID lets a rename ignore the caller's own row; pass "" when there is
+// none.
+//
+// Names used to be reserved case-SENSITIVELY, so `NewComer` could be registered
+// beside an existing `newcomer` - verified live, two real accounts. Not an
+// access-control break, since every lookup is exact and a typo therefore fails
+// closed. The harm is that the two are indistinguishable at a glance in a member
+// list, an audit log's actor column or a ticket thread, which is the usual
+// reason a platform reserves names without case.
+//
+// This is the friendly half. The real arbiter is the unique index on
+// LOWER(username) (see applyUsernameCaseIndex) - a concurrent claim between this
+// check and the INSERT still lands as a 23505, which the callers already map to
+// ErrUsernameTaken.
+func (s *PostgresStore) UsernameTaken(username, excludeUserID string) (bool, error) {
+	// NULL rather than "" for "no exclusion": comparing the same placeholder to
+	// a string literal AND to a column makes Postgres deduce two types for it
+	// and refuse to prepare the statement. TestNoParameterIsBothAssignedAndCompared
+	// caught exactly that here before this ever ran.
+	var exclude interface{}
+	if excludeUserID != "" {
+		exclude = excludeUserID
+	}
+	var exists bool
+	err := s.db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM users
+			WHERE LOWER(username) = LOWER($1)
+			  AND ($2::text IS NULL OR id::text <> $2::text)
+		)`, username, exclude).Scan(&exists)
+	return exists, err
+}
+
+// ListUsernameCaseCollisions returns each set of usernames that differ only by
+// case, newest-registered last within a set.
+//
+// It exists because the unique index cannot simply be created on a deployment
+// that already holds a collision - Postgres refuses, and a migration that dies
+// on real data is worse than the drift it was fixing. So the migration asks this
+// first and reports instead of failing.
+func (s *PostgresStore) ListUsernameCaseCollisions() ([][]string, error) {
+	rows, err := s.db.Query(`
+		SELECT array_agg(username ORDER BY created_at)
+		FROM users
+		GROUP BY LOWER(username)
+		HAVING COUNT(*) > 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]string
+	for rows.Next() {
+		var names pq.StringArray
+		if err := rows.Scan(&names); err != nil {
+			return nil, err
+		}
+		out = append(out, []string(names))
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) CreateUser(u *models.User) error {
 	// Explicit defaults for totp_* — older deployments may have these columns
 	// added via migration without the JSONB default actually being applied to

@@ -757,7 +757,8 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		}
-		if existing, _ := h.state.Store.GetUserByUsername(newName); existing != nil && existing.ID != user.ID {
+		// Case-INSENSITIVE; the unique index on LOWER(username) is the real guard.
+		if taken, _ := h.state.Store.UsernameTaken(newName, user.ID); taken {
 			sendJSONError(w, "Username already taken", http.StatusConflict)
 			return
 		}

@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
+
+	"github.com/lib/pq"
 )
 
 // applyPhase0a1Schema sets up the Auth Foundation schema:
@@ -79,6 +82,8 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_users_deletion_status      ON users(deletion_status)          WHERE deletion_status != 'active'`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_servers_region             ON servers(region)`)
 
+	applyUsernameCaseIndex(db)
+
 	// ---- Seed default region (only if regions table is empty) ----
 	db.Exec(`INSERT INTO regions (id, display_name, enabled)
 		SELECT 'default', 'Default Region', TRUE
@@ -98,4 +103,58 @@ func applyPhase0a1Schema(db *sql.DB) error {
 	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
 
 	return nil
+}
+
+// applyUsernameCaseIndex reserves usernames WITHOUT case, by making the database
+// the arbiter: a unique index on LOWER(username).
+//
+// Names used to be reserved case-SENSITIVELY - verified live that `NewComer`
+// registers beside an existing `newcomer`, two real accounts. Every lookup is
+// exact, so this is not an access-control break and a typo fails closed. The
+// harm is that the two are indistinguishable at a glance wherever a username is
+// displayed: a member list, an audit log's actor column, a ticket thread.
+//
+// It asks BEFORE creating the index, because Postgres refuses to build a unique
+// index over data that already violates it, and a migration that dies on real
+// data is worse than the drift it was fixing. On a deployment that already holds
+// a collision the index is skipped and the collision is named in the log, so the
+// operator can rename one side and restart. Everything else about the fix - the
+// case-insensitive pre-checks on all four doors - is already in effect either
+// way; only the last-word guarantee waits.
+func applyUsernameCaseIndex(db *sql.DB) {
+	rows, err := db.Query(`
+		SELECT array_agg(username ORDER BY created_at)
+		FROM users
+		GROUP BY LOWER(username)
+		HAVING COUNT(*) > 1`)
+	if err != nil {
+		log.Printf("username case index: could not check for collisions, skipping: %v", err)
+		return
+	}
+	var collisions []string
+	for rows.Next() {
+		var names pq.StringArray
+		if err := rows.Scan(&names); err != nil {
+			log.Printf("username case index: could not read a collision row, skipping: %v", err)
+			rows.Close()
+			return
+		}
+		collisions = append(collisions, strings.Join([]string(names), " / "))
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Printf("username case index: collision check failed, skipping: %v", err)
+		return
+	}
+
+	if len(collisions) > 0 {
+		log.Printf("username case index: NOT created - %d username(s) already differ only by case. "+
+			"Rename one side of each and restart to get the guarantee; the case-insensitive checks on "+
+			"registration and rename are active regardless. Collisions: %s",
+			len(collisions), strings.Join(collisions, ", "))
+		return
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username))`); err != nil {
+		log.Printf("username case index: create failed: %v", err)
+	}
 }

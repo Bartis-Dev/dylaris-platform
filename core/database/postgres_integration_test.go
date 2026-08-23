@@ -810,3 +810,83 @@ func TestIntegrationPasswordChangeSpendsResetLink(t *testing.T) {
 		}
 	})
 }
+
+// TestIntegrationUsernameCaseReservation covers the guarantee that only the
+// database can give: two names differing solely in case cannot both exist.
+//
+// Before this, `NewComer` registered happily beside an existing `newcomer` -
+// two real accounts, verified live. Not an access-control break, since every
+// lookup is exact and a typo therefore fails closed; the harm is that the two
+// are indistinguishable at a glance in a member list, an audit log's actor
+// column or a ticket thread.
+//
+// It belongs here rather than in a handler test because the guard IS the unique
+// index on LOWER(username) plus a case-folding query, and no fake can answer for
+// either.
+func TestIntegrationUsernameCaseReservation(t *testing.T) {
+	_, st := integrationDB(t)
+
+	base := uniqueName("case_")
+	first := &models.User{Username: base, Password: "x", Email: uniqueName("ce_") + "@example.test"}
+	if err := st.CreateUser(first); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	t.Cleanup(func() { st.DeleteUser(first.ID) })
+
+	upper := strings.ToUpper(base)
+
+	t.Run("UsernameTaken folds case", func(t *testing.T) {
+		for _, name := range []string{base, upper, strings.Title(base)} {
+			taken, err := st.UsernameTaken(name, "")
+			if err != nil {
+				t.Fatalf("UsernameTaken(%q): %v", name, err)
+			}
+			if !taken {
+				t.Errorf("UsernameTaken(%q) = false; %q exists and differs only by case", name, base)
+			}
+		}
+	})
+
+	t.Run("a free name is free", func(t *testing.T) {
+		taken, err := st.UsernameTaken(uniqueName("free_"), "")
+		if err != nil {
+			t.Fatalf("UsernameTaken: %v", err)
+		}
+		if taken {
+			t.Error("a name nobody holds came back taken")
+		}
+	})
+
+	t.Run("the holder is excluded, so a rename to your own casing works", func(t *testing.T) {
+		taken, err := st.UsernameTaken(upper, first.ID)
+		if err != nil {
+			t.Fatalf("UsernameTaken: %v", err)
+		}
+		if taken {
+			t.Error("the account's own row blocked it; changing your own capitalisation would be impossible")
+		}
+	})
+
+	t.Run("the database refuses the collision outright", func(t *testing.T) {
+		// The pre-check above is best-effort UX. This is the guarantee: a
+		// concurrent claim between check and INSERT still cannot land.
+		second := &models.User{Username: upper, Password: "x", Email: uniqueName("ce2_") + "@example.test"}
+		err := st.CreateUser(second)
+		if err == nil {
+			st.DeleteUser(second.ID)
+			t.Fatal("a username differing only by case was created; the unique index on LOWER(username) is missing")
+		}
+	})
+
+	t.Run("collisions are listed rather than fatal", func(t *testing.T) {
+		// What the migration asks before creating the index. With the index in
+		// place there is nothing to report, which is the point.
+		got, err := st.ListUsernameCaseCollisions()
+		if err != nil {
+			t.Fatalf("ListUsernameCaseCollisions: %v", err)
+		}
+		for _, set := range got {
+			t.Errorf("a collision survived the index: %v", set)
+		}
+	})
+}
