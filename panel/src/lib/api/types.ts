@@ -693,8 +693,6 @@ export interface GatewayLink {
     node_id?: string;
     online: boolean;
     active_tunnels: number;
-    redis_connected: boolean;
-    active_mode: string;
 }
 
 export interface EdgeStats {
