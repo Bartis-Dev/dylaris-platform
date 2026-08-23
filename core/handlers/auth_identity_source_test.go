@@ -59,7 +59,7 @@ func TestAuthMiddleware_AdminFlagComesFromTheRowNotTheClaim(t *testing.T) {
 			}
 			h := &AuthHandler{state: &AppState{StoreEnabled: true, Store: fake}, jwtKey: []byte(identitySourceSecret)}
 
-			token, err := h.IssueToken("alice", tt.claim)
+			token, err := h.IssueToken("alice", tt.claim, "")
 			if err != nil {
 				t.Fatalf("IssueToken: %v", err)
 			}

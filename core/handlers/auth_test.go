@@ -17,7 +17,7 @@ func newTestAuthHandler() *AuthHandler {
 
 func TestIssueToken_HS256(t *testing.T) {
 	h := newTestAuthHandler()
-	tokenString, err := h.IssueToken("alice", true)
+	tokenString, err := h.IssueToken("alice", true, "")
 	if err != nil {
 		t.Fatalf("IssueToken: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestIssueToken_HS256(t *testing.T) {
 
 func TestIssueToken_NonAdmin(t *testing.T) {
 	h := newTestAuthHandler()
-	tokenString, err := h.IssueToken("bob", false)
+	tokenString, err := h.IssueToken("bob", false, "")
 	if err != nil {
 		t.Fatalf("IssueToken: %v", err)
 	}
@@ -62,11 +62,11 @@ func TestIssueToken_NonAdmin(t *testing.T) {
 
 func TestIsAdminToken(t *testing.T) {
 	h := newTestAuthHandler()
-	adminTok, err := h.IssueToken("admin-user", true)
+	adminTok, err := h.IssueToken("admin-user", true, "")
 	if err != nil {
 		t.Fatalf("IssueToken(admin): %v", err)
 	}
-	userTok, err := h.IssueToken("regular-user", false)
+	userTok, err := h.IssueToken("regular-user", false, "")
 	if err != nil {
 		t.Fatalf("IssueToken(user): %v", err)
 	}

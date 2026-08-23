@@ -168,7 +168,17 @@ export const updateProfile = async (data: any) => {
       headers: getAuthHeader(),
       body: JSON.stringify(data),
     });
-    return await handleResponse(res);
+    const out = await handleResponse(res);
+    // Changing your password ends every session issued against the old one,
+    // this tab's included. Core hands back a replacement so the person who
+    // just changed it stays signed in; everyone ELSE holding a session for
+    // this account is signed out, which is the whole point. Both keys, because
+    // login writes both.
+    if (out?.token && typeof window !== 'undefined') {
+      localStorage.setItem('token', out.token);
+      localStorage.setItem('authToken', out.token);
+    }
+    return out;
   } catch (err) {
     return handleError(err);
   }

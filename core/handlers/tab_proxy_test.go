@@ -499,7 +499,7 @@ func TestInDashboard_RejectsWrongPurposeToken(t *testing.T) {
 	// proxy - this is exactly the I1/I2 bypass the fix closes: no session JWT
 	// (whether via ?token=, header, or now stuffed into the cookie by hand)
 	// is accepted here anymore, only a Purpose == "tab_proxy" ticket.
-	sessionTok, err := ah.IssueToken("owner", false)
+	sessionTok, err := ah.IssueToken("owner", false, "")
 	if err != nil {
 		t.Fatalf("IssueToken: %v", err)
 	}
@@ -593,7 +593,7 @@ func TestInDashboard_ReadOnlyTicket_AllowsGETPastAuthGate(t *testing.T) {
 
 func TestInDashboard_NoLongerAcceptsQueryToken(t *testing.T) {
 	h, ah := newTabProxyTestHandler(t, true, "")
-	sessionTok, err := ah.IssueToken("owner", false)
+	sessionTok, err := ah.IssueToken("owner", false, "")
 	if err != nil {
 		t.Fatalf("IssueToken: %v", err)
 	}

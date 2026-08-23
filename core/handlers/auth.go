@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql" // Import Models
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,11 +33,16 @@ func NewAuthHandler(state *AppState, jwtSecret string) *AuthHandler {
 // from the login handler so other handlers (the setup wizard, future
 // admin-impersonation flows) can mint tokens without duplicating the signing
 // + claim shape.
-func (h *AuthHandler) IssueToken(username string, isAdmin bool) (string, error) {
+// pwdHash is the caller's stored password hash, which binds the session to it
+// (see passwordFingerprint). Callers that genuinely have no hash to bind to -
+// the demo account short-circuit - pass "", and such a session is simply not
+// password-bound; there is nothing for a reset to invalidate.
+func (h *AuthHandler) IssueToken(username string, isAdmin bool, pwdHash string) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
 		Username:         username,
 		IsAdmin:          isAdmin,
+		PwdFp:            passwordFingerprint(pwdHash),
 		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expirationTime)},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -133,7 +140,7 @@ func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Demo account unavailable", http.StatusNotFound)
 		return
 	}
-	token, err := h.IssueToken(u.Username, false)
+	token, err := h.IssueToken(u.Username, false, u.Password)
 	if err != nil {
 		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
 		return
@@ -157,7 +164,39 @@ type Claims struct {
 	ServerID int  `json:"serverId,omitempty"`
 	TabID    int  `json:"tabId,omitempty"`
 	ReadOnly bool `json:"readOnly,omitempty"`
+	// PwdFp marks the password hash this session was issued against, so
+	// changing the password ends every session that predates it. See
+	// passwordFingerprint and the check in AuthMiddleware.
+	PwdFp string `json:"pfp,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// passwordFingerprint reduces a bcrypt hash to a short, non-reversible marker.
+//
+// A session is a stateless JWT: nothing on the server can retract one, so an
+// account whose password was reset BECAUSE it was compromised kept the
+// attacker's session alive for the rest of its 24 hours. Measured on a live
+// stack: an admin reset the password through the break-glass route, the old
+// password stopped working, the new one worked - and the session token minted
+// before the reset still answered 200.
+//
+// Deriving the marker from the stored hash rather than adding a
+// password_changed_at column is what makes it cover every write path at once:
+// the self-service profile change writes through UpdateUser, the admin reset
+// and the emailed reset write through UpdateUserPassword, and a fourth path
+// added later is covered without anyone remembering to stamp a column - which
+// is precisely how this codebase loses guards.
+//
+// The row is already loaded on every request (below, to decide whether the
+// account still exists), so this costs one SHA-256 over a 60-byte string, not
+// a second query. Not the hash itself: the token is handed to the client, and
+// a bcrypt hash inside it would be an offline cracking target.
+func passwordFingerprint(hash string) string {
+	if hash == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(hash))
+	return hex.EncodeToString(sum[:8])
 }
 
 // tokenPurposeKey carries the JWT's Purpose claim to handlers that need to tell
@@ -375,6 +414,24 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 
+			// A password change ends the sessions that predate it. Same rule as
+			// the row-over-claim one below, applied to the credential itself:
+			// the claim says which password this session was issued against,
+			// the row says which one is current, and until now nothing
+			// compared them - so resetting a password because the account was
+			// compromised left the attacker's session alive for the rest of
+			// its 24 hours.
+			//
+			// An EMPTY claim is allowed through on purpose. Tokens minted
+			// before this shipped carry none, and refusing them would log the
+			// whole platform out on deploy; they age out within 24 hours on
+			// their own. The demo-account session is unbound for the same
+			// reason and has nothing to invalidate.
+			if claims.PwdFp != "" && claims.PwdFp != passwordFingerprint(user.Password) {
+				sendJSONError(w, "Your password changed - please sign in again", http.StatusUnauthorized)
+				return
+			}
+
 			ctx = context.WithValue(ctx, "userID", user.ID)
 
 			// Authorization comes from the ROW, never from the claim.
@@ -568,8 +625,10 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
-		Username:         user.Username,
-		IsAdmin:          user.IsAdmin,
+		Username: user.Username,
+		IsAdmin:  user.IsAdmin,
+		// Binds the session to the password it was issued against.
+		PwdFp:            passwordFingerprint(user.Password),
 		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expirationTime)},
 	}
 
@@ -717,6 +776,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Update Fields in Struct (non-username fields)
+	passwordChanged := false
 	if req.NewPassword != nil && *req.NewPassword != "" {
 		// Enforce the same length policy the register + reset paths apply; this
 		// self-service field previously accepted any non-empty password.
@@ -726,6 +786,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		}
 		hashed, _ := bcrypt.GenerateFromPassword([]byte(*req.NewPassword), bcrypt.DefaultCost)
 		user.Password = string(hashed)
+		passwordChanged = true
 	}
 	if req.Email != nil {
 		email := strings.TrimSpace(*req.Email)
@@ -751,7 +812,20 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"success": "true", "message": "Profile updated!"})
+	// A password change invalidates every session issued against the old one -
+	// including the caller's own, which they are holding right now. Hand back a
+	// replacement so changing your password in settings does not read as being
+	// thrown out of the panel. Everyone ELSE holding a session for this account
+	// still loses it, which is the point.
+	out := map[string]string{"success": "true", "message": "Profile updated!"}
+	if passwordChanged {
+		if fresh, terr := h.IssueToken(user.Username, user.IsAdmin, user.Password); terr == nil {
+			out["token"] = fresh
+		} else {
+			log.Printf("profile: could not re-issue a session after a password change for %s: %v", user.Username, terr)
+		}
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 // StatusHandler GET /api/status - liveness for the login page. needsSetup is

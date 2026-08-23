@@ -100,7 +100,7 @@ func TestResolvePublicTicket(t *testing.T) {
 	})
 
 	t.Run("wrong purpose (session token)", func(t *testing.T) {
-		sessionTok, err := ah.IssueToken("owner", false)
+		sessionTok, err := ah.IssueToken("owner", false, "")
 		if err != nil {
 			t.Fatalf("IssueToken: %v", err)
 		}

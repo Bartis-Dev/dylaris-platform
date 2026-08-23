@@ -60,7 +60,7 @@ func TestABeamTicketIsNotAPanelSession(t *testing.T) {
 // what the token is for.
 func TestAPanelSessionIsNotABeamTicket(t *testing.T) {
 	h := &AuthHandler{state: &AppState{}, jwtKey: []byte(testJWTSecret)}
-	session, err := h.IssueToken("someone", true)
+	session, err := h.IssueToken("someone", true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestAPanelSessionIsNotABeamTicket(t *testing.T) {
 // The guard must not swallow the tokens it exists to let through.
 func TestAnOrdinarySessionStillAuthenticates(t *testing.T) {
 	h := &AuthHandler{state: &AppState{}, jwtKey: []byte(testJWTSecret)}
-	session, err := h.IssueToken("someone", false)
+	session, err := h.IssueToken("someone", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

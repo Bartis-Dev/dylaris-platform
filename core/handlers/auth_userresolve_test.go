@@ -76,7 +76,7 @@ func TestAuthMiddleware_UserResolutionFailsClosed(t *testing.T) {
 				state:  &AppState{StoreEnabled: true, Store: tt.fake},
 				jwtKey: []byte(secret),
 			}
-			token, err := h.IssueToken("alice", false)
+			token, err := h.IssueToken("alice", false, "")
 			if err != nil {
 				t.Fatalf("IssueToken: %v", err)
 			}
