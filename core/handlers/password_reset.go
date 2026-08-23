@@ -222,16 +222,14 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Update password and clear the token in the same transaction-like pair.
-	// Order matters: UpdateUserPassword first so a crash mid-way still leaves
-	// the token consumable (user can retry the same link). Then clear.
+	// One statement: UpdateUserPassword clears the reset token in the same
+	// UPDATE that writes the password, so the link is spent exactly when the
+	// password lands. This used to be two calls, ordered so a crash between
+	// them left the token consumable - which also meant a failed clear left a
+	// live link behind. Atomic is both simpler and stricter.
 	if err := h.state.Store.UpdateUserPassword(user.ID, string(hashed)); err != nil {
 		sendJSONError(w, "Failed to update password", http.StatusInternalServerError)
 		return
-	}
-	if err := h.state.Store.ClearPasswordResetToken(user.ID); err != nil {
-		// Token left dangling — won't authenticate (no matching row), but log it.
-		log.Printf("reset-password: ClearPasswordResetToken for userID=%s: %v", user.ID, err)
 	}
 
 	LogIdentityAudit(h.state, r, AuditEventPasswordResetCompleted, "", user.ID, nil)

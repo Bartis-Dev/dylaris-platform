@@ -234,14 +234,38 @@ func (s *PostgresStore) UpdateUser(u *models.User) error {
 	// read, so nothing flips - but the marker is what protects a per-user decision
 	// from the platform authoring toggle, and a future caller writing this column
 	// without it would silently reopen that hole.
+	//
+	// The reset-token clear uses the same pre-update read: this is the profile
+	// save, which rewrites the password column on EVERY call (the caller
+	// round-trips the row), so an unconditional clear would drop a valid reset
+	// link because someone edited their email. Only an actual password CHANGE
+	// invalidates the link - see UpdateUserPassword for why it does.
 	query := `UPDATE users SET username = $1, password = $2, email = $3, minecraft_username = $4, is_admin = $5, is_2fa_enabled = $6, permissions = $7, can_create_modpacks = $8,
-		can_create_modpacks_manual = (can_create_modpacks_manual OR can_create_modpacks IS DISTINCT FROM $8) WHERE id = $9`
+		can_create_modpacks_manual = (can_create_modpacks_manual OR can_create_modpacks IS DISTINCT FROM $8),
+		password_reset_token      = CASE WHEN password IS DISTINCT FROM $2 THEN NULL ELSE password_reset_token END,
+		password_reset_expires_at = CASE WHEN password IS DISTINCT FROM $2 THEN NULL ELSE password_reset_expires_at END
+		WHERE id = $9`
 	_, err := s.db.Exec(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Is2FAEnabled, u.Permissions, u.CanCreateModpacks, u.ID)
 	return err
 }
 
+// UpdateUserPassword writes a new password AND drops any outstanding
+// password-reset link, in one statement.
+//
+// The two belong together. A user who gets a reset mail they did not ask for
+// does the right thing - signs in and changes the password themselves - and
+// the link sitting in that mailbox stayed valid for the rest of its hour.
+// Measured on a live stack: the owner set their own new password, the
+// outstanding link then set a different one, and only the link-holder's
+// password worked afterwards. The defensive action handed the account over.
+//
+// In the same UPDATE rather than a second call, so it cannot be half-done and
+// cannot be forgotten by a future caller - the reason the reset handler's own
+// ClearPasswordResetToken call is gone.
 func (s *PostgresStore) UpdateUserPassword(id string, hashedPassword string) error {
-	_, err := s.db.Exec("UPDATE users SET password = $1 WHERE id = $2", hashedPassword, id)
+	_, err := s.db.Exec(`UPDATE users
+		SET password = $1, password_reset_token = NULL, password_reset_expires_at = NULL
+		WHERE id = $2`, hashedPassword, id)
 	return err
 }
 

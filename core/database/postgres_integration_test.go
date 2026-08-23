@@ -722,3 +722,91 @@ func TestIntegrationShareExpiryWrites(t *testing.T) {
 		}
 	})
 }
+
+// TestIntegrationPasswordChangeSpendsResetLink covers the pairing that makes a
+// defensive password change actually defensive.
+//
+// A user who receives a reset mail they did not request does the right thing:
+// they sign in and change the password themselves. That link stayed valid for
+// the rest of its hour. Measured on a live stack before this: the owner set a
+// new password, the outstanding link then set a different one, and only the
+// link-holder's password worked afterwards - the defensive action handed the
+// account over.
+//
+// It lives here because the guard IS the SQL: UpdateUserPassword nulls the
+// columns in the same UPDATE, and UpdateUser does it only when the password
+// column actually changes, through a CASE over the PRE-update row that no fake
+// can answer for.
+func TestIntegrationPasswordChangeSpendsResetLink(t *testing.T) {
+	db, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	hasToken := func(t *testing.T) bool {
+		t.Helper()
+		var token sql.NullString
+		var expires sql.NullTime
+		if err := db.QueryRow(`SELECT password_reset_token, password_reset_expires_at FROM users WHERE id=$1`,
+			f.user.ID).Scan(&token, &expires); err != nil {
+			t.Fatalf("read reset columns: %v", err)
+		}
+		// Both columns move together; a token with no expiry would never
+		// expire, which is the shape worth catching if one is ever missed.
+		if token.Valid && token.String != "" && !expires.Valid {
+			t.Error("a reset token is stored with no expiry - it would never age out")
+		}
+		return token.Valid && token.String != ""
+	}
+	issue := func(t *testing.T, tok string) {
+		t.Helper()
+		expires := time.Now().Add(time.Hour)
+		if _, err := st.SetPasswordResetToken(f.user.ID, tok, expires, expires.Add(-time.Hour)); err != nil {
+			t.Fatalf("SetPasswordResetToken: %v", err)
+		}
+		if !hasToken(t) {
+			t.Fatal("the token was not stored, so the rest of this test proves nothing")
+		}
+	}
+
+	t.Run("UpdateUserPassword spends the link", func(t *testing.T) {
+		issue(t, uniqueName("tok_"))
+		if err := st.UpdateUserPassword(f.user.ID, "$2a$10$newhashnewhashnewhashnewhashnewhashnewhashnewhashnewhas"); err != nil {
+			t.Fatalf("UpdateUserPassword: %v", err)
+		}
+		if hasToken(t) {
+			t.Error("the reset link survived a password change - it can still take the account over")
+		}
+	})
+
+	t.Run("a profile save that CHANGES the password spends it", func(t *testing.T) {
+		issue(t, uniqueName("tok_"))
+		u, err := st.GetUserByID(f.user.ID)
+		if err != nil || u == nil {
+			t.Fatalf("GetUserByID: %v", err)
+		}
+		u.Password = "$2a$10$profilechangedprofilechangedprofilechangedprofilechang"
+		if err := st.UpdateUser(u); err != nil {
+			t.Fatalf("UpdateUser: %v", err)
+		}
+		if hasToken(t) {
+			t.Error("the reset link survived a self-service password change")
+		}
+	})
+
+	t.Run("a profile save that does NOT touch the password keeps it", func(t *testing.T) {
+		// The profile save rewrites the password column on every call (the
+		// caller round-trips the row), so an unconditional clear would drop a
+		// valid link because someone edited their email address.
+		issue(t, uniqueName("tok_"))
+		u, err := st.GetUserByID(f.user.ID)
+		if err != nil || u == nil {
+			t.Fatalf("GetUserByID: %v", err)
+		}
+		u.MinecraftUsername = "Notch"
+		if err := st.UpdateUser(u); err != nil {
+			t.Fatalf("UpdateUser: %v", err)
+		}
+		if !hasToken(t) {
+			t.Error("editing an unrelated profile field invalidated the reset link the user is waiting on")
+		}
+	})
+}
