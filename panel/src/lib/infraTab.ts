@@ -19,8 +19,28 @@ export interface InfraAvailability {
     external: boolean;
     /** feature_byon_enabled: this platform runs servers on tenant machines. */
     machines: boolean;
-    /** Gateway routing is on, so protected addresses exist. */
+    /**
+     * Protected addresses exist AND can be minted. This is byonEnabled, not
+     * gatewayEnabled: route-only rides the warp overlay, so Core's MintLinkKit
+     * and ListNodeWarpKeys refuse on byonActive BEFORE they look at the routing
+     * mode. Asking routing alone showed the whole route-only half on a
+     * gateway-routed install with BYON off, where every read under it answered
+     * 403 "BYON is not enabled" - to admins included.
+     */
     routes: boolean;
+}
+
+/**
+ * Builds the map from the reader's role and the ONE platform predicate that
+ * governs tenant hardware. byonEnabled is already `feature_byon_enabled AND
+ * gateway routing` (see isByonUsable), which is byte-for-byte what Core checks.
+ *
+ * Kept here rather than inline in the page because the same flags decide three
+ * different things and the page has picked the wrong pair before - see the
+ * history at the top of this file.
+ */
+export function infraAvailability(isAdmin: boolean, byonEnabled: boolean): InfraAvailability {
+    return { external: isAdmin, machines: byonEnabled, routes: byonEnabled };
 }
 
 const ORDER: InfraTab[] = ['external', 'machines', 'routes'];

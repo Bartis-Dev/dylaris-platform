@@ -9,6 +9,7 @@ import {
     getModrinthPATStatus, setModrinthPAT, clearModrinthPAT,
     type ModrinthPATStatus,
 } from '@/lib/api/modrinthPat';
+import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
 
 // Modrinth account integration. Lets the user attach a Personal
@@ -25,6 +26,12 @@ const REQUIRED_SCOPES = [
 ];
 
 export default function ModrinthIntegrationPage() {
+    // The STATUS read is deliberately allowed while modpacks are off (existing
+    // packs stay readable), so a successful load says nothing about whether a
+    // token can be SAVED - that write is 503 until modpacks are on. Without the
+    // flag this page showed a fully working connect form that only failed on submit.
+    const { featureFlags } = useAppData();
+    const modpacksDisabled = !featureFlags.modpacks;
     const [status, setStatus] = useState<ModrinthPATStatus | null>(null);
     const [loading, setLoading] = useState(true);
     const [token, setToken] = useState('');
@@ -75,6 +82,20 @@ export default function ModrinthIntegrationPage() {
                 <Package size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">Modrinth Integration</h1>
             </header>
+
+            {modpacksDisabled && (
+                <div className="card p-4 mb-4 text-xs flex items-start gap-2">
+                    <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
+                    <div>
+                        <p className="text-(--base-08)">Modpacks are turned off on this platform.</p>
+                        <p className="mt-1 text-(--base-06)">
+                            A Modrinth token is only used to publish packs you author here, so it
+                            cannot be connected or changed right now. An admin can re-enable
+                            modpacks under Settings &rarr; Features.
+                        </p>
+                    </div>
+                </div>
+            )}
 
             <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
                 <Key size={14} className="text-(--accent-light) shrink-0 mt-0.5" />
@@ -167,8 +188,9 @@ export default function ModrinthIntegrationPage() {
                     <div className="flex items-center justify-end">
                         <button
                             onClick={handleSave}
-                            className="btn btn-primary btn-sm"
-                            disabled={saving || !token.trim()}
+                            title={modpacksDisabled ? 'Modpacks are disabled' : undefined}
+                            className="btn btn-primary btn-sm disabled:opacity-40"
+                            disabled={saving || modpacksDisabled || !token.trim()}
                         >
                             {saving ? 'Validating…' : 'Connect'}
                         </button>

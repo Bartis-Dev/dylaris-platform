@@ -11,10 +11,16 @@ export default function BillingTab() {
     const [settings, setSettings] = useState<BillingSettings>({ gracePeriod: '3d', r2Retention: '3m', nodeRetention: '2w', r2QuotaGb: '0', presignTtlNodeMin: '60', presignTtlByonMin: '360', paymentUrl: '' });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
     useEffect(() => {
         getBillingSettings().then(res => {
+            // Core answers 503 feature_disabled when BYON is off. Dropping that left
+            // the component's OWN hardcoded defaults on screen looking like stored
+            // settings, above a Save button whose write would fail the same way -
+            // the same misread PlansTab already fixes.
+            if (!res.success) setLoadError(res.message || 'Failed to load billing settings.');
             if (res.success) {
                 setSettings({
                     gracePeriod: res.gracePeriod || '3d',
@@ -55,6 +61,8 @@ export default function BillingTab() {
                 <h2 className="font-display text-xl text-(--base-09)">Billing & Non-Payment</h2>
                 <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-(--base-06) mt-1">Platform defaults (BYON)</p>
             </div>
+
+            {loadError && <p className="text-sm text-(--error)">{loadError}</p>}
 
             <div className="flex items-start gap-2 rounded-md border border-(--base-04) bg-(--base-01) p-3">
                 <Info size={15} className="text-(--base-06) shrink-0 mt-0.5" />

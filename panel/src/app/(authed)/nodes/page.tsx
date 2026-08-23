@@ -21,7 +21,7 @@ import { nodeIdFromLabel } from '@/lib/warpDeploy';
 import { isLocationName } from '@/lib/validation';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
-import { resolveInfraTab, showInfraTabBar, type InfraTab } from '@/lib/infraTab';
+import { resolveInfraTab, showInfraTabBar, infraAvailability, type InfraTab } from '@/lib/infraTab';
 import { DeployKit, NotIncluded, SecretField, usageLabel } from '@/components/infra/DeployKit';
 import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
 import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
@@ -70,15 +70,16 @@ interface OwnNode {
 const NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
 
 function MyNodesInner() {
-    const { featureFlags, entitlement, user, gatewayEnabled, byonEnabled } = useAppData();
+    const { featureFlags, entitlement, user, byonEnabled } = useAppData();
     const router = useRouter();
     const searchParams = useSearchParams();
 
     const isAdmin = user?.isAdmin ?? false;
 
     // What this reader HAS - separate from whether this ACCOUNT is entitled to
-    // it, which the panels below answer for themselves.
-    const have = { external: isAdmin, machines: byonEnabled, routes: gatewayEnabled };
+    // it, which the panels below answer for themselves. The pairing lives in
+    // lib/infraTab so it can be tested; see the note on InfraAvailability.routes.
+    const have = infraAvailability(isAdmin, byonEnabled);
 
     // The tab lives in the URL so Create can deep-link straight into the half it
     // means, and so a reload or a shared link lands where it left off.
@@ -150,13 +151,17 @@ function MyNodesInner() {
     // an entitled tenant they have nothing and then takes it back.
     const entitlementKnown = entitlement !== null || isAdmin;
 
+    // Both reads are BYON-gated in Core, so with the subsystem off they answer 403
+    // for everyone and the page renders its "turned off on this platform" state
+    // from context anyway. Same reasoning as the admin-only external scope below.
     const load = useCallback(async () => {
+        if (!byonEnabled) { setLoading(false); return; }
         const [n, t] = await Promise.all([getNodes('byon'), listEnrollTokens()]);
         if (n.success && Array.isArray(n.nodes)) setNodes(n.nodes as OwnNode[]);
         if (t.success && Array.isArray(t.tokens)) setTokens(t.tokens);
         setNodesReadAt(Date.now());
         setLoading(false);
-    }, []);
+    }, [byonEnabled]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -210,13 +215,16 @@ function MyNodesInner() {
     }, [featureFlags.store]);
 
     const loadNodeKeys = useCallback(async () => {
-        if (!gatewayEnabled) return;
+        // byonEnabled, not gatewayEnabled: Core's ListNodeWarpKeys refuses on
+        // byonActive first, so the gateway-only guard still spent a request that
+        // could only ever come back 403.
+        if (!byonEnabled) return;
         const res = await listNodeWarpKeys();
         if (res.success) {
             setNodeKeys(res.keys || []);
             setNodeUsage({ used: res.used ?? 0, limit: res.limit });
         }
-    }, [gatewayEnabled]);
+    }, [byonEnabled]);
 
     // Required and to a fixed shape. It used to default to "my machine" for
     // everyone who left it blank, which made a list of machines unreadable the

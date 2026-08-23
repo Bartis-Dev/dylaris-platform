@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveInfraTab, showInfraTabBar } from './infraTab';
+import { resolveInfraTab, showInfraTabBar, infraAvailability } from './infraTab';
 
 // An operator: all three halves.
 const admin = { external: true, machines: true, routes: true };
@@ -75,5 +75,38 @@ describe('showInfraTabBar', () => {
         expect(showInfraTabBar(machinesOnly)).toBe(false);
         expect(showInfraTabBar(routesOnly)).toBe(false);
         expect(showInfraTabBar(neither)).toBe(false);
+    });
+});
+
+describe('infraAvailability', () => {
+    // The regression this pairing exists for: on a gateway-routed install with
+    // BYON off, `routes` used to read gatewayEnabled and opened the route-only
+    // half, whose every read answers 403 "BYON is not enabled" - to admins too.
+    it('closes route-only when BYON is off, even for an admin', () => {
+        expect(infraAvailability(true, false)).toEqual({
+            external: true, machines: false, routes: false,
+        });
+    });
+
+    it('opens both tenant halves once BYON is usable', () => {
+        expect(infraAvailability(false, true)).toEqual({
+            external: false, machines: true, routes: true,
+        });
+    });
+
+    // external is the operator's own half and is never a feature flag.
+    it('keeps external admin-only regardless of BYON', () => {
+        expect(infraAvailability(false, true).external).toBe(false);
+        expect(infraAvailability(true, false).external).toBe(true);
+    });
+
+    // With nothing available the page must be able to say so rather than render
+    // an empty tab - resolveInfraTab returns null only when the map is all false.
+    it('leaves a non-admin on a BYON-less platform with no tab at all', () => {
+        expect(resolveInfraTab(null, infraAvailability(false, false))).toBeNull();
+    });
+
+    it('does not strand a reader who asked for a tab they lost', () => {
+        expect(resolveInfraTab('routes', infraAvailability(true, false))).toBe('external');
     });
 });

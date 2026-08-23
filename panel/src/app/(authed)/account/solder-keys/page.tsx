@@ -18,7 +18,12 @@ import { useBusy } from '@/lib/useBusy';
 // creation; subsequent listings carry no key material (only the hash is stored).
 
 export default function SolderKeysPage() {
-    const { user } = useAppData();
+    const { user, featureFlags } = useAppData();
+    // The list endpoint is gated by RequireModpacksEnabled, so with modpacks off
+    // it answers 503 and the catch below turns that into an empty list. Without
+    // this flag the page would invite the user to create a key the API is
+    // already refusing - which is what it used to do.
+    const modpacksDisabled = !featureFlags.modpacks;
     const [keys, setKeys] = useState<SolderKey[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
@@ -85,12 +90,26 @@ export default function SolderKeysPage() {
                 <KeyRound size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">Solder Keys</h1>
                 <div className="ml-auto">
-                    <button onClick={() => setCreating(true)} className="btn btn-primary btn-sm">
+                    <button onClick={() => setCreating(true)} disabled={modpacksDisabled}
+                        title={modpacksDisabled ? 'Modpacks are disabled' : undefined}
+                        className="btn btn-primary btn-sm disabled:opacity-40">
                         <Plus size={12} />
                         New Key
                     </button>
                 </div>
             </header>
+
+            {modpacksDisabled && (
+                <div className="card p-4 mb-4 text-xs flex items-start gap-2">
+                    <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
+                    <div>
+                        <p className="text-(--base-08)">Modpacks are turned off on this platform.</p>
+                        <p className="mt-1 text-(--base-06)">
+                            New keys cannot be created and existing ones are already being refused, because Solder serves modpacks. An admin can re-enable them under Settings &rarr; Features.
+                        </p>
+                    </div>
+                </div>
+            )}
 
             <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
                 <Shield size={14} className="text-(--accent-light) shrink-0 mt-0.5" />
