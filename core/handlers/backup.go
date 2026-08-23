@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"dylaris-core/authz"
@@ -276,10 +277,23 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	if req.RetentionCount <= 0 {
 		req.RetentionCount = 3
 	}
+	req.Schedule = strings.TrimSpace(req.Schedule)
 	if req.Schedule == "" {
 		req.Schedule = "manual"
 	}
-	req.NextRunAt = computeNextRun(req.Schedule, time.Now())
+	// The parser was never wrong about "banana": it returned nil, meaning "I
+	// cannot schedule this", and this handler stored the job anyway. The result
+	// is a job that is listed, enabled, and never runs - which you find out
+	// when you need the backup. Measured on a live stack: banana, every 0h,
+	// every -3h, every 6m, "* * * * *", every 6H, Every 6h, every6h and daily
+	// were all accepted with 200 and left with no next run. Scheduled TASKS
+	// have refused an unparseable cron with a 400 all along; this is the
+	// sibling that did not.
+	if !services.ValidBackupSchedule(req.Schedule) {
+		sendJSONError(w, `Schedule must be "manual" or "every <n>h" / "every <n>d" - for example "every 6h"`, 400)
+		return
+	}
+	req.NextRunAt = services.ComputeBackupNextRun(req.Schedule, time.Now())
 	id, err := h.state.Store.CreateBackupJob(&req)
 	if err != nil {
 		sendJSONError(w, err.Error(), 500)
@@ -288,32 +302,101 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
 }
 
-// UpdateJob PATCH /api/backup-jobs/{jobId} - edits a schedule and recomputes
-// its next run. Gated on backups.create for the job's own server, not on the
+// updateBackupJobRequest is a PATCH body: every field is a pointer, and nil
+// means "the caller did not mention this, leave it alone".
+//
+// It used to decode straight into models.BackupJob and write the whole row, so
+// a PATCH that sent only a schedule reset everything it omitted to the zero
+// value. Measured on a live stack, `{"schedule":"every 6h"}` against a job
+// named nightly-world on sub-server "creative" with patterns, storage 1 and
+// enabled=true left: no name, no sub-server (so it backed up the whole
+// container instead), no storage (so the archive went somewhere else), no
+// patterns - and enabled FALSE. Changing how often a backup runs turned the
+// backup off. Only retentionCount, schedule and serverID survived, because
+// those three had explicit fallbacks; this gives the rest the same treatment.
+//
+// SubServer and StorageID are nullable in the model, and JSON null decodes to
+// the same nil an absent field does, so an explicit "" / 0 is how a caller
+// says "clear it" - the same convention the custom-tab share expiry uses.
+type updateBackupJobRequest struct {
+	Name            *string   `json:"name"`
+	SubServer       *string   `json:"subServer"`
+	Schedule        *string   `json:"schedule"`
+	IncludePatterns *[]string `json:"includePatterns"`
+	ExcludePatterns *[]string `json:"excludePatterns"`
+	RetentionCount  *int      `json:"retentionCount"`
+	StorageID       *int      `json:"storageId"`
+	Enabled         *bool     `json:"enabled"`
+}
+
+// UpdateJob PATCH /api/backup-jobs/{jobId} - edits a job and recomputes its
+// next run. Gated on backups.create for the job's own server, not on the
 // caller's access to some other one.
 func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	jobID, job, ok := h.resolveJobWithAccess(w, r, "backups.create")
 	if !ok {
 		return
 	}
-	var req models.BackupJob
+	var req updateBackupJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", 400)
 		return
 	}
-	if !validSubServer(w, req.SubServer) {
-		return
+
+	// Start from what is stored and apply only what arrived.
+	next := *job
+	next.ID = jobID
+	next.ServerID = job.ServerID
+
+	if req.Name != nil {
+		next.Name = strings.TrimSpace(*req.Name)
 	}
-	req.ID = jobID
-	req.ServerID = job.ServerID
-	if req.RetentionCount <= 0 {
-		req.RetentionCount = job.RetentionCount
+	if req.SubServer != nil {
+		if !validSubServer(w, req.SubServer) {
+			return
+		}
+		if s := strings.TrimSpace(*req.SubServer); s == "" {
+			next.SubServer = nil // back up the whole container
+		} else {
+			next.SubServer = &s
+		}
 	}
-	if req.Schedule == "" {
-		req.Schedule = job.Schedule
+	if req.IncludePatterns != nil {
+		next.IncludePatterns = *req.IncludePatterns
 	}
-	req.NextRunAt = computeNextRun(req.Schedule, time.Now())
-	if err := h.state.Store.UpdateBackupJob(&req); err != nil {
+	if req.ExcludePatterns != nil {
+		next.ExcludePatterns = *req.ExcludePatterns
+	}
+	if req.RetentionCount != nil && *req.RetentionCount > 0 {
+		next.RetentionCount = *req.RetentionCount
+	}
+	if req.StorageID != nil {
+		if *req.StorageID <= 0 {
+			next.StorageID = nil // fall back to the default storage
+		} else {
+			v := *req.StorageID
+			next.StorageID = &v
+		}
+	}
+	if req.Enabled != nil {
+		next.Enabled = *req.Enabled
+	}
+	// Only what the CALLER sent is validated. An omitted schedule keeps the
+	// stored one untouched - including one of the broken values saved before
+	// that check existed, which would otherwise make such a job impossible to
+	// edit at all, even to rename it.
+	if req.Schedule != nil {
+		s := strings.TrimSpace(*req.Schedule)
+		if s != "" {
+			if !services.ValidBackupSchedule(s) {
+				sendJSONError(w, `Schedule must be "manual" or "every <n>h" / "every <n>d" - for example "every 6h"`, 400)
+				return
+			}
+			next.Schedule = s
+		}
+	}
+	next.NextRunAt = services.ComputeBackupNextRun(next.Schedule, time.Now())
+	if err := h.state.Store.UpdateBackupJob(&next); err != nil {
 		sendJSONError(w, err.Error(), 500)
 		return
 	}
@@ -838,7 +921,7 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 
 	// Mark scheduled bookkeeping. Manual triggers don't change the next-run.
 	now := time.Now()
-	next := computeNextRun(job.Schedule, now)
+	next := services.ComputeBackupNextRun(job.Schedule, now)
 	if next != nil {
 		h.state.Store.SetBackupJobScheduled(job.ID, now, *next)
 	}
@@ -872,31 +955,6 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 		return runID, err
 	}
 	return runID, nil
-}
-
-// computeNextRun parses simple schedule expressions: "manual", "every Nh",
-// "every Nd". Returns nil for manual. Anything malformed → nil (caller falls
-// back to manual semantics).
-func computeNextRun(schedule string, from time.Time) *time.Time {
-	if schedule == "" || schedule == "manual" {
-		return nil
-	}
-	var n int
-	var unit string
-	if _, err := fmt.Sscanf(schedule, "every %d%s", &n, &unit); err != nil || n <= 0 {
-		return nil
-	}
-	var d time.Duration
-	switch unit {
-	case "h":
-		d = time.Duration(n) * time.Hour
-	case "d":
-		d = time.Duration(n) * 24 * time.Hour
-	default:
-		return nil
-	}
-	next := from.Add(d)
-	return &next
 }
 
 func deref(s *string) string {

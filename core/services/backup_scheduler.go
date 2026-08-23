@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"strings"
 	"time"
 
 	nodegrpc "dylaris-core/grpc"
@@ -474,7 +475,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// re-check on a tight loop; the run resumes when usage drops or the limit rises.
 	if exceeded, used, quota := R2QuotaExceeded(b.store, srv.OwnerID); exceeded {
 		log.Printf("backup-scheduler: job %d skipped — quota reached (%d/%d GB)", job.ID, used/(1<<30), quota/(1<<30))
-		next := computeNextRun(job.Schedule, time.Now())
+		next := ComputeBackupNextRun(job.Schedule, time.Now())
 		if next != nil {
 			b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
 		}
@@ -486,7 +487,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	if exceeded, used, quota := NodeLocalBackupQuotaExceeded(b.store, b.registry, srv); exceeded {
 		log.Printf("backup-scheduler: job %d skipped — per-server backup quota reached (%.1f/%.1f GB)",
 			job.ID, float64(used)/(1<<30), float64(quota)/(1<<30))
-		next := computeNextRun(job.Schedule, time.Now())
+		next := ComputeBackupNextRun(job.Schedule, time.Now())
 		if next != nil {
 			b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
 		}
@@ -540,7 +541,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	}
 
 	// Advance next_run_at so we don't re-dispatch on the next tick.
-	next := computeNextRun(job.Schedule, time.Now())
+	next := ComputeBackupNextRun(job.Schedule, time.Now())
 	if next != nil {
 		b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
 	} else {
@@ -550,9 +551,29 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	return nil
 }
 
-// computeNextRun mirrors the helper in handlers/backup.go — duplicated here
-// to keep services free of any handlers dependency.
-func computeNextRun(schedule string, from time.Time) *time.Time {
+// ValidBackupSchedule reports whether a schedule string is one the scheduler can act
+// on. Defined in terms of ComputeNextRun rather than re-parsing, so the answer
+// and the behaviour can never disagree - which is the whole failure it exists
+// to stop: the parser was always right about "banana", the caller just stored
+// the job anyway and it silently never ran.
+func ValidBackupSchedule(schedule string) bool {
+	schedule = strings.TrimSpace(schedule)
+	if schedule == "" || schedule == "manual" {
+		return true
+	}
+	return ComputeBackupNextRun(schedule, time.Now()) != nil
+}
+
+// ComputeBackupNextRun parses the schedule expressions the backup scheduler
+// understands: "manual"/empty and "every Nh" / "every Nd". Anything else
+// returns nil, meaning "I cannot schedule this" - callers must act on that
+// rather than store the job regardless.
+//
+// It used to have an identical twin in handlers/backup.go, "duplicated here to
+// keep services free of any handlers dependency" - but the dependency runs the
+// other way (handlers already imports services), so the copy bought nothing and
+// gave a validator two definitions to drift between.
+func ComputeBackupNextRun(schedule string, from time.Time) *time.Time {
 	if schedule == "" || schedule == "manual" {
 		return nil
 	}

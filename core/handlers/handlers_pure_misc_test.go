@@ -4,60 +4,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"dylaris-core/store"
 )
-
-// TestComputeNextRun pins the schedule-string parser (backup.go): "every Nh"
-// / "every Nd" via fmt.Sscanf; "manual"/empty/malformed all fall back to nil
-// (the caller then treats the job as manual-only).
-func TestComputeNextRun(t *testing.T) {
-	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	t.Run("empty schedule returns nil", func(t *testing.T) {
-		if got := computeNextRun("", from); got != nil {
-			t.Errorf("got %v, want nil", got)
-		}
-	})
-	t.Run("manual returns nil", func(t *testing.T) {
-		if got := computeNextRun("manual", from); got != nil {
-			t.Errorf("got %v, want nil", got)
-		}
-	})
-	t.Run("every 6h adds 6 hours", func(t *testing.T) {
-		got := computeNextRun("every 6h", from)
-		if got == nil || !got.Equal(from.Add(6*time.Hour)) {
-			t.Errorf("got %v, want %v", got, from.Add(6*time.Hour))
-		}
-	})
-	t.Run("every 2d adds 48 hours", func(t *testing.T) {
-		got := computeNextRun("every 2d", from)
-		if got == nil || !got.Equal(from.Add(48*time.Hour)) {
-			t.Errorf("got %v, want %v", got, from.Add(48*time.Hour))
-		}
-	})
-	t.Run("every 0h (non-positive n) returns nil", func(t *testing.T) {
-		if got := computeNextRun("every 0h", from); got != nil {
-			t.Errorf("got %v, want nil", got)
-		}
-	})
-	t.Run("every -1h (negative n) returns nil", func(t *testing.T) {
-		if got := computeNextRun("every -1h", from); got != nil {
-			t.Errorf("got %v, want nil", got)
-		}
-	})
-	t.Run("unknown unit returns nil", func(t *testing.T) {
-		if got := computeNextRun("every 3x", from); got != nil {
-			t.Errorf("got %v, want nil", got)
-		}
-	})
-	t.Run("garbage schedule returns nil", func(t *testing.T) {
-		if got := computeNextRun("whenever I feel like it", from); got != nil {
-			t.Errorf("got %v, want nil", got)
-		}
-	})
-}
 
 // TestCannedRequestValidate pins the name/body boundary checks (1..128,
 // 1..10000) on the canned-response create/update payload.

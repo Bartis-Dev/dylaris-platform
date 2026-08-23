@@ -343,7 +343,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| PATCH | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.UpdateJob` | edits a schedule and recomputes its next run. |
+| PATCH | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.UpdateJob` | edits a job and recomputes its next run. |
 | DELETE | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.DeleteJob` | removes a schedule, gated on backups.delete for the job's server. |
 | GET | `/api/backup-jobs/{jobId:[0-9]+}/runs` | session | _in-handler_ | - | `BackupHandler.ListRuns` | the 50 most recent runs of one schedule. |
 | POST | `/api/backup-jobs/{jobId:[0-9]+}/trigger` | session | _in-handler_ | - | `BackupHandler.TriggerJob` | starts a run immediately. |
