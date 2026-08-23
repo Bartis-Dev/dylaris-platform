@@ -17,7 +17,16 @@ import (
 // GetUserByID defaults to an error so sendDunningEmail/sendSuspendedEmail
 // always short-circuit before touching the mailer - email delivery is
 // best-effort side-plumbing, not the lifecycle decision logic under test here.
+type overLimitStamp struct {
+	userID string
+	at     *time.Time
+}
+
 type billingFakeStore struct {
+	allBilling      []store.UserBilling
+	overLimitStamps []overLimitStamp
+	overLimitErr    error
+
 	store.Store
 
 	billing    *store.UserBilling
@@ -77,6 +86,18 @@ func (f *billingFakeStore) ListUserBillingByStatus(status string) ([]store.UserB
 		return f.suspended, nil
 	}
 	return nil, nil
+}
+
+// The over-limit sweep runs in the same pass. These fakes keep it inert for the
+// payment tests: no rows means nothing to check, which is what those tests are
+// about. The over-limit behaviour has its own tests.
+func (f *billingFakeStore) ListUserBilling() ([]store.UserBilling, error) {
+	return f.allBilling, nil
+}
+
+func (f *billingFakeStore) SetUserOverLimitSince(userID string, at *time.Time) error {
+	f.overLimitStamps = append(f.overLimitStamps, overLimitStamp{userID, at})
+	return f.overLimitErr
 }
 
 func (f *billingFakeStore) SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error {

@@ -33,12 +33,48 @@ type UserBilling struct {
 	ManualEntitlementExpiresAt *time.Time `json:"manualEntitlementExpiresAt,omitempty"`
 	ManualEntitlementGrantedAt *time.Time `json:"manualEntitlementGrantedAt,omitempty"`
 	ManualEntitlementGrantedBy string     `json:"manualEntitlementGrantedBy,omitempty"`
-	UpdatedAt                  time.Time  `json:"updatedAt"`
+	// OverLimitSince is when the tenant was first seen holding more than they
+	// bought - normally after a downgrade. Nil means they are within their caps.
+	// Separate from GraceUntil on purpose: being over a cap and being behind on
+	// payment are different problems with different clocks.
+	OverLimitSince *time.Time `json:"overLimitSince,omitempty"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, updated_at`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, updated_at`
+
+// SetUserOverLimitSince stamps (or clears, with nil) when a tenant was first seen
+// over a purchased cap. Touches ONLY that column: the row also carries the
+// payment status and the per-user overrides, and a sweep must not rewrite either.
+func (s *PostgresStore) SetUserOverLimitSince(userID string, at *time.Time) error {
+	_, err := s.db.Exec(`
+		INSERT INTO user_billing (user_id, overlimit_since, updated_at)
+		VALUES ($1,$2,NOW())
+		ON CONFLICT (user_id) DO UPDATE SET overlimit_since = $2, updated_at = NOW()`,
+		userID, at)
+	return err
+}
+
+// ListUserBilling returns every billing row. Bounded by design: a row exists only
+// for a tenant an admin or a purchase has touched, never for the whole user table.
+func (s *PostgresStore) ListUserBilling() ([]UserBilling, error) {
+	rows, err := s.db.Query(`SELECT ` + userBillingCols + ` FROM user_billing`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserBilling
+	for rows.Next() {
+		b, err := scanUserBilling(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
 
 func scanUserBilling(row interface {
 	Scan(dest ...any) error
@@ -48,11 +84,14 @@ func scanUserBilling(row interface {
 	var gp, r2, nr sql.NullString
 	var quota, maxNodes, maxLinks, tEdge, tRelay, tComb sql.NullInt64
 	var meKind, meBy sql.NullString
-	var meExp, meAt sql.NullTime
+	var meExp, meAt, overLimit sql.NullTime
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
 		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb,
-		&meKind, &meExp, &meAt, &meBy, &b.UpdatedAt); err != nil {
+		&meKind, &meExp, &meAt, &meBy, &overLimit, &b.UpdatedAt); err != nil {
 		return nil, err
+	}
+	if overLimit.Valid {
+		b.OverLimitSince = &overLimit.Time
 	}
 	b.ManualEntitlement = meKind.String
 	if meExp.Valid {

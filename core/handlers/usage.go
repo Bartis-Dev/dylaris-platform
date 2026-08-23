@@ -69,10 +69,33 @@ func (h *UsageHandler) GetMyUsage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	// entitlement is what the tenant HOLDS against what they bought, which is a
+	// different question from traffic usage and has its own deadline. Served here
+	// because this is the one endpoint the panel already polls for limits, so the
+	// banner does not need a second round trip on every page.
+	payload := map[string]interface{}{
 		"success": true,
 		"usage":   h.viewFor(u),
-	})
+	}
+	if ent := h.entitlementStateFor(userID); ent != nil {
+		payload["entitlementState"] = ent
+	}
+	json.NewEncoder(w).Encode(payload)
+}
+
+// entitlementStateFor reports an over-limit tenant and when their grace ends.
+// Returns nil for the normal case so the panel has nothing to render and no
+// shape to special-case.
+func (h *UsageHandler) entitlementStateFor(userID string) map[string]interface{} {
+	b, err := h.state.Store.GetUserBilling(userID)
+	if err != nil || b == nil || b.OverLimitSince == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"overLimit":      true,
+		"overLimitSince": b.OverLimitSince,
+		"cutoffAt":       b.OverLimitSince.Add(services.OverLimitGrace),
+	}
 }
 
 // GetAllUsage GET /api/admin/usage - RequireCap("plans.read") at the route.

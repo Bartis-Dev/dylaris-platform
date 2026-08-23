@@ -88,6 +88,8 @@ type Store interface {
 	// ("byon" | "route_only" | "both", empty = revoke) with an expiry.
 	SetUserManualEntitlement(userID, kind string, expiresAt *time.Time, grantedBy string) error
 	ListUserBillingByStatus(status string) ([]UserBilling, error)
+	ListUserBilling() ([]UserBilling, error)
+	SetUserOverLimitSince(userID string, at *time.Time) error
 	ListServersByOwner(ownerID string) ([]models.Server, error)
 	ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, error)
 	BackupBytesByOwner(ownerID string) (int64, error)

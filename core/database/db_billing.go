@@ -32,5 +32,10 @@ func applyBillingSchema(db *sql.DB) error {
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_user_billing_status ON user_billing(status)`)
 	// Idempotent add for DBs created before the quota column existed.
 	db.Exec(`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS r2_quota_gb BIGINT`)
+	// When the tenant first went OVER a purchased cap. Deliberately not
+	// grace_until: that one is the payment dunning window, and a tenant can be
+	// over their limit while paying perfectly well (they downgraded). Two
+	// different clocks for two different problems.
+	db.Exec(`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS overlimit_since TIMESTAMPTZ`)
 	return nil
 }

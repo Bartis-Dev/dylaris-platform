@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { getMyBilling, BillingStatus } from '@/lib/api/billing';
+import { getMyUsage, EntitlementState } from '@/lib/api/usage';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
 
@@ -21,6 +22,7 @@ export default function BillingBanner() {
     const [status, setStatus] = useState<BillingStatus | null>(null);
     const [graceUntil, setGraceUntil] = useState<string | null>(null);
     const [paymentUrl, setPaymentUrl] = useState('');
+    const [overLimit, setOverLimit] = useState<EntitlementState | null>(null);
 
     useEffect(() => {
         if (!featureFlags.store) return;
@@ -36,6 +38,40 @@ export default function BillingBanner() {
         const t = setInterval(load, 5 * 60 * 1000);
         return () => { cancelled = true; clearInterval(t); };
     }, [featureFlags.store]);
+
+    // Over-limit is polled separately from payment because it is a separate
+    // problem: a tenant who downgraded is paying perfectly well and still holding
+    // more than they bought. It is also NOT gated on the store - an admin grant
+    // can be lowered on a self-host too, and the cutoff is just as real there.
+    useEffect(() => {
+        let cancelled = false;
+        const load = async () => {
+            const res = await getMyUsage();
+            if (cancelled || !res.success) return;
+            setOverLimit(res.entitlementState?.overLimit ? res.entitlementState : null);
+        };
+        load();
+        const t = setInterval(load, 5 * 60 * 1000);
+        return () => { cancelled = true; clearInterval(t); };
+    }, []);
+
+    // Over-limit outranks dunning: it names a nearer deadline with a harder
+    // consequence, and stacking two red bars reads as one broken page.
+    if (overLimit) {
+        return (
+            <div className="shrink-0">
+                <div className="flex items-center justify-center gap-3 bg-(--error) text-white px-4 py-2.5 text-sm font-medium shadow-md">
+                    <AlertTriangle size={18} className="shrink-0" />
+                    <span>
+                        You are using more than your subscription covers. Reduce what you have or
+                        raise your subscription by{' '}
+                        <strong>{new Date(overLimit.cutoffAt).toLocaleString()}</strong>, or
+                        everything on your account is disconnected. Nothing is deleted.
+                    </span>
+                </div>
+            </div>
+        );
+    }
 
     if (!featureFlags.store) return null;
     if (!status || status === 'active') return null;

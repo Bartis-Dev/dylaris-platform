@@ -200,6 +200,12 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// userRouteScope is the per-tenant key in gateway_route_limits. Kept in one place
+// because effectiveRouteLimit resolves "user:<id>" -> "user_default" -> "global"
+// by string, so a typo here does not fail, it silently falls through to the
+// platform default and hands out the wrong number of addresses.
+func userRouteScope(userID string) string { return "user:" + userID }
+
 // parseEntitlement decodes one purchased-entitlement field into the (value, set)
 // pair SetUserPurchasedEntitlement wants. It has to distinguish three inbound
 // states that Go's usual *int64 collapses into two: the field being absent (do
@@ -256,6 +262,11 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// clear the override and fall back to the plan.
 		MaxNodes json.RawMessage `json:"maxNodes,omitempty"`
 		MaxLinks json.RawMessage `json:"maxLinks,omitempty"`
+		// MaxRoutes is the tenant's protected-ADDRESS pool, which the store
+		// derives from every product they hold. It lives in gateway_route_limits
+		// (scope "user:<uuid>"), not in user_billing: routes were already capped
+		// there by hand, and two caps for one thing is how they drift apart.
+		MaxRoutes json.RawMessage `json:"maxRoutes,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		sendJSONError(w, "Invalid request", http.StatusBadRequest)
@@ -289,6 +300,25 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		if setNodes || setLinks {
 			if err := h.state.Store.SetUserPurchasedEntitlement(req.UUID, nodes, setNodes, links, setLinks); err != nil {
 				sendJSONError(w, "Activated but failed to apply entitlement", http.StatusInternalServerError)
+				return
+			}
+		}
+		routes, setRoutes, rerr := parseEntitlement(req.MaxRoutes)
+		if rerr != nil {
+			sendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
+			return
+		}
+		if setRoutes {
+			// A cleared pool means "fall back to the user_default/global scope",
+			// which is what deleting the per-user row does. Writing 0 instead would
+			// read as a hard zero and strand the tenant with no addresses at all.
+			if routes == nil {
+				if err := h.state.Store.DeleteGatewayRouteLimit(userRouteScope(req.UUID)); err != nil {
+					sendJSONError(w, "Activated but failed to clear the route pool", http.StatusInternalServerError)
+					return
+				}
+			} else if err := h.state.Store.SetGatewayRouteLimit(userRouteScope(req.UUID), int(*routes)); err != nil {
+				sendJSONError(w, "Activated but failed to apply the route pool", http.StatusInternalServerError)
 				return
 			}
 		}

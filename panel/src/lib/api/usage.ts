@@ -33,8 +33,20 @@ export interface TrafficUsage {
     over?: UsageOver;
 }
 
+// EntitlementState is present only while the caller holds MORE than they bought,
+// which normally means they downgraded. Absent is the normal case, so the banner
+// has nothing to render and no shape to special-case.
+export interface EntitlementState {
+    overLimit: boolean;
+    overLimitSince: string;
+    // When everything is disconnected if they are still over. Sent by Core rather
+    // than computed here so the panel cannot promise a different deadline than
+    // the sweep enforces.
+    cutoffAt: string;
+}
+
 // getMyUsage returns the caller's own usage for the current (or ?period) month.
-export async function getMyUsage(period?: string): Promise<{ success: boolean; usage?: TrafficUsage; message?: string }> {
+export async function getMyUsage(period?: string): Promise<{ success: boolean; usage?: TrafficUsage; entitlementState?: EntitlementState; message?: string }> {
     try {
         const q = period ? `?period=${encodeURIComponent(period)}` : '';
         const res = await fetch(`${API_URL}/me/usage${q}`, { headers: getAuthHeader() });

@@ -38,6 +38,10 @@ type storeLinkFakeStore struct {
 
 	entitlementCalls []storeLinkEntitlementCall
 	entitlementErr   error
+
+	routeLimitSets    []storeLinkRouteLimitCall
+	routeLimitDeletes []string
+	routeLimitErr     error
 }
 
 type storeLinkEntitlementCall struct {
@@ -83,6 +87,21 @@ func (f *storeLinkFakeStore) SetUserBillingStatus(userID, status string, graceUn
 		userID: userID, status: status, hasGrace: graceUntil != nil, hasSuspend: suspendedAt != nil,
 	})
 	return f.setUserBillingStatusErr
+}
+
+type storeLinkRouteLimitCall struct {
+	scope string
+	max   int
+}
+
+func (f *storeLinkFakeStore) SetGatewayRouteLimit(scope string, max int) error {
+	f.routeLimitSets = append(f.routeLimitSets, storeLinkRouteLimitCall{scope, max})
+	return f.routeLimitErr
+}
+
+func (f *storeLinkFakeStore) DeleteGatewayRouteLimit(scope string) error {
+	f.routeLimitDeletes = append(f.routeLimitDeletes, scope)
+	return f.routeLimitErr
 }
 
 func (f *storeLinkFakeStore) SetUserPurchasedEntitlement(userID string, maxNodes *int64, setNodes bool, maxLinks *int64, setLinks bool) error {

@@ -184,6 +184,12 @@ func (s *BillingLifecycleService) runOnce(ctx context.Context) {
 	// still gets the full grace before anything is cut.
 	s.enforceSuspensions(ctx)
 
+	// Over-limit is a SEPARATE clock from non-payment: a tenant who downgraded is
+	// paying perfectly well and still holding more than they bought. Runs after
+	// the payment path so an already-suspended tenant is skipped rather than
+	// warned about services that are not running.
+	s.enforceEntitlementLimits(ctx)
+
 	s.cleanupExpiredR2(ctx)
 	// NOTE: node-connection retention teardown (drop the warp tunnel + revoke the
 	// tenant's warp peers/keys after node_retention) is handled in the Warp
