@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"dylaris-core/store"
@@ -69,9 +68,8 @@ type EdgeLiveStats struct {
 
 // GatewayLinkStatus represents a link's online state as readable from Redis.
 type GatewayLinkStatus struct {
-	Token         string `json:"token"`
-	Online        bool   `json:"online"`
-	ActiveTunnels int    `json:"active_tunnels"`
+	Token  string `json:"token"`
+	Online bool   `json:"online"`
 }
 
 // GatewayRoute represents a route as stored in Redis (route:{domain}).
@@ -444,17 +442,13 @@ func GetLinksFromRedis(ctx context.Context, rdb *redis.Client) []GatewayLinkStat
 			}
 			seen[token] = true
 
-			tunnels := 0
-			stats, _ := rdb.HGetAll(ctx, "sys:stats:tunnels:"+token).Result()
-			for _, v := range stats {
-				if n, err := strconv.Atoi(v); err == nil {
-					tunnels += n
-				}
-			}
+			// Presence only. This used to also sum sys:stats:tunnels:<token> into
+			// an active-tunnel count and OR it into Online, but nothing in either
+			// repository has ever written that key - so the count was always zero
+			// and the OR always a no-op.
 			links = append(links, GatewayLinkStatus{
-				Token:         token,
-				Online:        onlineMap[token] || tunnels > 0,
-				ActiveTunnels: tunnels,
+				Token:  token,
+				Online: onlineMap[token],
 			})
 		}
 		cursor = next

@@ -103,7 +103,6 @@ interface InfrastructureData {
   routeCount: number;
   onlineLinks: number;
   onlineEdges: number;
-  totalTunnels: number;
 }
 
 type Tab = 'nodes' | 'edges' | 'routes' | 'bandwidth';
@@ -642,7 +641,6 @@ export default function InfrastructureView({
           routeCount: res.routeCount ?? 0,
           onlineLinks: res.onlineLinks ?? 0,
           onlineEdges: res.onlineEdges ?? 0,
-          totalTunnels: res.totalTunnels ?? 0,
         });
       }
     } catch { /* keep previous data */ } finally {

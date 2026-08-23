@@ -75,12 +75,10 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 
 	// Aggregate stats
 	onlineLinks := 0
-	totalTunnels := 0
 	for _, l := range links {
 		if l.Online {
 			onlineLinks++
 		}
-		totalTunnels += l.ActiveTunnels
 	}
 
 	onlineEdges := 0
@@ -94,15 +92,14 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	errors := services.GetAllServiceErrorsFromRedis(h.state.Redis, 20)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":      true,
-		"edges":        edges,
-		"links":        links,
-		"nodes":        nodes,
-		"routeCount":   routeCount,
-		"onlineLinks":  onlineLinks,
-		"onlineEdges":  onlineEdges,
-		"totalTunnels": totalTunnels,
-		"errors":       errors,
+		"success":     true,
+		"edges":       edges,
+		"links":       links,
+		"nodes":       nodes,
+		"routeCount":  routeCount,
+		"onlineLinks": onlineLinks,
+		"onlineEdges": onlineEdges,
+		"errors":      errors,
 	})
 }
 

@@ -692,7 +692,6 @@ export interface GatewayLink {
     is_system: boolean;
     node_id?: string;
     online: boolean;
-    active_tunnels: number;
 }
 
 export interface EdgeStats {
@@ -702,7 +701,6 @@ export interface EdgeStats {
     ram_pct: number;
     rx_speed: number;
     tx_speed: number;
-    active_tunnels: number;
     active_tokens: number;
     active_mc_streams: number;
     xdp_enabled: boolean;

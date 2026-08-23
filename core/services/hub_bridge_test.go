@@ -463,7 +463,11 @@ func TestGetLinksFromRedis_OnlineViaKeepAliveOrTunnels(t *testing.T) {
 		t.Fatalf("seed online_link-a: %v", err)
 	}
 
-	// link-b: no keep-alive, but has active tunnel counts -> online via tunnels>0.
+	// link-b: no keep-alive, but the old tunnel-stats hash is present -> still
+	// OFFLINE. That hash used to make a link count as online; nothing in either
+	// repository has ever written it, so the only way it could appear was a test
+	// like this one seeding it. Kept as a regression guard: presence is the
+	// keep-alive key and nothing else.
 	if err := rdb.Set(ctx, "link:tok-b", "1", 0).Err(); err != nil {
 		t.Fatalf("seed link-b: %v", err)
 	}
@@ -471,7 +475,7 @@ func TestGetLinksFromRedis_OnlineViaKeepAliveOrTunnels(t *testing.T) {
 		t.Fatalf("seed tunnels-b: %v", err)
 	}
 
-	// link-c: neither keep-alive nor tunnels -> offline.
+	// link-c: no keep-alive -> offline.
 	if err := rdb.Set(ctx, "link:tok-c", "1", 0).Err(); err != nil {
 		t.Fatalf("seed link-c: %v", err)
 	}
@@ -484,14 +488,14 @@ func TestGetLinksFromRedis_OnlineViaKeepAliveOrTunnels(t *testing.T) {
 	if len(links) != 3 {
 		t.Fatalf("got %d links, want 3: %+v", len(links), links)
 	}
-	if !byToken["tok-a"].Online || byToken["tok-a"].ActiveTunnels != 0 {
-		t.Errorf("tok-a = %+v, want Online=true ActiveTunnels=0", byToken["tok-a"])
+	if !byToken["tok-a"].Online {
+		t.Errorf("tok-a = %+v, want Online=true (it has a keep-alive key)", byToken["tok-a"])
 	}
-	if !byToken["tok-b"].Online || byToken["tok-b"].ActiveTunnels != 3 {
-		t.Errorf("tok-b = %+v, want Online=true ActiveTunnels=3", byToken["tok-b"])
+	if byToken["tok-b"].Online {
+		t.Errorf("tok-b = %+v, want Online=false - the tunnel-stats hash must not stand in for a keep-alive", byToken["tok-b"])
 	}
-	if byToken["tok-c"].Online || byToken["tok-c"].ActiveTunnels != 0 {
-		t.Errorf("tok-c = %+v, want Online=false ActiveTunnels=0", byToken["tok-c"])
+	if byToken["tok-c"].Online {
+		t.Errorf("tok-c = %+v, want Online=false", byToken["tok-c"])
 	}
 }
 
