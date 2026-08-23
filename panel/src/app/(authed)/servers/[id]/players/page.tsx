@@ -109,14 +109,33 @@ export default function ServerPlayersPage() {
         return () => { cancelled = true; };
     }, [serverId]);
 
-    const loadJsonList = useCallback(async (filename: string): Promise<JsonPlayerEntry[]> => {
-        if (!activeSub || !uuid) return [];
+    // Bans, whitelist and operators are read from the sub-server's JSON files,
+    // which needs files.read - a DIFFERENT capability from the rcon.exec that
+    // every action on this page uses. Any failure used to come back as an empty
+    // array, so a member who may kick, ban and op but not read files was shown
+    // "nobody is banned" and "the whitelist is empty". Those are claims, and the
+    // panel did not know them to be true.
+    //
+    // 404 is the one failure that IS an empty list: a server nobody has ever
+    // banned on has no banned-players.json. Everything else is reported.
+    const loadJsonList = useCallback(async (
+        filename: string,
+    ): Promise<{ entries: JsonPlayerEntry[]; error?: string }> => {
+        if (!activeSub || !uuid) return { entries: [] };
         const res = await getFileContent(`${activeSub}/${filename}`, uuid);
-        if (!res.success) return [];
+        if (!res.success) {
+            if (res.status === 404) return { entries: [] };
+            if (res.status === 403) {
+                return { entries: [], error: `You do not have permission to read ${filename}. Managing players needs the file-read capability on this server as well.` };
+            }
+            return { entries: [], error: `${filename} could not be read: ${res.message || 'unknown error'}` };
+        }
         try {
             const parsed = JSON.parse(res.content || '[]');
-            return Array.isArray(parsed) ? parsed : [];
-        } catch { return []; }
+            return { entries: Array.isArray(parsed) ? parsed : [] };
+        } catch {
+            return { entries: [], error: `${filename} is not valid JSON - the server may be mid-write.` };
+        }
     }, [activeSub, uuid]);
 
     // background=true is the 10s poll: it must not touch `loading`, or the whole
@@ -141,9 +160,23 @@ export default function ServerPlayersPage() {
                 setOnline(parsePlayerList(res.output || ''));
             }
         }
-        if (effectiveSection === 'bans')      setBans(await loadJsonList('banned-players.json'));
-        if (effectiveSection === 'whitelist') setWhitelist(await loadJsonList('whitelist.json'));
-        if (effectiveSection === 'ops')       setOps(await loadJsonList('ops.json'));
+        // setActionError, not a silent empty list: the banner above the table is
+        // the difference between "nobody is banned" and "you cannot see who is".
+        if (effectiveSection === 'bans') {
+            const { entries, error } = await loadJsonList('banned-players.json');
+            setBans(entries);
+            if (error) setActionError(error);
+        }
+        if (effectiveSection === 'whitelist') {
+            const { entries, error } = await loadJsonList('whitelist.json');
+            setWhitelist(entries);
+            if (error) setActionError(error);
+        }
+        if (effectiveSection === 'ops') {
+            const { entries, error } = await loadJsonList('ops.json');
+            setOps(entries);
+            if (error) setActionError(error);
+        }
 
         setLoading(false);
     }, [serverId, effectiveSection, loadJsonList]);

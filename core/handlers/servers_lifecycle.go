@@ -819,6 +819,24 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Before the node is told to switch, not after: it restarts the container,
+	// and MC reads server.properties once at boot. The RCON config is stored per
+	// SERVER and lives per SUB-SERVER, so without this the switch quietly moved
+	// to a sub-server whose file never had enable-rcon set - Core kept reporting
+	// RCON as on with nothing pending, and the Players tabs unlocked onto a port
+	// nothing was listening on. Same reason the loader-metadata refresh below
+	// exists: a plain switch used to move only active_sub_server.
+	// The flag rides along in both directions. A switch restarts the container,
+	// so a stamp that landed IS live afterwards - and only the power route used
+	// to clear it, which left "enable RCON, then switch" showing the
+	// restart-pending banner and the Players tabs locked until someone pressed
+	// restart for no reason. A stamp that did NOT land means the file lacks the
+	// setting, so a restart really is still owed.
+	needsRestart := !h.syncRconToSubServer(srv, subName)
+	if err := h.state.Store.SetServerRconNeedsRestart(serverID, needsRestart); err != nil {
+		log.Printf("SwitchSubServer: rcon needs-restart for server %d: %v", serverID, err)
+	}
+
 	if h.state.Queue != nil {
 		node, err := h.state.Store.GetNodeByID(srv.NodeID)
 		if err == nil {
@@ -1049,12 +1067,23 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	case "start", "restart":
 		newStatus = "starting"
 		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
+		// MC reads server.properties at boot and nowhere else, so this is the
+		// one moment the stored RCON config can be made true for whichever
+		// sub-server is about to run. See rconNeedsStamping for why it can be
+		// a different one than SetConfig last wrote.
+		rconSynced := h.syncRconToSubServer(srv, srv.ActiveSubServer)
 		// A (re)start reloads server.properties, so any pending RCON change is
 		// now live: clear the persisted "restart required" flag that keeps the
 		// panel banner up and the RCON-dependent Players tabs locked. Non-fatal
 		// - failing to clear it must not block the restart itself.
-		if err := h.state.Store.SetServerRconNeedsRestart(srv.ID, false); err != nil {
-			log.Printf("failed to clear rcon needs-restart for server %d: %v", srv.ID, err)
+		//
+		// Only when the stamp above actually landed: clearing it after a failed
+		// write is how the panel came to unlock the Players tabs for a server
+		// whose file never got the setting.
+		if rconSynced {
+			if err := h.state.Store.SetServerRconNeedsRestart(srv.ID, false); err != nil {
+				log.Printf("failed to clear rcon needs-restart for server %d: %v", srv.ID, err)
+			}
 		}
 	case "stop", "kill":
 		newStatus = "stopping"

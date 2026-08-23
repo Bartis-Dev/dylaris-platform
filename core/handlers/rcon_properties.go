@@ -3,11 +3,13 @@ package handlers
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"dylaris-core/models"
 	pb "dylaris-proto/node"
 
 	"github.com/google/uuid"
@@ -75,6 +77,63 @@ func mergeServerProperties(existing string, kv map[string]string) string {
 	}
 
 	return strings.Join(out, "\n") + "\n"
+}
+
+// rconNeedsStamping reports whether a sub-server that is about to become the
+// running one should have the stored RCON config written into its
+// server.properties first.
+//
+// The reason this is needed at all: rcon_enabled/port/password are ONE row per
+// SERVER, but enable-rcon lives in EACH SUB-SERVER's server.properties, and
+// SetConfig only ever writes the sub-server that was active when it ran. So
+// switching sub-servers (or starting one installed later) left the file behind
+// while Core went on reporting RCON as enabled with nothing pending - the panel
+// unlocked all four Players tabs on that word and every action then failed with
+// a raw dial error. Found live: DB said enabled/no-restart, creative's file said
+// enable-rcon=false, survival's said true.
+//
+// The password check is what keeps this from stamping three keys onto every
+// server on the platform at every start: a server that has never configured
+// RCON has no password, and its file is left alone.
+func rconNeedsStamping(subServer string, enabled bool, password string) bool {
+	if subServer == "" {
+		return false
+	}
+	return enabled || password != ""
+}
+
+// syncRconToSubServer stamps the server's stored RCON config into subServer's
+// server.properties, so the file agrees with what Core reports and the Players
+// tabs act on. Returns whether the sub-server can be considered in step: true
+// also when there was nothing to stamp, false only when a write was needed and
+// did not land.
+//
+// Best-effort by design: it runs on the (re)start and switch paths, and a node
+// that cannot be written to must not stop a server from starting. What it must
+// not do is let the caller then report the config as applied - hence the bool.
+func (h *ServerHandler) syncRconToSubServer(srv *models.Server, subServer string) bool {
+	// Ahead of the DB read, not folded into rconNeedsStamping below: a power
+	// action on a server that was never installed has no properties file to
+	// write, and no reason to ask the database about one.
+	if subServer == "" {
+		return true
+	}
+	if h.state == nil || h.state.Store == nil {
+		return false
+	}
+	enabled, port, password, err := h.state.Store.GetServerRconConfig(srv.ID)
+	if err != nil {
+		log.Printf("rcon sync for server %d: reading the stored config failed: %v", srv.ID, err)
+		return false
+	}
+	if !rconNeedsStamping(subServer, enabled, password) {
+		return true
+	}
+	if err := NewRconHandler(h.state).applyProps(srv.NodeID, srv.UUID, subServer, enabled, port, password); err != nil {
+		log.Printf("rcon sync for server %d (%s): writing server.properties failed: %v", srv.ID, subServer, err)
+		return false
+	}
+	return true
 }
 
 // applyRconToServerProperties merges the RCON settings into the active

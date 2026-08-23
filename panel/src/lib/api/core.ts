@@ -77,9 +77,15 @@ export const handleResponse = async (response: Response) => {
         parsed = false;
     }
 
-    if (response.ok) return { success: true, ...(data ?? {}) };
-    if (parsed) return { success: false, message: data?.message || 'Unknown error' };
-    return { success: false, message: `Request failed (${response.status})` };
+    // The status rides along on every path, not just the non-JSON one. Callers
+    // that only look at `success` are unaffected, but a caller that has to tell
+    // "you may not see this" (403) apart from "there is nothing here" (404)
+    // cannot do it from the message alone - and rendering the first as the
+    // second is how the Players tabs came to show an empty ban list to someone
+    // who simply lacked files.read.
+    if (response.ok) return { success: true, status: response.status, ...(data ?? {}) };
+    if (parsed) return { success: false, status: response.status, message: data?.message || 'Unknown error' };
+    return { success: false, status: response.status, message: `Request failed (${response.status})` };
 };
 
 export const handleError = (err: any) => {
