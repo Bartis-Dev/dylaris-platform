@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Wrench, Loader2, CircleCheck, CircleAlert } from 'lucide-react';
 import { getMaintenance, saveMaintenance, MaintenanceState } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import { toLocalInput, fromLocalInput } from '@/lib/localDateTime';
 
 const BLOCK_LEVELS: { value: MaintenanceState['blockLevel']; label: string; help: string }[] = [
     { value: 'off',          label: 'Off',                help: 'Feature off entirely. Banner hidden, no blocking.' },
@@ -126,7 +127,7 @@ export default function MaintenanceTab() {
                         value={state.expectedEnd ? toLocalInput(state.expectedEnd) : ''}
                         onChange={e => setState({ ...state, expectedEnd: e.target.value ? fromLocalInput(e.target.value) : '' })}
                         style={{ colorScheme: 'dark' }}
-                        className="input-field maintenance-datetime w-full"
+                        className="input-field datetime-field w-full"
                     />
                     <p className="text-xs text-(--base-06)">Used in the banner as a countdown + as a Retry-After hint on 503 responses.</p>
                 </div>
@@ -194,16 +195,4 @@ export default function MaintenanceTab() {
             </p>
         </div>
     );
-}
-
-// datetime-local works in local time; convert to/from ISO RFC3339 for transport.
-function toLocalInput(iso: string): string {
-    try {
-        const d = new Date(iso);
-        const pad = (n: number) => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    } catch { return ''; }
-}
-function fromLocalInput(local: string): string {
-    try { return new Date(local).toISOString(); } catch { return ''; }
 }

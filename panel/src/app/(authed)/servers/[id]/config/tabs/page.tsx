@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import {
     LayoutGrid, Plus, Pencil, Trash2, Play, Square, ExternalLink,
-    AlertTriangle, CircleCheck, CircleAlert, X, Link2, Copy, RotateCw,
+    AlertTriangle, CircleCheck, CircleAlert, X, Link2, Copy, RotateCw, Clock,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -14,6 +14,8 @@ import {
 } from '@/lib/api/serverTabs';
 import { useAppData } from '@/lib/AppDataContext';
 import { shareLinkUrl } from '@/lib/tabProxy';
+import { toLocalInput, fromLocalInput } from '@/lib/localDateTime';
+import { shareLinkExpired } from '@/lib/shareLink';
 import { DynamicIcon, TAB_ICON_NAMES } from '@/lib/icons';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
@@ -48,7 +50,7 @@ interface EditingTab extends Partial<ServerTab> {
 
 export default function ServerConfigTabsPage() {
     const params = useParams();
-    const { servers, gatewayEnabled } = useAppData();
+    const { servers, gatewayEnabled, coreInfo } = useAppData();
     const serverId = Number(params?.id);
     const server = servers.find(s => s.id === serverId);
 
@@ -96,6 +98,7 @@ export default function ServerConfigTabsPage() {
         targetPath: '/',
         surface: 'tab',
         visibility: 'private',
+        shareExpiresAt: null,
     });
 
     const openEdit = (t: ServerTab) => setEditing({ ...t });
@@ -125,6 +128,10 @@ export default function ServerConfigTabsPage() {
                 targetPath: path,
                 surface: editing.surface || 'tab',
                 visibility: editing.visibility || 'private',
+                // Always sent on a proxied save, never omitted: omitting it is
+                // how Core is told to KEEP the stored value, so clearing the
+                // field in the form has to arrive as an explicit "".
+                shareExpiresAt: editing.shareExpiresAt || '',
             };
         } else {
             const url = (editing.url || '').trim();
@@ -280,27 +287,51 @@ export default function ServerConfigTabsPage() {
 
                             {/* Share link row for proxied page tabs */}
                             {t.mode === 'proxied' && (t.surface === 'page' || t.surface === 'both') && (
-                                <div className="flex items-center gap-2 flex-wrap border-t border-(--base-03) pt-2">
-                                    <Link2 size={12} className="text-(--base-06) shrink-0" />
-                                    {t.shareToken ? (
-                                        <>
-                                            <code className="text-xs font-mono text-(--accent-light) truncate max-w-[240px]">
-                                                {shareLinkUrl(t.shareToken)}
-                                            </code>
-                                            <button onClick={() => handleCopy(t.shareToken)} className="btn btn-secondary btn-sm" title="Copy link">
-                                                <Copy size={11} />
+                                <div className="flex flex-col gap-1.5 border-t border-(--base-03) pt-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <Link2 size={12} className="text-(--base-06) shrink-0" />
+                                        {t.shareToken ? (
+                                            <>
+                                                <code className={`text-xs font-mono truncate max-w-[240px] ${
+                                                    shareLinkExpired(t.shareExpiresAt) ? 'text-(--base-06) line-through' : 'text-(--accent-light)'
+                                                }`}>
+                                                    {shareLinkUrl(t.shareToken)}
+                                                </code>
+                                                <button onClick={() => handleCopy(t.shareToken)} className="btn btn-secondary btn-sm" title="Copy link">
+                                                    <Copy size={11} />
+                                                </button>
+                                                <button onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm" title="Rotate (invalidates the old link)">
+                                                    <RotateCw size={11} />
+                                                </button>
+                                                <button onClick={() => handleRevoke(t)} className="btn btn-secondary btn-sm" title="Revoke link">
+                                                    <Trash2 size={11} className="text-(--error)" />
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <button onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm">
+                                                <Link2 size={11} /> Generate share link
                                             </button>
-                                            <button onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm" title="Rotate (invalidates the old link)">
-                                                <RotateCw size={11} />
-                                            </button>
-                                            <button onClick={() => handleRevoke(t)} className="btn btn-secondary btn-sm" title="Revoke link">
-                                                <Trash2 size={11} className="text-(--error)" />
-                                            </button>
-                                        </>
-                                    ) : (
-                                        <button onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm">
-                                            <Link2 size={11} /> Generate share link
-                                        </button>
+                                        )}
+                                    </div>
+                                    {/* An expiry that nothing displayed was as good as no expiry:
+                                        the owner had no way to see when a link they handed out
+                                        stops working, or that it already has. */}
+                                    {t.shareToken && t.shareExpiresAt && (
+                                        <span className={`inline-flex items-center gap-1 text-xs ${
+                                            shareLinkExpired(t.shareExpiresAt) ? 'text-(--warning-light)' : 'text-(--base-06)'
+                                        }`}>
+                                            <Clock size={11} className="shrink-0" />
+                                            {shareLinkExpired(t.shareExpiresAt)
+                                                ? `Expired ${new Date(t.shareExpiresAt).toLocaleString()} - rotate to hand out a working one`
+                                                : `Expires ${new Date(t.shareExpiresAt).toLocaleString()}`}
+                                        </span>
+                                    )}
+                                    {t.shareToken && !coreInfo?.tabProxyIsolationActive && (
+                                        <span className="inline-flex items-start gap-1 text-xs text-(--warning-light)">
+                                            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                                            Share links need their own origin on Core (TAB_PROXY_PORT + TAB_PROXY_ORIGIN).
+                                            Until an admin sets that up this link answers &quot;not valid&quot;.
+                                        </span>
                                     )}
                                 </div>
                             )}
@@ -417,6 +448,47 @@ export default function ServerConfigTabsPage() {
                                                 </p>
                                             )}
                                         </div>
+                                    )}
+                                    {editingSurfaceHasPage && (
+                                        <div>
+                                            <div className="flex items-baseline justify-between gap-2">
+                                                <label className="input-label" htmlFor="tab-share-expiry">Link expires (optional)</label>
+                                                {editing.shareExpiresAt && (
+                                                    <button type="button"
+                                                        onClick={() => setEditing({ ...editing, shareExpiresAt: null })}
+                                                        className="text-xs text-(--base-06) hover:text-(--base-08) transition-colors">
+                                                        Clear
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <input
+                                                id="tab-share-expiry"
+                                                type="datetime-local"
+                                                value={editing.shareExpiresAt ? toLocalInput(editing.shareExpiresAt) : ''}
+                                                onChange={e => setEditing({
+                                                    ...editing,
+                                                    shareExpiresAt: e.target.value ? fromLocalInput(e.target.value) : null,
+                                                })}
+                                                style={{ colorScheme: 'dark' }}
+                                                className="input-field datetime-field w-full mt-1"
+                                            />
+                                            <p className="text-xs text-(--base-06) mt-1">
+                                                {editing.shareExpiresAt
+                                                    ? 'After this the link stops working. The tab itself stays.'
+                                                    : 'Empty means the link never expires.'}
+                                            </p>
+                                        </div>
+                                    )}
+                                    {editingSurfaceHasPage && !coreInfo?.tabProxyIsolationActive && (
+                                        <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
+                                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                            <span>
+                                                Share links are switched off on this platform: they need their own
+                                                origin (TAB_PROXY_PORT + TAB_PROXY_ORIGIN on Core) so a container
+                                                cannot reach the panel&apos;s session. Until an admin sets that up, the
+                                                standalone page answers &quot;not valid&quot; - the in-dashboard tab works either way.
+                                            </span>
+                                        </p>
                                     )}
                                 </>
                             )}

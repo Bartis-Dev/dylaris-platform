@@ -100,7 +100,14 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Failed to generate share token", http.StatusInternalServerError)
 		return
 	}
-	res, err := db.Exec(`UPDATE server_tabs SET share_token=$3 WHERE id=$1 AND server_id=$2`, tabID, serverID, tok)
+	// Rotating hands the owner a NEW link, so an expiry that has ALREADY run
+	// out is dropped with the slug it belonged to - keeping it would mint a
+	// link that is dead the moment it is copied, which reads as a broken
+	// button. A future expiry is the owner's live choice and survives.
+	res, err := db.Exec(`UPDATE server_tabs
+		SET share_token=$3,
+		    share_expires_at = CASE WHEN share_expires_at <= now() THEN NULL ELSE share_expires_at END
+		WHERE id=$1 AND server_id=$2`, tabID, serverID, tok)
 	if err != nil {
 		sendJSONError(w, "Failed to save share link", http.StatusInternalServerError)
 		return

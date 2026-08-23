@@ -425,19 +425,20 @@ input[type="number"] {
   box-shadow: 0 0 0 3px var(--accent-ghost);
 }
 
-/* ── Maintenance datetime picker (scoped) ──
+/* ── Datetime picker (opt-in) ──
    `color-scheme: dark` is set inline on the input itself and already makes the
    native datetime-local popup render dark instead of the browser's light default.
    This rule only makes the picker icon glyph readable against the dark input.
-   Scoped to .maintenance-datetime - intentionally not applied to every
-   datetime-local input app-wide. */
-.maintenance-datetime::-webkit-calendar-picker-indicator {
+   Opt-in via .datetime-field rather than applied to every datetime-local input
+   app-wide - was .maintenance-datetime until the custom-tab share-link expiry
+   became the second field that needs exactly this. */
+.datetime-field::-webkit-calendar-picker-indicator {
   filter: invert(0.8);
   opacity: 0.8;
   cursor: pointer;
   transition: opacity 0.15s ease;
 }
-.maintenance-datetime::-webkit-calendar-picker-indicator:hover {
+.datetime-field::-webkit-calendar-picker-indicator:hover {
   opacity: 1;
 }
 

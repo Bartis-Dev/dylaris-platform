@@ -32,6 +32,10 @@ export interface ServerTabInput {
     targetPath?: string;
     surface?: string;
     visibility?: string;
+    // Three states, which is why it is optional AND accepts "": omitted keeps
+    // whatever is stored, "" clears the expiry, an RFC3339 instant sets it.
+    // Core cannot read the difference out of JSON null, so "" is the clear.
+    shareExpiresAt?: string;
 }
 
 export async function listServerTabs(serverId: number): Promise<ServerTab[]> {

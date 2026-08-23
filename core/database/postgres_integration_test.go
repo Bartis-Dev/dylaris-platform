@@ -617,3 +617,108 @@ func TestIntegrationSFTPAccessCoversAccountGrants(t *testing.T) {
 		}
 	})
 }
+
+// TestIntegrationShareExpiryWrites covers the two statements that gave
+// server_tabs.share_expires_at a writer at last. The column had been readable,
+// gated on and rendered since it was added, and no code path ever set it - so
+// a share link could not expire and the 410 branch behind it was unreachable.
+//
+// Both statements are here because both are things only Postgres can answer:
+// whether an untyped nil lands as NULL through the $n::timestamptz cast (the
+// same parameter-typing class as the four defects in this file's header), and
+// whether the rotate statement's CASE compares against now() the way the
+// handler assumes. The SQL mirrors handlers.Update / handlers.RotateShareLink;
+// if those change, this is the test that has to be looked at with them.
+func TestIntegrationShareExpiryWrites(t *testing.T) {
+	db, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	var tabID int
+	if err := db.QueryRow(`INSERT INTO server_tabs
+		(server_id, name, icon, url, position, enabled, open_in_panel,
+		 mode, target_port, target_path, surface, visibility, share_token)
+		VALUES ($1,'expiry','layout-grid','',0,true,true,'proxied',8100,'/','page','private',$2)
+		RETURNING id`, f.server.ID, uniqueName("sh_")).Scan(&tabID); err != nil {
+		t.Fatalf("insert tab: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM server_tabs WHERE id=$1`, tabID) })
+
+	// The patch statement, reduced to the one column under test - the rest is
+	// COALESCE and cannot express "clear", which is the whole reason this
+	// column needs the set-flag.
+	patch := func(t *testing.T, set bool, value interface{}) {
+		t.Helper()
+		if _, err := db.Exec(`UPDATE server_tabs SET
+			share_expires_at = CASE WHEN $2::bool THEN $3::timestamptz ELSE share_expires_at END
+			WHERE id=$1`, tabID, set, value); err != nil {
+			t.Fatalf("patch(set=%v, value=%v): %v", set, value, err)
+		}
+	}
+	read := func(t *testing.T) sql.NullTime {
+		t.Helper()
+		var got sql.NullTime
+		if err := db.QueryRow(`SELECT share_expires_at FROM server_tabs WHERE id=$1`, tabID).Scan(&got); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return got
+	}
+
+	want := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+
+	t.Run("set stores the instant", func(t *testing.T) {
+		patch(t, true, want)
+		got := read(t)
+		if !got.Valid {
+			t.Fatal("share_expires_at is NULL after a set")
+		}
+		if !got.Time.UTC().Truncate(time.Second).Equal(want) {
+			t.Errorf("share_expires_at = %s, want %s", got.Time.UTC(), want)
+		}
+	})
+
+	t.Run("an untouched field keeps it", func(t *testing.T) {
+		patch(t, false, nil)
+		if got := read(t); !got.Valid {
+			t.Error("a PATCH that never mentioned the expiry cleared it")
+		}
+	})
+
+	t.Run("an explicit clear nulls it", func(t *testing.T) {
+		patch(t, true, nil)
+		if got := read(t); got.Valid {
+			t.Errorf("share_expires_at = %s after a clear, want NULL", got.Time)
+		}
+	})
+
+	// The rotate statement: a new slug must not arrive already dead, but a
+	// deadline the owner set for the future is their live choice.
+	rotate := func(t *testing.T) {
+		t.Helper()
+		if _, err := db.Exec(`UPDATE server_tabs
+			SET share_token=$2,
+			    share_expires_at = CASE WHEN share_expires_at <= now() THEN NULL ELSE share_expires_at END
+			WHERE id=$1`, tabID, uniqueName("sh_")); err != nil {
+			t.Fatalf("rotate: %v", err)
+		}
+	}
+
+	t.Run("rotate drops an expiry that already passed", func(t *testing.T) {
+		patch(t, true, time.Now().Add(-time.Hour).UTC())
+		rotate(t)
+		if got := read(t); got.Valid {
+			t.Errorf("share_expires_at = %s, want NULL - rotating handed back a link that is already expired", got.Time)
+		}
+	})
+
+	t.Run("rotate keeps a future expiry", func(t *testing.T) {
+		patch(t, true, want)
+		rotate(t)
+		got := read(t)
+		if !got.Valid {
+			t.Fatal("rotating cleared a future expiry the owner had set")
+		}
+		if !got.Time.UTC().Truncate(time.Second).Equal(want) {
+			t.Errorf("share_expires_at = %s, want %s", got.Time.UTC(), want)
+		}
+	})
+}

@@ -56,6 +56,41 @@ type serverTabRequest struct {
 	TargetPath  string `json:"targetPath"`
 	Surface     string `json:"surface"`
 	Visibility  string `json:"visibility"`
+	// ShareExpiresAt is a POINTER because three states have to be tellable
+	// apart on a PATCH: absent (leave whatever is stored), "" (clear it, the
+	// link stops expiring) and an RFC3339 instant (set it). See
+	// parseShareExpiry.
+	ShareExpiresAt *string `json:"shareExpiresAt,omitempty"`
+}
+
+// parseShareExpiry turns the wire value into what the write should do.
+//
+// The column existed, three queries read it, Public answered 410 on it and the
+// standalone page rendered an "expired" card - and NOTHING ever wrote it, so a
+// share link could not expire and none of that could fire. This is the missing
+// write.
+//
+// set=false means the caller did not mention the field, which on a PATCH means
+// "keep". An explicit empty string is how a caller says "no expiry" - JSON null
+// decodes to the same nil a missing field does, so it cannot carry that meaning.
+// A time already in the past is refused rather than stored: it would mint a link
+// that is dead on arrival, which reads as a broken feature, not as a choice.
+func parseShareExpiry(raw *string, now time.Time) (value interface{}, set bool, err error) {
+	if raw == nil {
+		return nil, false, nil
+	}
+	s := strings.TrimSpace(*raw)
+	if s == "" {
+		return nil, true, nil
+	}
+	t, perr := time.Parse(time.RFC3339, s)
+	if perr != nil {
+		return nil, false, errBadTabURL("share expiry must be an RFC3339 timestamp or empty")
+	}
+	if !t.After(now) {
+		return nil, false, errBadTabURL("share expiry must be in the future")
+	}
+	return t.UTC(), true, nil
 }
 
 // serverExists is a pure data-existence check: the route's RequireCap
@@ -225,6 +260,17 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		shareToken = tok
 	}
 
+	// An expiry only ever means anything alongside a share token; on any other
+	// tab the column stays NULL, which is what "never expires" already is.
+	shareExpires, _, eerr := parseShareExpiry(req.ShareExpiresAt, time.Now())
+	if eerr != nil {
+		sendJSONError(w, eerr.Error(), http.StatusBadRequest)
+		return
+	}
+	if shareToken == nil {
+		shareExpires = nil
+	}
+
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -244,10 +290,10 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var id int
 	err := db.QueryRow(`INSERT INTO server_tabs
 		(server_id, name, icon, url, position, enabled, open_in_panel, created_by,
-		 mode, target_port, target_path, surface, visibility, share_token)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+		 mode, target_port, target_path, surface, visibility, share_token, share_expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
 		serverID, req.Name, req.Icon, req.URL, req.Position, enabled, openInPanel, createdBy,
-		req.Mode, portArg, req.TargetPath, req.Surface, req.Visibility, shareToken,
+		req.Mode, portArg, req.TargetPath, req.Surface, req.Visibility, shareToken, shareExpires,
 	).Scan(&id)
 	if err != nil {
 		sendJSONError(w, "Failed to create tab", http.StatusInternalServerError)
@@ -362,6 +408,14 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.TargetPort != nil {
 		portArg = *req.TargetPort
 	}
+	// share_expires_at cannot ride on COALESCE like the rest: NULL is a
+	// LEGITIMATE value here ("never expires"), so "keep" and "clear" would be
+	// the same argument. The explicit set-flag is what tells them apart.
+	shareExpires, setExpiry, eerr := parseShareExpiry(req.ShareExpiresAt, time.Now())
+	if eerr != nil {
+		sendJSONError(w, eerr.Error(), http.StatusBadRequest)
+		return
+	}
 	res, err := db.Exec(`UPDATE server_tabs SET
 		name           = COALESCE(NULLIF($3, ''), name),
 		icon           = COALESCE(NULLIF($4, ''), icon),
@@ -373,7 +427,8 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		target_port    = COALESCE($10, target_port),
 		target_path    = COALESCE(NULLIF($11, ''), target_path),
 		surface        = COALESCE(NULLIF($12, ''), surface),
-		visibility     = COALESCE(NULLIF($13, ''), visibility)
+		visibility     = COALESCE(NULLIF($13, ''), visibility),
+		share_expires_at = CASE WHEN $14::bool THEN $15::timestamptz ELSE share_expires_at END
 		WHERE id=$1 AND server_id=$2`,
 		tabID, serverID,
 		strings.TrimSpace(req.Name),
@@ -386,6 +441,7 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		req.TargetPath,
 		req.Surface,
 		req.Visibility,
+		setExpiry, shareExpires,
 	)
 	if err != nil {
 		sendJSONError(w, "Failed to save tab", http.StatusInternalServerError)
