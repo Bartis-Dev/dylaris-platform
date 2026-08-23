@@ -210,7 +210,7 @@ func (s *PostgresStore) ListSolderPublishedBuilds(packID int) ([]models.PackBuil
 // ListPublicSolderPacks returns every pack that has a Solder slug and is neither
 // private nor hidden, alphabetically by internal name (the public Solder listing).
 func (s *PostgresStore) ListPublicSolderPacks() ([]models.Pack, error) {
-	rows, err := s.db.Query(`SELECT `+packCols+` FROM packs
+	rows, err := s.db.Query(`SELECT ` + packCols + ` FROM packs
 		WHERE solder_slug <> '' AND private = false AND hidden = false
 		ORDER BY internal_name ASC`)
 	if err != nil {

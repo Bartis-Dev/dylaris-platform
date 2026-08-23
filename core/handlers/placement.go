@@ -54,18 +54,18 @@ type PickNodeRequest struct {
 // addition. Score is "lower is better" — sum of relative load + spare-
 // disk-percent penalty + server-count tiebreaker.
 type NodeCandidate struct {
-	NodeID         int     `json:"nodeId"`
-	NodeName       string  `json:"nodeName"`
-	Available      bool    `json:"available"`
-	Reason         string  `json:"reason"`
-	Score          float64 `json:"score"`
-	AllocRAMMB     int64   `json:"allocRamMb"`
-	AllocCPU       float64 `json:"allocCpu"`
-	TotalRAMMB     int64   `json:"totalRamMb"`
-	TotalCPU       float64 `json:"totalCpu"`
-	OvercommitRAM  float64 `json:"overcommitRam"`
-	OvercommitCPU  float64 `json:"overcommitCpu"`
-	ServerCount    int     `json:"serverCount"`
+	NodeID        int     `json:"nodeId"`
+	NodeName      string  `json:"nodeName"`
+	Available     bool    `json:"available"`
+	Reason        string  `json:"reason"`
+	Score         float64 `json:"score"`
+	AllocRAMMB    int64   `json:"allocRamMb"`
+	AllocCPU      float64 `json:"allocCpu"`
+	TotalRAMMB    int64   `json:"totalRamMb"`
+	TotalCPU      float64 `json:"totalCpu"`
+	OvercommitRAM float64 `json:"overcommitRam"`
+	OvercommitCPU float64 `json:"overcommitCpu"`
+	ServerCount   int     `json:"serverCount"`
 }
 
 type PickNodeResponse struct {

@@ -20,11 +20,11 @@ import (
 //
 // Admins are never blocked — otherwise they couldn't turn maintenance off.
 type MaintenanceState struct {
-	Active       bool   `json:"active"`
-	Title        string `json:"title"`
-	Message      string `json:"message"`
-	ExpectedEnd  string `json:"expectedEnd"` // ISO timestamp; "" if not set
-	BlockLevel   string `json:"blockLevel"`
+	Active      bool   `json:"active"`
+	Title       string `json:"title"`
+	Message     string `json:"message"`
+	ExpectedEnd string `json:"expectedEnd"` // ISO timestamp; "" if not set
+	BlockLevel  string `json:"blockLevel"`
 }
 
 var defaultMaintenanceState = MaintenanceState{

@@ -14,21 +14,21 @@ import (
 // Server audit event types — kept in one block so producers and consumers
 // share a single vocabulary. New events get appended here.
 const (
-	ServerAuditEventPowerAction            = "power_action"
-	ServerAuditEventMemberInvited          = "member_invited"
-	ServerAuditEventMemberRemoved          = "member_removed"
-	ServerAuditEventMemberPermsChanged     = "member_perms_changed"
-	ServerAuditEventResourcesChanged       = "resources_changed"
-	ServerAuditEventNameChanged            = "name_changed"
-	ServerAuditEventSetup                  = "setup"
-	ServerAuditEventReinstall              = "reinstall"
-	ServerAuditEventSubServerDeleted       = "subserver_deleted"
-	ServerAuditEventSubServerSwitched      = "subserver_switched"
+	ServerAuditEventPowerAction        = "power_action"
+	ServerAuditEventMemberInvited      = "member_invited"
+	ServerAuditEventMemberRemoved      = "member_removed"
+	ServerAuditEventMemberPermsChanged = "member_perms_changed"
+	ServerAuditEventResourcesChanged   = "resources_changed"
+	ServerAuditEventNameChanged        = "name_changed"
+	ServerAuditEventSetup              = "setup"
+	ServerAuditEventReinstall          = "reinstall"
+	ServerAuditEventSubServerDeleted   = "subserver_deleted"
+	ServerAuditEventSubServerSwitched  = "subserver_switched"
 	// Deliberately has no producer: server_audit_events.server_id is
 	// ON DELETE CASCADE, so a row written while the server is being deleted is
 	// removed by the same statement. Recording a server deletion needs a log
 	// that outlives the server, not this one.
-	ServerAuditEventDeleted = "deleted"
+	ServerAuditEventDeleted                = "deleted"
 	ServerAuditEventForceOnChanged         = "audit_force_on_changed"
 	ServerAuditEventLoaderMetadataDeclared = "loader_metadata_declared"
 )

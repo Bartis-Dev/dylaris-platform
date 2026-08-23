@@ -15,16 +15,16 @@ import "time"
 // Capabilities live in JSONB so adding modpack.publish / server.power / etc.
 // needs no schema migration. Today only rcon.exec is honored server-side.
 type APIKey struct {
-	ID         int        `json:"id"`
-	UserID     string     `json:"userId"`
-	Name       string     `json:"name"`
-	KeyHash    string     `json:"-"`
+	ID         int         `json:"id"`
+	UserID     string      `json:"userId"`
+	Name       string      `json:"name"`
+	KeyHash    string      `json:"-"`
 	Scope      APIKeyScope `json:"scope"`
-	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
-	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
-	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
-	RatePerMin int        `json:"ratePerMin"`
-	CreatedAt  time.Time  `json:"createdAt"`
+	LastUsedAt *time.Time  `json:"lastUsedAt,omitempty"`
+	ExpiresAt  *time.Time  `json:"expiresAt,omitempty"`
+	RevokedAt  *time.Time  `json:"revokedAt,omitempty"`
+	RatePerMin int         `json:"ratePerMin"`
+	CreatedAt  time.Time   `json:"createdAt"`
 }
 
 type APIKeyScope struct {

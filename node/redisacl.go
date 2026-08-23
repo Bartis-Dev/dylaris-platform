@@ -26,7 +26,8 @@ func sftpAuthKey(nodeToken, username string) string {
 	return "sftp:auth:" + nodeToken + ":" + username
 }
 
-func aclNodeUsername(token string) string    { return "node-" + token }
+func aclNodeUsername(token string) string { return "node-" + token }
+
 // aclShipperUsername / aclShipperPassword are per SERVER, not per node.
 //
 // CROSS-MODULE: byte-identical to redisacl.ShipperUsername / ShipperPassword in

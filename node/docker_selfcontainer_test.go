@@ -68,9 +68,9 @@ func TestIsHex64(t *testing.T) {
 	}
 	bad := []string{
 		"",
-		good[:63],                // 63 chars
-		good + "0",               // 65 chars
-		strings.ToUpper(good),    // uppercase is not [0-9a-f]
+		good[:63],             // 63 chars
+		good + "0",            // 65 chars
+		strings.ToUpper(good), // uppercase is not [0-9a-f]
 		"761af55891deaea74c31be471091bae05a9bdf0237deb888a9ff9f9be1fac89g", // trailing g
 	}
 	for _, s := range bad {

@@ -56,12 +56,12 @@ type BackupRun struct {
 
 // BackupRestore records a restore attempt against an archived BackupRun.
 type BackupRestore struct {
-	ID            int        `json:"id"`
-	RunID         int        `json:"runId"`
-	ServerID      int        `json:"serverId"`
-	RequestedBy   *string    `json:"requestedBy,omitempty"`
-	RequestedAt   time.Time  `json:"requestedAt"`
-	CompletedAt   *time.Time `json:"completedAt,omitempty"`
-	Status        string     `json:"status"` // queued | running | success | failed
-	ErrorMessage  string     `json:"errorMessage"`
+	ID           int        `json:"id"`
+	RunID        int        `json:"runId"`
+	ServerID     int        `json:"serverId"`
+	RequestedBy  *string    `json:"requestedBy,omitempty"`
+	RequestedAt  time.Time  `json:"requestedAt"`
+	CompletedAt  *time.Time `json:"completedAt,omitempty"`
+	Status       string     `json:"status"` // queued | running | success | failed
+	ErrorMessage string     `json:"errorMessage"`
 }

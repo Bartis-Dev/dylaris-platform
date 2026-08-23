@@ -28,14 +28,14 @@ func NewServerModsHandler(state *AppState) *ServerModsHandler {
 }
 
 type installModRequest struct {
-	ProjectID    string `json:"projectId"`
-	ProjectSlug  string `json:"projectSlug"`
-	VersionID    string `json:"versionId"`
-	Title        string `json:"title"`
-	FileName     string `json:"fileName"`
-	DownloadURL  string `json:"downloadUrl"`
-	SHA512       string `json:"sha512"`
-	TargetDir    string `json:"targetDir"` // "mods" or "plugins" — derived from loader if empty
+	ProjectID   string `json:"projectId"`
+	ProjectSlug string `json:"projectSlug"`
+	VersionID   string `json:"versionId"`
+	Title       string `json:"title"`
+	FileName    string `json:"fileName"`
+	DownloadURL string `json:"downloadUrl"`
+	SHA512      string `json:"sha512"`
+	TargetDir   string `json:"targetDir"` // "mods" or "plugins" — derived from loader if empty
 }
 
 // modrinthAllowedHosts pins where we'll dispatch downloads from. Modrinth

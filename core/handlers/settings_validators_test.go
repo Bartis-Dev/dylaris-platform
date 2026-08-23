@@ -244,9 +244,9 @@ func TestNormalizeTunnelSubnets(t *testing.T) {
 	}
 
 	bad := []string{
-		"10.20.0.0",      // no mask
+		"10.20.0.0", // no mask
 		"not-a-cidr",
-		"10.20.0.5/16",   // host address: the client routes the whole /16 anyway
+		"10.20.0.5/16", // host address: the client routes the whole /16 anyway
 		"10.20.0.0/16,junk",
 	}
 	for _, in := range bad {

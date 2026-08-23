@@ -13,8 +13,8 @@ import (
 // Entry represents a single error/warning log entry written to Redis.
 type Entry struct {
 	Timestamp string `json:"ts"`
-	Level     string `json:"level"`   // ERROR, WARN, INFO
-	Source    string `json:"source"`  // e.g. "gate:handler", "link:stream"
+	Level     string `json:"level"`  // ERROR, WARN, INFO
+	Source    string `json:"source"` // e.g. "gate:handler", "link:stream"
 	Message   string `json:"message"`
 }
 

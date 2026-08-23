@@ -18,8 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	pb "dylaris-proto/beam"
 	"dylaris-pkg/protocol"
+	pb "dylaris-proto/beam"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

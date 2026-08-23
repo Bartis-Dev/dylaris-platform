@@ -39,11 +39,11 @@ type setPATRequest struct {
 }
 
 type patStatus struct {
-	Success           bool       `json:"success"`
-	Connected         bool       `json:"connected"`
-	ModrinthUsername  string     `json:"modrinthUsername,omitempty"`
-	LastValidatedAt   *time.Time `json:"lastValidatedAt,omitempty"`
-	Message           string     `json:"message,omitempty"`
+	Success          bool       `json:"success"`
+	Connected        bool       `json:"connected"`
+	ModrinthUsername string     `json:"modrinthUsername,omitempty"`
+	LastValidatedAt  *time.Time `json:"lastValidatedAt,omitempty"`
+	Message          string     `json:"message,omitempty"`
 }
 
 // Status GET /api/me/modrinth-pat — returns whether the user has a PAT

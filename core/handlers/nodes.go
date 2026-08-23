@@ -247,9 +247,9 @@ func (h *NodeHandler) ConfigureNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name        string  `json:"name"`   // optional; keeps current name when empty
-		Region      string  `json:"region"` // required — clears the needs-configuration state
-		Tags        string  `json:"tags"`   // optional, comma-separated
+		Name        string  `json:"name"`        // optional; keeps current name when empty
+		Region      string  `json:"region"`      // required — clears the needs-configuration state
+		Tags        string  `json:"tags"`        // optional, comma-separated
 		DisplayName *string `json:"displayName"` // optional; nil = leave unchanged
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

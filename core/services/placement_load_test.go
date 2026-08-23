@@ -41,9 +41,9 @@ func TestNodeHasAllTagsCSV(t *testing.T) {
 	}{
 		{"eu, ssd, premium", "ssd", true},
 		{"eu, ssd", "ssd, premium", false},
-		{"eu,ssd", "", true},        // no requirement is satisfied by any node
-		{"", "ssd", false},          // no tags can't satisfy a requirement
-		{"SSD", "ssd", true},        // case-insensitive
+		{"eu,ssd", "", true},         // no requirement is satisfied by any node
+		{"", "ssd", false},           // no tags can't satisfy a requirement
+		{"SSD", "ssd", true},         // case-insensitive
 		{"a , b , c", "c , a", true}, // whitespace tolerant, order independent
 	}
 	for _, c := range cases {

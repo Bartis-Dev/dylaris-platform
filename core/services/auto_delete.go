@@ -33,11 +33,11 @@ func (s *AutoDeleteService) SetLeader(l leader.Election) { s.leader = l }
 // to avoid a services→handlers import cycle. The setting keys are the
 // stable contract between the two.
 type policySnapshot struct {
-	Enabled           bool
-	InactiveDays      int
-	HistoryGraceDays  int
-	WarningDays       int
-	Mode              string // "anonymize" | "hard_delete"
+	Enabled          bool
+	InactiveDays     int
+	HistoryGraceDays int
+	WarningDays      int
+	Mode             string // "anonymize" | "hard_delete"
 }
 
 func NewAutoDeleteService(s store.Store, frontendURL string) *AutoDeleteService {

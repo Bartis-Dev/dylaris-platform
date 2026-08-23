@@ -100,7 +100,7 @@ func TestWriteBeamHeader_TooLong(t *testing.T) {
 
 func TestReadStreamHeader_UnknownType(t *testing.T) {
 	var buf bytes.Buffer
-	buf.WriteByte(0xFF)          // invalid type byte
+	buf.WriteByte(0xFF)         // invalid type byte
 	buf.Write(make([]byte, 16)) // session ID bytes (to avoid EOF before type check)
 	_, _, _, _, _, err := ReadStreamHeader(&buf)
 	if err == nil {

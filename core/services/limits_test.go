@@ -14,7 +14,7 @@ type fakeLimitStore struct {
 }
 
 func (f *fakeLimitStore) GetUserBilling(string) (*store.UserBilling, error) { return f.billing, nil }
-func (f *fakeLimitStore) GetUserPlanID(string) (*int, error)               { return f.planID, nil }
+func (f *fakeLimitStore) GetUserPlanID(string) (*int, error)                { return f.planID, nil }
 func (f *fakeLimitStore) GetPlan(id int) (*store.Plan, error) {
 	if p, ok := f.plans[id]; ok {
 		return p, nil

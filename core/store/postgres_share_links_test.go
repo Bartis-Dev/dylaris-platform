@@ -122,7 +122,7 @@ func TestGetShareLinkByToken_Found(t *testing.T) {
 	s := NewPostgresStore(db)
 
 	now := time.Now()
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+shareLinkCols+`
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + shareLinkCols + `
 		FROM share_links WHERE token=$1`)).
 		WithArgs("tok-abc").
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -155,7 +155,7 @@ func TestGetShareLinkByToken_ReturnsRevokedAndExpired(t *testing.T) {
 	s := NewPostgresStore(db)
 
 	past := time.Now().Add(-24 * time.Hour)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+shareLinkCols+`
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + shareLinkCols + `
 		FROM share_links WHERE token=$1`)).
 		WithArgs("tok-old").
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -188,7 +188,7 @@ func TestGetShareLinkByToken_NotFound(t *testing.T) {
 	defer db.Close()
 	s := NewPostgresStore(db)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+shareLinkCols+`
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + shareLinkCols + `
 		FROM share_links WHERE token=$1`)).
 		WithArgs("unknown").
 		WillReturnError(sql.ErrNoRows)
@@ -214,7 +214,7 @@ func TestListShareLinksByBuild_HappyPath(t *testing.T) {
 	s := NewPostgresStore(db)
 
 	now := time.Now()
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+shareLinkCols+`
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + shareLinkCols + `
 		FROM share_links WHERE build_id=$1 ORDER BY created_at DESC`)).
 		WithArgs(42).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -246,7 +246,7 @@ func TestListShareLinksByBuild_Empty(t *testing.T) {
 	defer db.Close()
 	s := NewPostgresStore(db)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+shareLinkCols+`
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + shareLinkCols + `
 		FROM share_links WHERE build_id=$1 ORDER BY created_at DESC`)).
 		WithArgs(99).
 		WillReturnRows(sqlmock.NewRows([]string{

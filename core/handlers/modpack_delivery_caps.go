@@ -12,9 +12,9 @@ import (
 // deliveryCapabilities tells the panel which Solder delivery modes are usable
 // with the CURRENTLY SAVED storage config, so it can grey out the rest.
 type deliveryCapabilities struct {
-	CanPresign       bool              `json:"canPresign"`
-	PublicConfigured bool              `json:"publicConfigured"`
-	PublicReachable  *bool             `json:"publicReachable"`
+	CanPresign       bool  `json:"canPresign"`
+	PublicConfigured bool  `json:"publicConfigured"`
+	PublicReachable  *bool `json:"publicReachable"`
 	// PrivatePackCount is how many Solder-capable packs are private/hidden; the
 	// panel warns that public delivery would expose their files in the bucket.
 	PrivatePackCount int               `json:"privatePackCount"`

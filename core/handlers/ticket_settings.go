@@ -16,10 +16,10 @@ import (
 //     so anything else here would be a number the card displays and nothing
 //     enforces. 180 is the recommended value and the card says so.
 type TicketSettings struct {
-	CrossTeamVisibility      bool `json:"crossTeamVisibility"`
-	WatchersDefaultCanReply  bool `json:"watchersDefaultCanReply"`
-	AllowUsersToAddWatchers  bool `json:"allowUsersToAddWatchers"`
-	AuditRetentionDays       int  `json:"auditRetentionDays"`
+	CrossTeamVisibility     bool `json:"crossTeamVisibility"`
+	WatchersDefaultCanReply bool `json:"watchersDefaultCanReply"`
+	AllowUsersToAddWatchers bool `json:"allowUsersToAddWatchers"`
+	AuditRetentionDays      int  `json:"auditRetentionDays"`
 
 	// Attachment quotas (megabytes). 0 = unlimited.
 	MaxFileSizeMB   int `json:"maxFileSizeMb"`

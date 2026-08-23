@@ -2,12 +2,13 @@
 // behalf of users. Uses the per-user PAT obtained via the PAT mgmt handler.
 //
 // We only implement the endpoints we actually call:
-//   POST /v2/project              — create modpack project (first publish)
-//   POST /v2/version              — upload a new version (with .mrpack file)
-//   GET  /v2/project/{slug}/check — slug availability
-//   POST /v2/project/{id}/members — invite collaborator
-//   DEL  /v2/project/{id}/members/{user} — remove collaborator
-//   GET  /v2/project/{id}/members — list collaborators
+//
+//	POST /v2/project              — create modpack project (first publish)
+//	POST /v2/version              — upload a new version (with .mrpack file)
+//	GET  /v2/project/{slug}/check — slug availability
+//	POST /v2/project/{id}/members — invite collaborator
+//	DEL  /v2/project/{id}/members/{user} — remove collaborator
+//	GET  /v2/project/{id}/members — list collaborators
 package services
 
 import (
@@ -44,18 +45,18 @@ func NewModrinthClient(pat, userAgent string) *ModrinthClient {
 // --- Project ---
 
 type CreateProjectRequest struct {
-	Slug             string   `json:"slug"`
-	Title            string   `json:"title"`
-	Description      string   `json:"description"`
-	Body             string   `json:"body"`
-	ProjectType      string   `json:"project_type"`         // "modpack"
-	ClientSide       string   `json:"client_side"`          // "required"|"optional"|"unsupported"
-	ServerSide       string   `json:"server_side"`          // same
-	License          string   `json:"license_id"`           // SPDX slug; "arr" for all-rights-reserved
-	IsDraft          bool     `json:"is_draft"`             // true → not published, requires explicit publish
-	Categories       []string `json:"categories"`           // optional
-	AdditionalCats   []string `json:"additional_categories,omitempty"`
-	InitialVersions  []string `json:"initial_versions,omitempty"`
+	Slug            string   `json:"slug"`
+	Title           string   `json:"title"`
+	Description     string   `json:"description"`
+	Body            string   `json:"body"`
+	ProjectType     string   `json:"project_type"` // "modpack"
+	ClientSide      string   `json:"client_side"`  // "required"|"optional"|"unsupported"
+	ServerSide      string   `json:"server_side"`  // same
+	License         string   `json:"license_id"`   // SPDX slug; "arr" for all-rights-reserved
+	IsDraft         bool     `json:"is_draft"`     // true → not published, requires explicit publish
+	Categories      []string `json:"categories"`   // optional
+	AdditionalCats  []string `json:"additional_categories,omitempty"`
+	InitialVersions []string `json:"initial_versions,omitempty"`
 }
 
 type ProjectResponse struct {
@@ -106,18 +107,18 @@ func (c *ModrinthClient) CreateProject(ctx context.Context, req CreateProjectReq
 // --- Version ---
 
 type CreateVersionRequest struct {
-	Name           string   `json:"name"`
-	VersionNumber  string   `json:"version_number"`
-	Changelog      string   `json:"changelog"`
-	Dependencies   []string `json:"dependencies"` // empty for modpacks (deps live in mrpack)
-	GameVersions   []string `json:"game_versions"`
-	VersionType    string   `json:"version_type"` // "release"|"beta"|"alpha"
-	Loaders        []string `json:"loaders"`
-	Featured       bool     `json:"featured"`
-	Status         string   `json:"status"`    // "listed"|"draft"|"unlisted"
-	ProjectID      string   `json:"project_id"`
-	FileParts      []string `json:"file_parts"` // ["primary"]
-	PrimaryFile    string   `json:"primary_file"`
+	Name          string   `json:"name"`
+	VersionNumber string   `json:"version_number"`
+	Changelog     string   `json:"changelog"`
+	Dependencies  []string `json:"dependencies"` // empty for modpacks (deps live in mrpack)
+	GameVersions  []string `json:"game_versions"`
+	VersionType   string   `json:"version_type"` // "release"|"beta"|"alpha"
+	Loaders       []string `json:"loaders"`
+	Featured      bool     `json:"featured"`
+	Status        string   `json:"status"` // "listed"|"draft"|"unlisted"
+	ProjectID     string   `json:"project_id"`
+	FileParts     []string `json:"file_parts"` // ["primary"]
+	PrimaryFile   string   `json:"primary_file"`
 }
 
 type VersionResponse struct {

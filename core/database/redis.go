@@ -42,4 +42,3 @@ func InitRedis(cfg config.Config) (*redis.Client, error) {
 	log.Printf("Successfully connected to Redis at %s (DB: %d)", cfg.RedisAddr, cfg.RedisDB)
 	return client, nil
 }
-

@@ -14,7 +14,7 @@ func noop(w http.ResponseWriter, r *http.Request) {}
 // "annotated" route, and one bare route with no capability.
 func buildSyntheticRouter() *mux.Router {
 	r := mux.NewRouter()
-	r.HandleFunc("/healthz", noop).Methods("GET")                      // exempt
+	r.HandleFunc("/healthz", noop).Methods("GET")                       // exempt
 	r.HandleFunc("/api/servers/{id:[0-9]+}/files", noop).Methods("GET") // annotated (in required)
 	r.HandleFunc("/api/servers/{id:[0-9]+}/bare", noop).Methods("GET")  // missing capability
 	return r

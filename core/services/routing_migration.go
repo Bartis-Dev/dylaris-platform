@@ -222,14 +222,14 @@ func (m *RoutingMigrationService) redeployServer(ctx context.Context, srv models
 	nodeToken := srv.NodeAddress
 
 	type dockerCfg struct {
-		RAM             int     `json:"ram"`
-		CPULimit        float64 `json:"cpuLimit"`
-		DiskLimit       int64   `json:"diskLimit"`
-		Image           string  `json:"image"`
-		Command         string  `json:"command"`
-		ExtraJvmFlags   string  `json:"extraJvmFlags,omitempty"`
-		HostPort        int     `json:"hostPort"`
-		ContainerPort   int     `json:"containerPort"`
+		RAM           int     `json:"ram"`
+		CPULimit      float64 `json:"cpuLimit"`
+		DiskLimit     int64   `json:"diskLimit"`
+		Image         string  `json:"image"`
+		Command       string  `json:"command"`
+		ExtraJvmFlags string  `json:"extraJvmFlags,omitempty"`
+		HostPort      int     `json:"hostPort"`
+		ContainerPort int     `json:"containerPort"`
 	}
 	type serverCfg struct {
 		UUID            string    `json:"uuid"`

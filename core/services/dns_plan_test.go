@@ -414,9 +414,9 @@ func TestBuildDNSPlan_PrivateAddressesAreNotPublishable(t *testing.T) {
 		onlineEdge("e2", "eu", "94.130.98.3", "*.eu.dylaris.com"),
 	}
 	relays := []RelayAdvert{
-		{Name: "beam.dylaris.com", IP: "172.18.0.6"},  // gwbridge
-		{Name: "beam.dylaris.com", IP: "10.20.0.14"},  // overlay
-		{Name: "beam.dylaris.com", IP: "100.72.1.9"},  // CGNAT
+		{Name: "beam.dylaris.com", IP: "172.18.0.6"}, // gwbridge
+		{Name: "beam.dylaris.com", IP: "10.20.0.14"}, // overlay
+		{Name: "beam.dylaris.com", IP: "100.72.1.9"}, // CGNAT
 		{Name: "beam.dylaris.com", IP: "not-an-ip"},
 		{Name: "beam.dylaris.com", IP: "94.130.98.3"},
 	}

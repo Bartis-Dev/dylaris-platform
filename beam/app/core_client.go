@@ -183,8 +183,8 @@ func (c *CoreClient) GetBeamServers() ([]BeamServer, error) {
 // (the node's LAN IPs + public address on the pinned-TLS beam port). The hints are
 // present only when Core reports no relay; the app then dials the node directly.
 type BeamTicket struct {
-	Ticket string
-	LANIPs []string
+	Ticket  string
+	LANIPs  []string
 	LANPort string
 	// PublicAddr is the node's public host:port on the pinned-TLS beam port, used as
 	// the direct target when no LAN IP is reachable. Empty when Core has no public IP

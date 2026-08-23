@@ -42,10 +42,10 @@ type TicketMigrationHandler struct {
 }
 
 type restoreToken struct {
-	BackupName       string
-	UserID           string
-	IssuedAt         time.Time
-	MinExecuteAfter  time.Time
+	BackupName         string
+	UserID             string
+	IssuedAt           time.Time
+	MinExecuteAfter    time.Time
 	ConfirmationPhrase string
 }
 
@@ -116,8 +116,8 @@ func (h *TicketMigrationHandler) TestExternalConnection(w http.ResponseWriter, r
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"version":  version,
+		"success": true,
+		"version": version,
 	})
 }
 
@@ -154,9 +154,9 @@ func (h *TicketMigrationHandler) DryRunMigration(w http.ResponseWriter, r *http.
 		}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":       true,
-		"sourceCounts":  src,
-		"targetCounts":  dst,
+		"success":      true,
+		"sourceCounts": src,
+		"targetCounts": dst,
 	})
 }
 
@@ -444,10 +444,10 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 	h.tokensMu.Unlock()
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":              true,
-		"token":                token,
-		"cooldownSeconds":      int(restoreCooldown.Seconds()),
-		"confirmationPhrase":   t.ConfirmationPhrase,
+		"success":            true,
+		"token":              token,
+		"cooldownSeconds":    int(restoreCooldown.Seconds()),
+		"confirmationPhrase": t.ConfirmationPhrase,
 	})
 }
 

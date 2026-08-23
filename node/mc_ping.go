@@ -32,8 +32,8 @@ func PingMinecraftServer(address string, timeout time.Duration) (*SLPResponse, e
 
 	// Build handshake packet
 	var handshake bytes.Buffer
-	handshake.WriteByte(0x00) // Packet ID: Handshake
-	writeVarInt(&handshake, 764)    // Protocol version (1.20.2, widely compatible)
+	handshake.WriteByte(0x00)    // Packet ID: Handshake
+	writeVarInt(&handshake, 764) // Protocol version (1.20.2, widely compatible)
 	writeString(&handshake, host)
 	binary.Write(&handshake, binary.BigEndian, uint16(parsePort(port)))
 	writeVarInt(&handshake, 1) // Next state: Status

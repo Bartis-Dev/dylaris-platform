@@ -41,10 +41,10 @@ type AuthPolicy struct {
 	// Security questions. Master toggle gates the entire feature; the
 	// per-use-case requireds layer on top. Count is how many questions
 	// the user must pick + answer (3 is the de-facto standard).
-	SecurityQuestionsEnabled           bool `json:"securityQuestionsEnabled"`
-	SecurityQuestionsRequiredAtSignup  bool `json:"securityQuestionsRequiredAtSignup"`
-	SecurityQuestionsRequiredAtReset   bool `json:"securityQuestionsRequiredAtReset"`
-	SecurityQuestionsCount             int  `json:"securityQuestionsCount"`
+	SecurityQuestionsEnabled          bool `json:"securityQuestionsEnabled"`
+	SecurityQuestionsRequiredAtSignup bool `json:"securityQuestionsRequiredAtSignup"`
+	SecurityQuestionsRequiredAtReset  bool `json:"securityQuestionsRequiredAtReset"`
+	SecurityQuestionsCount            int  `json:"securityQuestionsCount"`
 
 	// Auto-delete of inactive users.
 	// InactiveDaysBeforeDelete is the dormancy threshold; users idle that
@@ -55,11 +55,11 @@ type AuthPolicy struct {
 	// delete (DB row gone) and anonymize (row kept, PII wiped) so admins
 	// can satisfy either DSGVO right-to-be-forgotten or audit-trail-keeps
 	// requirements depending on their compliance posture.
-	InactiveDeleteEnabled      bool   `json:"inactiveDeleteEnabled"`
-	InactiveDaysBeforeDelete   int    `json:"inactiveDaysBeforeDelete"`
-	HistoryGraceExtraDays      int    `json:"historyGraceExtraDays"`
-	DeleteEmailWarningDays     int    `json:"deleteEmailWarningDays"`
-	DeletionMode               string `json:"deletionMode"` // "anonymize" | "hard_delete"
+	InactiveDeleteEnabled    bool   `json:"inactiveDeleteEnabled"`
+	InactiveDaysBeforeDelete int    `json:"inactiveDaysBeforeDelete"`
+	HistoryGraceExtraDays    int    `json:"historyGraceExtraDays"`
+	DeleteEmailWarningDays   int    `json:"deleteEmailWarningDays"`
+	DeletionMode             string `json:"deletionMode"` // "anonymize" | "hard_delete"
 }
 
 var defaultAuthPolicy = AuthPolicy{

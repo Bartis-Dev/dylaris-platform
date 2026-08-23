@@ -4,11 +4,11 @@ import "time"
 
 // Content types (what a mods row represents inside a Solder-style pack).
 const (
-	ContentTypeMod         = "mod"
+	ContentTypeMod          = "mod"
 	ContentTypeResourcepack = "resourcepack"
-	ContentTypeShaderpack  = "shaderpack"
-	ContentTypeConfig      = "config"
-	ContentTypeOther       = "other"
+	ContentTypeShaderpack   = "shaderpack"
+	ContentTypeConfig       = "config"
+	ContentTypeOther        = "other"
 )
 
 // Per-build side (maps to Solder inclusion and mrpack env).

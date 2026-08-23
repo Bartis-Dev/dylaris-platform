@@ -190,11 +190,11 @@ func LoadConfig() (Config, error) {
 	tabProxyOrigin, tabProxyIsolationActive := resolveTabProxyOrigin(getEnv("TAB_PROXY_ORIGIN", ""), frontendURL)
 
 	cfg := Config{
-		APIPort:       getEnv("API_PORT", "25500"),
-		FrontendURL:   frontendURL,
-		JWTSecret:     getSecret("JWT_SECRET", "change-this-secret"),
-		AdminSecret:   getSecret("ADMIN_SECRET", ""),
-		ClusterSecret: getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
+		APIPort:        getEnv("API_PORT", "25500"),
+		FrontendURL:    frontendURL,
+		JWTSecret:      getSecret("JWT_SECRET", "change-this-secret"),
+		AdminSecret:    getSecret("ADMIN_SECRET", ""),
+		ClusterSecret:  getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
 		CoreID:         coreID,
 		GRPCPort:       grpcPort,
 		GRPCTLSEnabled: grpcTLSEnabled,
@@ -328,6 +328,7 @@ func UsesTimescale(dbType string) bool {
 //     *_FILE convention, so the value never has to live in plain env;
 //  2. the plain "<key>" env value;
 //  3. the fallback.
+//
 // An unreadable or empty *_FILE logs and falls through to the env/fallback so a
 // misconfigured secret path doesn't silently boot with a blank credential.
 func getSecret(key, fallback string) string {

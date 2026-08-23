@@ -173,7 +173,7 @@ func (s *PostgresStore) DeleteStorageManifest(id int) error {
 // ModpackStorageProvider has no List, and adding one is meaningless for
 // LocalProvider (which mirrors across N paths, so "the" key space is
 // ambiguous). The keys therefore come from the three DB columns that point at
-// storage. Blank values are skipped - all three columns DEFAULT ''.
+// storage. Blank values are skipped - all three columns DEFAULT ”.
 //
 // CONSEQUENCE, surfaced in the panel: verification of the modpacks data set is
 // authoritative for REFERENCED objects only. An orphan in storage that no DB

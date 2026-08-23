@@ -224,7 +224,7 @@ func TestIsLocalOrigin(t *testing.T) {
 		{"https://api.dylaris.com", false},
 		{"https://panel.example.com", false},
 		{"http://8.8.8.8", false},
-		{"http://172.32.0.1", false}, // just outside 172.16/12
+		{"http://172.32.0.1", false},  // just outside 172.16/12
 		{"http://169.254.1.1", false}, // link-local, not covered
 		{"null", false},               // opaque origin
 		{"", false},
