@@ -70,7 +70,16 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/console/stream":  "console.read",
 	"/api/servers/{id:[0-9]+}/console/command": "console.send",
 	"/api/servers/{id:[0-9]+}/rcon":            "rcon.exec",
-	"/api/servers/{id:[0-9]+}/rcon/config":     "config.read",
+
+	// Player management. players.read/players.manage were in the catalog and in
+	// four presets and enforced NOWHERE - the Players page ran on rcon.exec plus
+	// files.read, so delegating "ban someone" meant handing out every RCON
+	// command and the whole filesystem. These three are what makes the pair mean
+	// something; see handlers/players.go.
+	"/api/servers/{id:[0-9]+}/players/lists":  "players.read",
+	"/api/servers/{id:[0-9]+}/players/online": "players.read",
+	"/api/servers/{id:[0-9]+}/players/action": "players.manage",
+	"/api/servers/{id:[0-9]+}/rcon/config":    "config.read",
 
 	// Phase 4 Task 6: mods + custom tabs. GET+POST /mods share one template ->
 	// mods.read is the representative; the fine POST->mods.write lives at the
@@ -714,6 +723,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- RCON + API keys ---
 	// Panel-internal RCON. Power-class permission enforced inside the handler.
 	api.HandleFunc("/servers/{id:[0-9]+}/rcon", authHandler.AuthMiddleware(appState.Authz.RequireCap("rcon.exec")(rconHandler.ExecForUser))).Methods("POST")
+
+	// Player management: the roster and the three list files behind players.read,
+	// a fixed set of player commands behind players.manage. The point is that a
+	// moderator needs NEITHER rcon.exec (every command there is, including stop
+	// and save-off) NOR files.read (the whole server filesystem) to do the job.
+	playersHandler := handlers.NewPlayersHandler(appState)
+	api.HandleFunc("/servers/{id:[0-9]+}/players/lists", authHandler.AuthMiddleware(appState.Authz.RequireCap("players.read")(playersHandler.GetLists))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/players/online", authHandler.AuthMiddleware(appState.Authz.RequireCap("players.read")(playersHandler.GetOnline))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/players/action", authHandler.AuthMiddleware(appState.Authz.RequireCap("players.manage")(playersHandler.Action))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("config.read")(rconHandler.GetConfig))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/rcon/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("config.write")(rconHandler.SetConfig))).Methods("PUT")
 	// Per-user API key CRUD (panel surface). Phase 4 Task 21: OWNER

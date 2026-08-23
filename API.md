@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **472 routes** in 49 sections: 209 GET, 137 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
+- **475 routes** in 49 sections: 211 GET, 138 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
 - **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **320** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **323** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (67)
+- [/api/servers](#apiservers) (70)
 - [/api/settings](#apisettings) (31)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -650,6 +650,9 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/mods` | session | `mods.write` | - | `ServerModsHandler.Install` | queues a mod install onto the active sub-server. |
 | DELETE | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}` | session | `mods.delete` | - | `ServerModsHandler.Uninstall` | queues removal of one mod from the active sub-server. |
 | PATCH | `/api/servers/{id:[0-9]+}/name` | session | `server.settings.write` | - | `ServerHandler.UpdateServerName` | renames a server and records the old and new name in its audit trail. |
+| POST | `/api/servers/{id:[0-9]+}/players/action` | session | `players.manage` | - | `PlayersHandler.Action` | one of a fixed set of player commands. |
+| GET | `/api/servers/{id:[0-9]+}/players/lists` | session | `players.read` | - | `PlayersHandler.GetLists` | bans, whitelist and operators straight out of the active sub-server's JSON files. |
+| GET | `/api/servers/{id:[0-9]+}/players/online` | session | `players.read` | - | `PlayersHandler.GetOnline` | RCON `list`, so the roster needs players.read rather than the right to run any command. |
 | POST | `/api/servers/{id:[0-9]+}/power` | session | _in-handler_ | - | `ServerHandler.ServerPowerHandler` | Controls Start, Stop, Kill and Restart |
 | PUT | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.LinkServerToProxy` | Link a game server to a proxy server |
 | DELETE | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.UnlinkServerFromProxy` | Remove a server's proxy link |

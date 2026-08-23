@@ -112,6 +112,10 @@ export interface TabPermissions {
     setup: boolean;
     overview: boolean;
     power: boolean;
+    // Newer than the rest: it comes from the resolved players.read, not from a
+    // legacy invite blob, which has no such key. A legacy invite carrying
+    // `power` maps to players.read on the backend, so those keep the tab.
+    players: boolean;
     members: boolean;
     network: boolean;
     backups: boolean;

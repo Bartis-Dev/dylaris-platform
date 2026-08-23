@@ -568,7 +568,7 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
         { slug: 'network', icon: 'network',         label: 'Network',       disabled: tabDisabled('network') },
         // Players tab. RCON-driven (online list + ban/kick/op/whitelist).
         // Power-class permission since every action mutates server state.
-        { slug: 'players', icon: 'users-round',     label: 'Players',       disabled: isPendingSetup || (!isOwner && (!perms || !perms.power)) },
+        { slug: 'players', icon: 'users-round',     label: 'Players',       disabled: isPendingSetup || (!isOwner && (!perms || !perms.players)) },
         { slug: 'backups', icon: 'hard-drive',      label: 'Backups',       disabled: tabDisabled('backups') },
         // Audit tab. Owner + admin only; non-owners (even with
         // permission bundles) can't see who changed what on someone else's

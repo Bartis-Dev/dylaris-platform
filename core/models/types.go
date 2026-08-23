@@ -436,10 +436,16 @@ type TabPermissions struct {
 	Setup    bool `json:"setup"`
 	Overview bool `json:"overview"`
 	Power    bool `json:"power"`
-	Members  bool `json:"members"`
-	Network  bool `json:"network"`
-	Backups  bool `json:"backups"`
-	Inherit  bool `json:"inherit"`
+	// Players is newer than the rest and is deliberately absent from the legacy
+	// invite blob's stored shape: an old row decodes it false, and the resolved
+	// players.read is what turns it on (see handlers.tabPermissionCaps). A
+	// legacy invite carrying Power maps to players.read in MapLegacyInviteCaps,
+	// so those keep the tab they had.
+	Players bool `json:"players"`
+	Members bool `json:"members"`
+	Network bool `json:"network"`
+	Backups bool `json:"backups"`
+	Inherit bool `json:"inherit"`
 }
 
 // ServerInvite represents an invitation for a user to access a server

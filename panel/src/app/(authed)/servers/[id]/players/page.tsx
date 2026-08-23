@@ -9,30 +9,25 @@ import {
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
-    rconList, rconKick, rconBan, rconUnban, rconOp, rconDeop,
-    rconWhitelistAdd, rconWhitelistRemove, rconTell, getRconConfig,
-    parsePlayerList, friendlyRconError, type OnlinePlayer,
+    getRconConfig, parsePlayerList, friendlyRconError, type OnlinePlayer,
 } from '@/lib/api/rcon';
-import { getFileContent } from '@/lib/api';
+import {
+    getPlayerLists, getOnlinePlayers, playerAction,
+    type PlayerListEntry, type PlayerAction,
+} from '@/lib/api/players';
 import RconConfigCard from '@/components/RconConfigCard';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
 
-// Player Management. All operations are RCON underneath. Online
-// list is polled every 10s. Bans/whitelist/ops are sourced from the JSON
-// files in the active sub-server dir (banned-players.json / whitelist.json /
-// ops.json) read via the FileBrowser endpoint — RCON is used to mutate, the
-// files give us the authoritative view of the current state.
-
-interface JsonPlayerEntry {
-    uuid?: string;
-    name: string;
-    reason?: string;
-    source?: string;
-    created?: string;
-    expires?: string;
-    level?: number;
-    bypassesPlayerLimit?: boolean;
-}
+// Player Management. Everything here goes through /servers/{id}/players,
+// which is gated on players.read (the roster + the three list files) and
+// players.manage (a fixed set of player commands). That is deliberate: this
+// page used to call the raw RCON endpoint and the file browser, so doing this
+// job needed rcon.exec - every command the server has, `stop` included - plus
+// files.read over the whole filesystem.
+//
+// The online roster is polled every 10s. Bans/whitelist/ops come from the JSON
+// files MC keeps in the active sub-server dir, which stay the authoritative
+// view of current state; the actions mutate through the server.
 
 type Section = 'online' | 'bans' | 'whitelist' | 'ops' | 'rcon';
 
@@ -57,13 +52,16 @@ export default function ServerPlayersPage() {
     const [section, setSection] = useState<Section>('online');
     const [search, setSearch] = useState('');
     const [online, setOnline] = useState<OnlinePlayer[]>([]);
-    const [bans, setBans] = useState<JsonPlayerEntry[]>([]);
-    const [whitelist, setWhitelist] = useState<JsonPlayerEntry[]>([]);
-    const [ops, setOps] = useState<JsonPlayerEntry[]>([]);
+    const [bans, setBans] = useState<PlayerListEntry[]>([]);
+    const [whitelist, setWhitelist] = useState<PlayerListEntry[]>([]);
+    const [ops, setOps] = useState<PlayerListEntry[]>([]);
     const [loading, setLoading] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
     const [rconEnabled, setRconEnabled] = useState(false);
     const [rconLoaded, setRconLoaded] = useState(false);
+    // False once the RCON config read comes back 403: this viewer may manage
+    // players but not look at the server's configuration.
+    const [rconConfigVisible, setRconConfigVisible] = useState(true);
 
     const [confirm, setConfirm] = useState<{
         title: string;
@@ -85,12 +83,13 @@ export default function ServerPlayersPage() {
 
     // With RCON off, the effective section is always 'rcon' (the only usable
     // one); the user's chosen section resumes once RCON is enabled. This is
-    // also what gates the auto rconList below against a server that has been
+    // also what gates the auto roster poll below against a server that has been
     // enabled but not yet restarted: RconConfigCard only reports enabled=true
     // through onEnabledChange once it has confirmed (post-restart) that RCON
     // is actually reachable, so rconEnabled here stays false - and this
     // section stays forced to 'rcon' - until then.
     const effectiveSection: Section = rconEnabled ? section : 'rcon';
+    const visibleSections = rconConfigVisible ? SECTIONS : SECTIONS.filter(x => x.id !== 'rcon');
 
     // Load the RCON state once so we know whether to lock the other sections.
     // RconConfigCard also reports flips live via onEnabledChange below.
@@ -99,44 +98,27 @@ export default function ServerPlayersPage() {
         (async () => {
             const res = await getRconConfig(serverId);
             if (cancelled) return;
-            // Keep the RCON-dependent tabs locked when a restart is still pending
-            // (enabled in the DB but server.properties not yet re-read on a boot):
-            // treat it as not-yet-live, matching the comment above and surviving a
-            // page reload.
-            if (res.success) setRconEnabled(res.enabled && !res.restartRequired);
+            if (res.success) {
+                // Keep the RCON-dependent tabs locked when a restart is still
+                // pending (enabled in the DB but server.properties not yet
+                // re-read on a boot): treat it as not-yet-live, matching the
+                // comment above and surviving a page reload.
+                setRconEnabled(res.enabled && !res.restartRequired);
+            } else if ((res as { status?: number }).status === 403) {
+                // Reading the RCON CONFIG needs config.read, which is not the
+                // capability this page runs on any more. Someone holding only
+                // players.read would otherwise be locked out of the very
+                // sections they are allowed to see, by a call about a setting
+                // they are not allowed to look at. Hide the RCON section and
+                // let the player routes answer for themselves - they carry
+                // their own gate and their own "rcon not enabled" message.
+                setRconConfigVisible(false);
+                setRconEnabled(true);
+            }
             setRconLoaded(true);
         })();
         return () => { cancelled = true; };
     }, [serverId]);
-
-    // Bans, whitelist and operators are read from the sub-server's JSON files,
-    // which needs files.read - a DIFFERENT capability from the rcon.exec that
-    // every action on this page uses. Any failure used to come back as an empty
-    // array, so a member who may kick, ban and op but not read files was shown
-    // "nobody is banned" and "the whitelist is empty". Those are claims, and the
-    // panel did not know them to be true.
-    //
-    // 404 is the one failure that IS an empty list: a server nobody has ever
-    // banned on has no banned-players.json. Everything else is reported.
-    const loadJsonList = useCallback(async (
-        filename: string,
-    ): Promise<{ entries: JsonPlayerEntry[]; error?: string }> => {
-        if (!activeSub || !uuid) return { entries: [] };
-        const res = await getFileContent(`${activeSub}/${filename}`, uuid);
-        if (!res.success) {
-            if (res.status === 404) return { entries: [] };
-            if (res.status === 403) {
-                return { entries: [], error: `You do not have permission to read ${filename}. Managing players needs the file-read capability on this server as well.` };
-            }
-            return { entries: [], error: `${filename} could not be read: ${res.message || 'unknown error'}` };
-        }
-        try {
-            const parsed = JSON.parse(res.content || '[]');
-            return { entries: Array.isArray(parsed) ? parsed : [] };
-        } catch {
-            return { entries: [], error: `${filename} is not valid JSON - the server may be mid-write.` };
-        }
-    }, [activeSub, uuid]);
 
     // background=true is the 10s poll: it must not touch `loading`, or the whole
     // list is swapped for six skeleton cards every ten seconds. Only a first load
@@ -148,7 +130,7 @@ export default function ServerPlayersPage() {
         setActionError(null);
 
         if (effectiveSection === 'online') {
-            const res = await rconList(serverId);
+            const res = await getOnlinePlayers(serverId);
             if (!res.success) {
                 // A dial/connection error here means RCON was enabled but the
                 // server has not restarted since (or crashed after) - never
@@ -159,42 +141,46 @@ export default function ServerPlayersPage() {
             } else {
                 setOnline(parsePlayerList(res.output || ''));
             }
-        }
-        // setActionError, not a silent empty list: the banner above the table is
-        // the difference between "nobody is banned" and "you cannot see who is".
-        if (effectiveSection === 'bans') {
-            const { entries, error } = await loadJsonList('banned-players.json');
-            setBans(entries);
-            if (error) setActionError(error);
-        }
-        if (effectiveSection === 'whitelist') {
-            const { entries, error } = await loadJsonList('whitelist.json');
-            setWhitelist(entries);
-            if (error) setActionError(error);
-        }
-        if (effectiveSection === 'ops') {
-            const { entries, error } = await loadJsonList('ops.json');
-            setOps(entries);
-            if (error) setActionError(error);
+        } else {
+            // One call for all three lists. `unavailable` names any list the
+            // server could not read, which is a different fact from an empty
+            // one - showing "nobody is banned" for a list nobody could open is
+            // the failure this endpoint exists to make impossible.
+            const res = await getPlayerLists(serverId);
+            setBans(res.bans);
+            setWhitelist(res.whitelist);
+            setOps(res.ops);
+            if (!res.success) {
+                setActionError(res.message || 'Player lists could not be loaded.');
+            } else if (res.unavailable && res.unavailable[effectiveSection]) {
+                setActionError(`${effectiveSection}: ${res.unavailable[effectiveSection]}`);
+            }
         }
 
         setLoading(false);
-    }, [serverId, effectiveSection, loadJsonList]);
+    }, [serverId, effectiveSection]);
 
     // Section switches DO show the skeleton: the previous section's rows would
     // otherwise sit there looking like this section's data.
     useEffect(() => { refresh(); }, [refresh]);
 
     // Online list auto-poll every 10s. Other sections are file-backed and
-    // change only on user-initiated RCON commands — refresh on action.
+    // change only on user-initiated actions - refresh on action.
     useEffect(() => {
         if (effectiveSection !== 'online') return;
         const id = setInterval(() => refresh(true), 10_000);
         return () => clearInterval(id);
     }, [effectiveSection, refresh]);
 
-    const runRcon = async (label: string, fn: () => Promise<{ success: boolean; error?: string; output?: string }>) => {
-        const res = await fn();
+    // One entry point for every mutation: the panel names an ACTION and Core
+    // builds the command. Nothing here can construct one.
+    const run = async (
+        label: string,
+        action: PlayerAction,
+        player: string,
+        extra?: { reason?: string; message?: string },
+    ) => {
+        const res = await playerAction(serverId, action, player, extra);
         if (!res.success) {
             showToast(`${label}: ${friendlyRconError(res.error, 'failed')}`, false);
         } else {
@@ -209,7 +195,7 @@ export default function ServerPlayersPage() {
         setConfirm({
             title: `Kick ${name}?`,
             message: `Disconnect ${name} from the server. They can rejoin immediately.`,
-            onConfirm: () => runRcon('Kick', () => rconKick(serverId, name)),
+            onConfirm: () => run('Kick', 'kick', name),
         });
     };
     const handleBan = (name: string) => {
@@ -217,30 +203,30 @@ export default function ServerPlayersPage() {
             title: `Ban ${name}?`,
             message: `Permanently ban ${name}. Adds an entry to banned-players.json.`,
             danger: true,
-            onConfirm: () => runRcon('Ban', () => rconBan(serverId, name)),
+            onConfirm: () => run('Ban', 'ban', name),
         });
     };
     const handleUnban = (name: string) => {
         setConfirm({
             title: `Unban ${name}?`,
             message: `Remove ${name} from banned-players.json.`,
-            onConfirm: () => runRcon('Unban', () => rconUnban(serverId, name)),
+            onConfirm: () => run('Unban', 'unban', name),
         });
     };
-    const handleOp = (name: string) => runRcon('Op', () => rconOp(serverId, name));
+    const handleOp = (name: string) => run('Op', 'op', name);
     const handleDeop = (name: string) => {
         setConfirm({
             title: `De-op ${name}?`,
             message: `Removes operator privileges from ${name}.`,
-            onConfirm: () => runRcon('De-op', () => rconDeop(serverId, name)),
+            onConfirm: () => run('De-op', 'deop', name),
         });
     };
-    const handleWhitelistAdd = (name: string) => runRcon('Whitelist add', () => rconWhitelistAdd(serverId, name));
+    const handleWhitelistAdd = (name: string) => run('Whitelist add', 'whitelist_add', name);
     const handleWhitelistRemove = (name: string) => {
         setConfirm({
             title: `Remove ${name} from whitelist?`,
             message: `${name} will be kicked when whitelist is enforced.`,
-            onConfirm: () => runRcon('Whitelist remove', () => rconWhitelistRemove(serverId, name)),
+            onConfirm: () => run('Whitelist remove', 'whitelist_remove', name),
         });
     };
 
@@ -292,7 +278,7 @@ export default function ServerPlayersPage() {
 
             {/* Section strip */}
             <nav className="flex gap-1 shrink-0 border-b border-(--base-03)">
-                {SECTIONS.map(({ id, label, Icon }) => {
+                {visibleSections.map(({ id, label, Icon }) => {
                     const locked = !rconEnabled && RCON_DEPENDENT.includes(id);
                     const active = effectiveSection === id;
                     return (
@@ -395,8 +381,8 @@ export default function ServerPlayersPage() {
                                 />
                                 <div className="min-w-0 flex-1">
                                     <div className="text-sm font-medium text-(--base-09)">{p.name}</div>
-                                    {section === 'bans' && (p as JsonPlayerEntry).reason && (
-                                        <div className="text-xs text-(--base-06) truncate">Reason: {(p as JsonPlayerEntry).reason}</div>
+                                    {section === 'bans' && (p as PlayerListEntry).reason && (
+                                        <div className="text-xs text-(--base-06) truncate">Reason: {(p as PlayerListEntry).reason}</div>
                                     )}
                                 </div>
                                 {/* Per-section actions */}
@@ -501,7 +487,7 @@ export default function ServerPlayersPage() {
                                     const msg = tellPrompt.message.trim();
                                     const target = tellPrompt.player;
                                     setTellPrompt(null);
-                                    if (msg) await runRcon('Whisper', () => rconTell(serverId, target, msg));
+                                    if (msg) await run('Whisper', 'tell', target, { message: msg });
                                 }}
                                 className="btn btn-primary"
                                 disabled={!tellPrompt.message.trim()}

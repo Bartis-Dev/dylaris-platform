@@ -28,6 +28,10 @@ var tabPermissionCaps = []struct {
 	{"files.read", func(p *models.TabPermissions) { p.Files = true }},
 	{"config.read", func(p *models.TabPermissions) { p.Config = true }},
 	{"power.start", func(p *models.TabPermissions) { p.Power = true }},
+	// The Players tab used to open on power.start - "may start the server"
+	// decided "may see the player tools", because players.read gated nothing at
+	// all. It has its own routes now, so it gets its own bit.
+	{"players.read", func(p *models.TabPermissions) { p.Players = true }},
 	{"network.read", func(p *models.TabPermissions) { p.Network = true }},
 	{"overview.read", func(p *models.TabPermissions) { p.Overview = true }},
 	{"members.read", func(p *models.TabPermissions) { p.Members = true }},
