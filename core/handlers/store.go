@@ -267,6 +267,14 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// (scope "user:<uuid>"), not in user_billing: routes were already capped
 		// there by hand, and two caps for one thing is how they drift apart.
 		MaxRoutes json.RawMessage `json:"maxRoutes,omitempty"`
+		// TrafficCeilingGB is where the tenant's free traffic ends (decimal GB,
+		// 10^9) and TrafficBillingEnabled whether they have agreed to be charged
+		// past it. Core does not enforce either - the store owns the money and
+		// does the stopping. They are stored so the PANEL can warn the tenant
+		// while they can still act on it, which is the whole point of a ceiling
+		// that stops things rather than billing them.
+		TrafficCeilingGB      *int64 `json:"trafficCeilingGb,omitempty"`
+		TrafficBillingEnabled *bool  `json:"trafficBillingEnabled,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		sendJSONError(w, "Invalid request", http.StatusBadRequest)
@@ -300,6 +308,18 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		if setNodes || setLinks {
 			if err := h.state.Store.SetUserPurchasedEntitlement(req.UUID, nodes, setNodes, links, setLinks); err != nil {
 				sendJSONError(w, "Activated but failed to apply entitlement", http.StatusInternalServerError)
+				return
+			}
+		}
+		// Both or neither: a ceiling without the consent flag (or the reverse)
+		// would have the panel describe a deal that is only half known.
+		if req.TrafficCeilingGB != nil && req.TrafficBillingEnabled != nil {
+			ceiling := *req.TrafficCeilingGB
+			if ceiling < 0 {
+				ceiling = 0
+			}
+			if err := h.state.Store.SetUserTrafficBilling(req.UUID, ceiling, *req.TrafficBillingEnabled); err != nil {
+				sendJSONError(w, "Activated but failed to record the traffic deal", http.StatusInternalServerError)
 				return
 			}
 		}

@@ -249,6 +249,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyRconLogFilterSchema(db); err != nil {
 		return err
 	}
+	if err := applyTrafficBillingSchema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	return nil

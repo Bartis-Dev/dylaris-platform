@@ -38,10 +38,13 @@ func serverRouteReq(userID string, isAdmin bool, body map[string]interface{}) *h
 
 func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 	tests := []struct {
-		name       string
-		limits     map[string]*models.GatewayRouteLimit
-		existing   int
-		isAdmin    bool
+		name     string
+		limits   map[string]*models.GatewayRouteLimit
+		existing int
+		isAdmin  bool
+		// domain defaults to one of OURS. Set it to a domain we do not operate to
+		// exercise the exemption.
+		domain     string
 		wantStatus int
 		wantCreate bool
 	}{
@@ -88,6 +91,25 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 			wantStatus: http.StatusCreated,
 			wantCreate: true,
 		},
+		{
+			// The allowance rations OUR namespace. Nine held addresses against a
+			// cap of one is as over as it gets, and it still must not stop a
+			// domain the customer owns - that one costs the allowance nothing.
+			name:       "a full allowance does not block the customer's own domain",
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 1}},
+			existing:   9,
+			domain:     "survival.theirown.net",
+			wantStatus: http.StatusCreated,
+			wantCreate: true,
+		},
+		{
+			// "Disabled" is an operator stopping this tenant, not a full
+			// allowance, so it holds on every domain including their own.
+			name:       "a disabled tenant is stopped on their own domain too",
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 0}},
+			domain:     "survival.theirown.net",
+			wantStatus: http.StatusForbidden,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,13 +118,21 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 				seedLinkRoute(t, rdb, "held"+string(rune('a'+i))+".example.com",
 					services.GatewayRoute{OwnerID: linkRouteUserID, CoreOwned: true})
 			}
-			fs := &linkRouteFakeStore{routeLimits: tc.limits, settings: map[string]string{}}
+			// example.com is ours here: the cap only counts addresses in our own
+			// namespace, so without this the fixtures would sail past every limit.
+			fs := &linkRouteFakeStore{routeLimits: tc.limits, settings: map[string]string{
+				services.HosterDomainsSettingKey: `[{"domain":"example.com","validation":"dns"}]`,
+			}}
 			gw := &linkRouteFakeGateway{}
 			h := newLinkRouteHandler(fs, gw, rdb)
 
+			domain := tc.domain
+			if domain == "" {
+				domain = "new.example.com"
+			}
 			rec := httptest.NewRecorder()
 			h.CreateServerRoute(rec, serverRouteReq(linkRouteUserID, tc.isAdmin, map[string]interface{}{
-				"domain": "new.example.com", "targetPort": 25565,
+				"domain": domain, "targetPort": 25565,
 			}))
 
 			if rec.Code != tc.wantStatus {

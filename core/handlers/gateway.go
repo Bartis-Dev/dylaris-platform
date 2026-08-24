@@ -408,14 +408,18 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// Admins are exempt. The cap is a tenant allowance, and an admin registering
 	// the platform's own routes must not be blocked by user_default - the same
 	// asymmetry resolveRouteDomain already applies to the reserved-name list.
+	//
+	// The cap counts only addresses on OUR domains, matching CreateLinkRoute and
+	// the over-limit sweep. A tenant who points their own domain at us is not
+	// spending anything we ration.
 	if !IsAdmin(r) {
 		if limit, has := h.effectiveRouteLimit(userID); has {
 			if limit <= 0 {
 				http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
 				return
 			}
-			if h.countOwnerRoutes(userID) >= limit {
-				http.Error(w, fmt.Sprintf("Route limit reached (%d)", limit), http.StatusForbidden)
+			if services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && h.countOwnerRoutes(userID) >= limit {
+				http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead - that is unlimited.", limit), http.StatusForbidden)
 				return
 			}
 		}

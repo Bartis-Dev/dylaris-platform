@@ -38,12 +38,19 @@ type UserBilling struct {
 	// Separate from GraceUntil on purpose: being over a cap and being behind on
 	// payment are different problems with different clocks.
 	OverLimitSince *time.Time `json:"overLimitSince,omitempty"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	// TrafficCeilingGB is where the tenant's free traffic ends, in DECIMAL GB
+	// (10^9), and TrafficBillingEnabled whether they have agreed to be charged
+	// past it. Both are told to us by the store and are never decided here - Core
+	// only reads them to warn the tenant before the store stops them. Zero /
+	// false is what a self-hosted install with no store reads, and shows nothing.
+	TrafficCeilingGB      int64     `json:"trafficCeilingGb,omitempty"`
+	TrafficBillingEnabled bool      `json:"trafficBillingEnabled,omitempty"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, updated_at`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, updated_at`
 
 // SetUserOverLimitSince stamps (or clears, with nil) when a tenant was first seen
 // over a purchased cap. Touches ONLY that column: the row also carries the
@@ -87,7 +94,8 @@ func scanUserBilling(row interface {
 	var meExp, meAt, overLimit sql.NullTime
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
 		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb,
-		&meKind, &meExp, &meAt, &meBy, &overLimit, &b.UpdatedAt); err != nil {
+		&meKind, &meExp, &meAt, &meBy, &overLimit,
+		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if overLimit.Valid {

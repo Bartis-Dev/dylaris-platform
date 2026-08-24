@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { getMyBilling, BillingStatus } from '@/lib/api/billing';
+import { getMyBilling, BillingStatus, MyTrafficStatus } from '@/lib/api/billing';
 import { getMyUsage, EntitlementState } from '@/lib/api/usage';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
@@ -17,11 +17,17 @@ import { AlertTriangle, ArrowRight } from 'lucide-react';
 // answer that is structurally always "active" - and the one path that could
 // have made it say otherwise would have shown a self-hoster a pay-now bar with
 // nowhere to pay.
+// TRAFFIC_WARN_PCT is where the amber warning starts. 80% leaves a fifth of the
+// month's allowance to notice it and act, which for a server that is busy enough
+// to get here is a day or two - not the hours a 95% threshold would give.
+const TRAFFIC_WARN_PCT = 80;
+
 export default function BillingBanner() {
     const { featureFlags } = useAppData();
     const [status, setStatus] = useState<BillingStatus | null>(null);
     const [graceUntil, setGraceUntil] = useState<string | null>(null);
     const [paymentUrl, setPaymentUrl] = useState('');
+    const [traffic, setTraffic] = useState<MyTrafficStatus | null>(null);
     const [overLimit, setOverLimit] = useState<EntitlementState | null>(null);
 
     useEffect(() => {
@@ -33,6 +39,7 @@ export default function BillingBanner() {
             setStatus(res.status || null);
             setGraceUntil(res.graceUntil || null);
             setPaymentUrl(res.paymentUrl || '');
+            setTraffic(res.traffic || null);
         };
         load();
         const t = setInterval(load, 5 * 60 * 1000);
@@ -74,7 +81,62 @@ export default function BillingBanner() {
     }
 
     if (!featureFlags.store) return null;
-    if (!status || status === 'active') return null;
+
+    // Traffic outranks dunning when the ceiling has actually been reached: at that
+    // point the tenant IS stopped, and telling them it is about non-payment sends
+    // someone who has paid perfectly well off to pay again. The store stops them
+    // with the same suspend action the dunning path uses, so the reason cannot be
+    // read off the status - it is read off the number that caused it.
+    const trafficStopped = !!traffic && !traffic.billingEnabled && traffic.pct >= 100;
+    if (trafficStopped) {
+        const inner = (
+            <div className="flex items-center justify-center gap-3 bg-(--error) text-white px-4 py-2.5 text-sm font-medium shadow-md">
+                <AlertTriangle size={18} className="shrink-0" />
+                <span>
+                    Your services are stopped: you have used{' '}
+                    <strong>{traffic!.usedGb} GB</strong> of the {traffic!.ceilingGb} GB your
+                    subscription covers, and metered billing is off, so we stopped rather than
+                    charging you. Turn metered billing on to start again. Nothing is deleted.
+                </span>
+                {paymentUrl && (
+                    <span className="inline-flex items-center gap-1 font-semibold underline underline-offset-2 whitespace-nowrap">
+                        Turn it on <ArrowRight size={15} />
+                    </span>
+                )}
+            </div>
+        );
+        return paymentUrl
+            ? <a href={paymentUrl} target="_blank" rel="noreferrer" className="block shrink-0 hover:brightness-110 transition-[filter]">{inner}</a>
+            : <div className="shrink-0">{inner}</div>;
+    }
+
+    if (!status || status === 'active') {
+        // Approaching the ceiling, with time left to act. Amber rather than red:
+        // nothing has happened yet, and a red bar that stays red for a week is a
+        // bar people stop reading.
+        if (traffic && !traffic.billingEnabled && traffic.pct >= TRAFFIC_WARN_PCT) {
+            const inner = (
+                <div className="flex items-center justify-center gap-3 bg-(--warning) text-black px-4 py-2.5 text-sm font-medium shadow-md">
+                    <AlertTriangle size={18} className="shrink-0" />
+                    <span>
+                        You have used <strong>{traffic.pct}%</strong> of the traffic your
+                        subscription covers ({traffic.usedGb} of {traffic.ceilingGb} GB). Metered
+                        billing is off, so at 100% your servers and routing STOP rather than being
+                        billed. Turn metered billing on to keep running.
+                    </span>
+                    {paymentUrl && (
+                        <span className="inline-flex items-center gap-1 font-semibold underline underline-offset-2 whitespace-nowrap">
+                            Turn it on <ArrowRight size={15} />
+                        </span>
+                    )}
+                </div>
+            );
+            return paymentUrl
+                ? <a href={paymentUrl} target="_blank" rel="noreferrer" className="block shrink-0 hover:brightness-110 transition-[filter]">{inner}</a>
+                : <div className="shrink-0">{inner}</div>;
+        }
+        return null;
+    }
 
     const suspended = status === 'suspended';
     const message = suspended

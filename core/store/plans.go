@@ -207,6 +207,23 @@ func (s *PostgresStore) SetUserPurchasedEntitlement(userID string, maxNodes *int
 	return err
 }
 
+// SetUserTrafficBilling records what the store has decided about this tenant's
+// traffic: where their free allowance ends and whether they have agreed to be
+// charged past it. Touches ONLY those two columns - the row also carries the
+// payment status and every limit override, and a provision call must not rewrite
+// either. Core never decides these; it reads them to warn the tenant.
+func (s *PostgresStore) SetUserTrafficBilling(userID string, ceilingGB int64, enabled bool) error {
+	_, err := s.db.Exec(`
+		INSERT INTO user_billing (user_id, traffic_ceiling_gb, traffic_billing_enabled, updated_at)
+		VALUES ($1,$2,$3,NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			traffic_ceiling_gb      = $2,
+			traffic_billing_enabled = $3,
+			updated_at              = NOW()`,
+		userID, ceilingGB, enabled)
+	return err
+}
+
 // CountNodesByOwner returns how many nodes a tenant owns (for the max_nodes gate).
 func (s *PostgresStore) CountNodesByOwner(ownerID string) (int, error) {
 	var n int

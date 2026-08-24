@@ -39,8 +39,21 @@ export interface UserBillingAdmin {
     message?: string;
 }
 
+// MyTrafficStatus is how close the tenant is to the point where their traffic
+// stops being free. Absent (undefined) on a self-hosted install, where nothing is
+// metered and there is nothing to warn about.
+export interface MyTrafficStatus {
+    usedGb: number;
+    ceilingGb: number;
+    // Uncapped upward: someone at 300% is shown 300%, not a reassuring 100%.
+    pct: number;
+    // false means reaching the ceiling STOPS their services instead of billing
+    // them - which is the part the banner has to say out loud.
+    billingEnabled: boolean;
+}
+
 // getMyBilling returns the caller's lifecycle state for the banner.
-export async function getMyBilling(): Promise<{ success: boolean; status?: BillingStatus; graceUntil?: string | null; paymentUrl?: string }> {
+export async function getMyBilling(): Promise<{ success: boolean; status?: BillingStatus; graceUntil?: string | null; paymentUrl?: string; traffic?: MyTrafficStatus | null }> {
     try {
         const res = await fetch(`${API_URL}/me/billing`, { headers: getAuthHeader() });
         return handleResponse(res) as any;

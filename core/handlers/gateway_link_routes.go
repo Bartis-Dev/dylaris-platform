@@ -55,14 +55,25 @@ func (h *GatewayHandler) effectiveRouteLimit(userID string) (int, bool) {
 	return 0, false
 }
 
+// countOwnerRoutes counts the tenant's addresses ON OUR DOMAINS. Routes on a
+// domain the customer brought themselves are not counted and not capped: we hand
+// out subdomains from a namespace that can run out, and a CNAME from their own
+// domain costs us nothing to allow. See services.DomainIsOurs.
 func (h *GatewayHandler) countOwnerRoutes(userID string) int {
+	bases := h.ourBaseDomains()
 	n := 0
 	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
-		if rt.OwnerID == userID {
+		if rt.OwnerID == userID && services.DomainIsOurs(rt.Domain, bases) {
 			n++
 		}
 	}
 	return n
+}
+
+// ourBaseDomains is the hoster list the route cap is measured against.
+func (h *GatewayHandler) ourBaseDomains() []string {
+	raw, _ := h.state.Store.GetSetting(services.HosterDomainsSettingKey)
+	return services.HosterBaseDomains(raw)
 }
 
 // resolveOwnedLinkToken confirms the caller owns the link kit identified by
@@ -123,16 +134,13 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Per-user route limit (0 with an explicit override = disabled).
-	if limit, has := h.effectiveRouteLimit(userID); has {
-		if limit <= 0 {
-			http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
-			return
-		}
-		if h.countOwnerRoutes(userID) >= limit {
-			http.Error(w, fmt.Sprintf("Route limit reached (%d)", limit), http.StatusForbidden)
-			return
-		}
+	// Route creation switched off for this account is an operator decision about
+	// the tenant, not about a domain, so it is answered before anything else -
+	// and before any input validation can turn it into a confusing 400.
+	limit, hasLimit := h.effectiveRouteLimit(userID)
+	if hasLimit && limit <= 0 {
+		http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
+		return
 	}
 
 	finalDomain, err := h.resolveRouteDomain(&struct {
@@ -147,6 +155,14 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	}, IsAdmin(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// The allowance itself can only be spent once we know whose domain this is: a
+	// route the tenant points at us from their OWN domain costs the allowance
+	// nothing, so refusing it on a full one would deny something we do not ration.
+	if hasLimit && services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && h.countOwnerRoutes(userID) >= limit {
+		http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead - that is unlimited.", limit), http.StatusForbidden)
 		return
 	}
 

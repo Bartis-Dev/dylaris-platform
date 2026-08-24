@@ -104,6 +104,7 @@ type Store interface {
 	SetUserPlan(userID string, planID *int) error
 	SetUserLimitOverrides(userID string, maxNodes, maxLinks, trafficEdge, trafficRelay, trafficCombined *int64) error
 	SetUserPurchasedEntitlement(userID string, maxNodes *int64, setNodes bool, maxLinks *int64, setLinks bool) error
+	SetUserTrafficBilling(userID string, ceilingGB int64, enabled bool) error
 	CountNodesByOwner(ownerID string) (int, error)
 	CountLinkKitsByOwner(ownerID string) (int, error)
 	CountNodeWarpKeysByOwner(ownerID string) (int, error)

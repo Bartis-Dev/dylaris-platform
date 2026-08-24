@@ -148,6 +148,13 @@ func baseLinkRouteBody() map[string]interface{} {
 func baseLinkRouteStore() *linkRouteFakeStore {
 	return &linkRouteFakeStore{
 		warpKeys: []store.WarpAPIKey{{NodeID: "link-abc", OwnerID: linkRouteUserID}},
+		// example.com is OURS in these tests, which is what makes the route cap
+		// apply to the fixtures at all: the cap counts only addresses in our own
+		// namespace, so a fixture on a domain we do not operate would sail past
+		// every limit and prove nothing.
+		settings: map[string]string{
+			services.HosterDomainsSettingKey: `[{"domain":"example.com","validation":"dns"}]`,
+		},
 	}
 }
 
@@ -320,6 +327,29 @@ func TestCreateLinkRoute_RouteCap(t *testing.T) {
 		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 1}}
 		rdb := newLinkRouteRedis(t)
 		seedLinkRoute(t, rdb, "someone-elses.example.com", services.GatewayRoute{CoreOwned: true, OwnerID: "other-user"})
+		gw := &linkRouteFakeGateway{}
+		h := newLinkRouteHandler(fs, gw, rdb)
+		rec := httptest.NewRecorder()
+		h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, baseLinkRouteBody()))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	// The cap rations OUR namespace, so a route the tenant holds on a domain they
+	// own themselves must not fill it. This is the half that decides whether the
+	// allowance prices what we supply or what the customer already owns.
+	//
+	// The mirror case - CREATING a route on a custom domain while the allowance
+	// is full - is not driven here on purpose: that path runs the ownership gate,
+	// which needs a claim store these fakes do not have. What it would prove
+	// beyond this test is only that DomainIsOurs says no, which is tested
+	// directly in services.
+	t.Run("routes on their own domain do not fill the allowance", func(t *testing.T) {
+		fs := baseLinkRouteStore()
+		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 1}}
+		rdb := newLinkRouteRedis(t)
+		seedLinkRoute(t, rdb, "survival.theirown.net", services.GatewayRoute{CoreOwned: true, OwnerID: linkRouteUserID})
 		gw := &linkRouteFakeGateway{}
 		h := newLinkRouteHandler(fs, gw, rdb)
 		rec := httptest.NewRecorder()

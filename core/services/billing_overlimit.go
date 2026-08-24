@@ -100,9 +100,16 @@ func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID str
 	}
 	// Routes live in Redis, not the database - they are gateway data plane state.
 	// With no Redis there is no route plane, so there is nothing to be over.
+	//
+	// Only addresses on OUR domains count, exactly as the two create paths count
+	// them. If this counted custom domains too, a tenant could create a route the
+	// panel allowed and then be cut off by this sweep for holding it - the guard
+	// one door takes and its sibling does not.
 	if s.redis != nil {
+		raw, _ := s.store.GetSetting(HosterDomainsSettingKey)
+		bases := HosterBaseDomains(raw)
 		for _, rt := range GetRoutesFromRedis(ctx, s.redis) {
-			if rt.OwnerID == userID {
+			if rt.OwnerID == userID && DomainIsOurs(rt.Domain, bases) {
 				u.routes++
 			}
 		}

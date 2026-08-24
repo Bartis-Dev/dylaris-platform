@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"dylaris-core/services"
+	"dylaris-core/store"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -19,6 +21,31 @@ type BillingHandler struct {
 
 func NewBillingHandler(state *AppState) *BillingHandler {
 	return &BillingHandler{state: state}
+}
+
+// trafficGB is the divisor for the traffic ceiling: DECIMAL gigabytes, 10^9.
+// Bandwidth is metered decimally and the store computes the ceiling that way, so
+// comparing it against a GiB figure would move the threshold by about 7% without
+// anyone noticing. Not to be confused with usageGiB in usage.go, which is the
+// binary divisor the warn-only limits use.
+const trafficGB = int64(1_000_000_000)
+
+// myTrafficStatus describes how close the caller is to the point where their
+// traffic stops being free. Reported only when the store has told us the deal
+// (a non-zero ceiling); a self-hosted install meters nothing and gets nil, which
+// is what keeps the banner off screens it means nothing on.
+type myTrafficStatus struct {
+	UsedGB int64 `json:"usedGb"`
+	// CeilingGB is where free traffic ends: the included allowance plus the
+	// fair-use buffer, as computed by the store.
+	CeilingGB int64 `json:"ceilingGb"`
+	// Pct is uncapped on the way up on purpose - someone at 300% should see 300%,
+	// not a reassuring 100%.
+	Pct int `json:"pct"`
+	// BillingEnabled is whether the tenant has agreed to be charged past the
+	// ceiling. When false, reaching it STOPS their services instead of billing
+	// them, which is the thing the banner has to say out loud.
+	BillingEnabled bool `json:"billingEnabled"`
 }
 
 // GetMyBilling GET /api/me/billing — the caller's lifecycle state for the banner.
@@ -43,7 +70,31 @@ func (h *BillingHandler) GetMyBilling(w http.ResponseWriter, r *http.Request) {
 		"status":     b.Status,
 		"graceUntil": b.GraceUntil,
 		"paymentUrl": payment,
+		"traffic":    h.trafficStatusFor(userID, b),
 	})
+}
+
+// trafficStatusFor reads this month's usage against the ceiling the store set.
+// A usage read that fails is reported as nil rather than as zero usage: "we
+// could not tell" must not render as a comfortable empty bar right before the
+// store stops the tenant.
+func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *myTrafficStatus {
+	if b == nil || b.TrafficCeilingGB <= 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	u, err := h.state.Store.GetTrafficUsage(userID, period)
+	if err != nil || u == nil {
+		return nil
+	}
+	usedGB := u.EdgeBytes / trafficGB
+	return &myTrafficStatus{
+		UsedGB:         usedGB,
+		CeilingGB:      b.TrafficCeilingGB,
+		Pct:            int(usedGB * 100 / b.TrafficCeilingGB),
+		BillingEnabled: b.TrafficBillingEnabled,
+	}
 }
 
 // SetBillingStatus PATCH /api/admin/users/{id}/billing - RequireCap("plans.write")
