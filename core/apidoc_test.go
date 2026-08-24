@@ -142,3 +142,21 @@ func TestAPIDocIsCurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestAPIJSONIsCurrent does the same for the machine-readable twin. Both are
+// generated from one parse, so a route added without regenerating would leave
+// dylaris.com/api-docs describing a router that no longer exists - and unlike the
+// markdown, nobody reads that file by eye and notices.
+func TestAPIJSONIsCurrent(t *testing.T) {
+	want, err := apidoc.GenerateJSON(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(apidoc.JSONPath)
+	if err != nil {
+		t.Fatalf("%v (run: go run ./cmd/apidocs)", err)
+	}
+	if apidoc.Normalize(string(raw)) != want {
+		t.Fatalf("%s is out of date, run: go run ./cmd/apidocs", apidoc.JSONPath)
+	}
+}

@@ -50,4 +50,19 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("apidocs: wrote %s\n", out)
+
+	// The machine-readable twin, from the same parse. It backs dylaris.com/api-docs
+	// and is what an integrator (or a model writing against the API) reads instead
+	// of scraping a markdown table.
+	jsonDoc, err := apidoc.GenerateJSON(*coreDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "apidocs: %v\n", err)
+		os.Exit(1)
+	}
+	jsonOut := filepath.Join(*coreDir, apidoc.JSONPath)
+	if err := os.WriteFile(jsonOut, []byte(jsonDoc), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "apidocs: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("apidocs: wrote %s\n", jsonOut)
 }

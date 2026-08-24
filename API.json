@@ -1,0 +1,4823 @@
+{
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/admin/db/hypertable",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "reports the current backend state: whether the timescaledb extension is present, whether server_stats is already a hypertable, whether an in-place conversion is possible, and whether we recommend switching to TimescaleDB for performance.",
+      "handler": "DBMigrationHandler.HypertableStatus",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/db/hypertable/convert",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "promote the existing plain server_stats table to a TimescaleDB hypertable IN PLACE (same database).",
+      "handler": "DBMigrationHandler.ConvertHypertable",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/db/migration",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "shared job status.",
+      "handler": "DBMigrationHandler.GetMigration",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/db/migration",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "start a migration to the target.",
+      "handler": "DBMigrationHandler.StartMigration",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/db/migration/test-connection",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "open the target and return its server version, so admins confirm they hit the right database.",
+      "handler": "DBMigrationHandler.TestConnection",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/db/migration/verify",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "run the source-vs-target comparison on demand (the manual \"Verify / Test\" button).",
+      "handler": "DBMigrationHandler.VerifyMigration",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/health",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "Aggregated platform health, PANEL settings.read (RequireCap at the route).",
+      "handler": "HealthHandler.GetStatus",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/maintenance",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "MaintenanceHandler.SaveState",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/nodes/{id:[0-9]+}/disk-analysis",
+      "auth": "session",
+      "authorization": "nodes.read",
+      "description": "cross-references disk folders on a node with DB servers.",
+      "handler": "NodeHandler.GetDiskAnalysis",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/nodes/{id:[0-9]+}/orphan",
+      "auth": "session",
+      "authorization": "nodes.delete",
+      "description": "deletes an orphaned UUID folder from a node via gRPC.",
+      "handler": "NodeHandler.DeleteOrphanedFolder",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/nodes/{id:[0-9]+}/reset-pairing",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "REVOKE + RECOVER: clear the node's secret, hard-cut its live Redis ACL, and mint a single-use recovery token bound to its identity.",
+      "handler": "NodeAdmissionHandler.ResetPairing",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/panel-roles",
+      "auth": "session",
+      "authorization": "panelroles.read",
+      "description": "the level-1 staff roles and their capabilities.",
+      "handler": "PanelRolesHandler.ListPanelRoles",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/panel-roles",
+      "auth": "session",
+      "authorization": "panelroles.write",
+      "description": "adds a staff role.",
+      "handler": "PanelRolesHandler.CreatePanelRole",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/panel-roles/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "panelroles.delete",
+      "description": "deletes a staff role.",
+      "handler": "PanelRolesHandler.DeletePanelRole",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/panel-roles/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "panelroles.write",
+      "description": "renames a staff role and replaces its capability set.",
+      "handler": "PanelRolesHandler.UpdatePanelRole",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/plans",
+      "auth": "session",
+      "authorization": "plans.read",
+      "description": "RequireCap(\"plans.read\")",
+      "handler": "PlansHandler.List",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/plans",
+      "auth": "session",
+      "authorization": "plans.write",
+      "description": "RequireCap(\"plans.write\")",
+      "handler": "PlansHandler.Create",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/plans/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "plans.delete",
+      "description": "RequireCap(\"plans.delete\")",
+      "handler": "PlansHandler.Delete",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/plans/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "plans.write",
+      "description": "RequireCap(\"plans.write\")",
+      "handler": "PlansHandler.Update",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/regions",
+      "auth": "session",
+      "authorization": "regions.read",
+      "description": "RequireCap(\"regions.read\") at the route; includes disabled regions.",
+      "handler": "RegionsHandler.AdminListRegions",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/regions",
+      "auth": "session",
+      "authorization": "regions.write",
+      "description": "RequireCap(\"regions.write\") at the route.",
+      "handler": "RegionsHandler.CreateRegion",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/regions/{id}",
+      "auth": "session",
+      "authorization": "regions.delete",
+      "description": "RequireCap(\"regions.delete\") at the route.",
+      "handler": "RegionsHandler.DeleteRegion",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/regions/{id}",
+      "auth": "session",
+      "authorization": "regions.write",
+      "description": "RequireCap(\"regions.write\") at the route.",
+      "handler": "RegionsHandler.UpdateRegion",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/servers",
+      "auth": "session",
+      "authorization": "servers.read",
+      "description": "returns all DB servers with optional search filter",
+      "handler": "ServerHandler.GetAdminServers",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/servers/{id:[0-9]+}/demo",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "ServerHandler.SetServerDemo",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/servers/{id:[0-9]+}/migration/cancel",
+      "auth": "session",
+      "authorization": "servers.write",
+      "description": "Admin oversight (PANEL servers.write, gateway-gated).",
+      "handler": "ServerHandler.CancelMigration",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/servers/{id:[0-9]+}/move",
+      "auth": "session",
+      "authorization": "servers.write",
+      "description": "(admin oversight, PANEL servers.write) queues a manual node-to-node migration of a server to a target node.",
+      "handler": "ServerHandler.MoveServer",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/servers/{id:[0-9]+}/owner",
+      "auth": "session",
+      "authorization": "servers.write",
+      "description": "reassigns a server to a different user",
+      "handler": "ServerHandler.AdminUpdateServerOwner",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/audit",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "AuditSettingsHandler.GetPolicy",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/audit",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "AuditSettingsHandler.SavePolicy",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/auth",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "AuthSettingsHandler.GetAuthPolicy",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/auth",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "AuthSettingsHandler.SaveAuthPolicy",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/billing",
+      "auth": "session",
+      "authorization": "plans.read",
+      "description": "RequireCap(\"plans.read\") at the route.",
+      "handler": "BillingHandler.GetBillingSettings",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/billing",
+      "auth": "session",
+      "authorization": "plans.write",
+      "description": "RequireCap(\"plans.write\") at the route.",
+      "handler": "BillingHandler.SetBillingSettings",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/demo-account",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "ServerHandler.GetDemoAccount",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/demo-account",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "ServerHandler.SetDemoAccount",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/features",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "current bundle of platform toggles.",
+      "handler": "FeatureSettingsHandler.Get",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/features",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "write the bundle.",
+      "handler": "FeatureSettingsHandler.Set",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/link-updates",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "returns the current Link update policy and check interval.",
+      "handler": "SettingsHandler.GetLinkUpdateSettings",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/link-updates",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "persists the policy + interval and mirrors both into Redis, which is where nodes read them (node/main.go, loadModesFromRedis).",
+      "handler": "SettingsHandler.UpdateLinkUpdateSettings",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/modpacks",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "ModpackSettingsHandler.Get",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/modpacks",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "Body: full modpackSettings.",
+      "handler": "ModpackSettingsHandler.Set",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/modpacks/delivery-capabilities",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "Reflects the SAVED storage config only — it never presigns or HTTP-probes a caller-supplied URL, so it is not an SSRF lever.",
+      "handler": "ModpackSettingsHandler.DeliveryCapabilities",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/node-admission",
+      "auth": "session",
+      "authorization": "nodes.read",
+      "description": "current modes + CIDRs.",
+      "handler": "NodeAdmissionHandler.GetAdmission",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/node-admission",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "write join + IP mode.",
+      "handler": "NodeAdmissionHandler.SetAdmission",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/settings/node-admission/cidrs",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "add one allowlist CIDR.",
+      "handler": "NodeAdmissionHandler.AddCIDR",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/settings/node-admission/cidrs/{id}",
+      "auth": "session",
+      "authorization": "nodes.delete",
+      "description": "drops one entry from the node admission allowlist.",
+      "handler": "NodeAdmissionHandler.DeleteCIDR",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/permissions-mode",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "\u003c- {\"mode\":\"...\"}.",
+      "handler": "PermissionsModeHandler.SetMode",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/security-questions-pool",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "SecurityQuestionsHandler.GetAdminPool",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/security-questions-pool",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "admin only.",
+      "handler": "SecurityQuestionsHandler.SetAdminPool",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/smtp",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "AuthSettingsHandler.GetSMTPConfig",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/smtp",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "AuthSettingsHandler.SaveSMTPConfig",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/settings/smtp/test",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "sends a fixed body so admins can verify their config works without leaking real verification tokens.",
+      "handler": "AuthSettingsHandler.TestSendSMTP",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/tab-proxy",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "TabProxySettingsHandler.Get",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/tab-proxy",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "TabProxySettingsHandler.Set",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/tickets",
+      "auth": "session",
+      "authorization": "tickets.read",
+      "description": "RequireCap(\"tickets.read\") at the route.",
+      "handler": "TicketSettingsHandler.GetSettings",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/tickets",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "RequireCap(\"tickets.write\") at the route.",
+      "handler": "TicketSettingsHandler.SaveSettings",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/settings/users",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "AccountPolicyHandler.Get",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/users",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "AccountPolicyHandler.Set",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/storage/manifests",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read.",
+      "handler": "StorageMigrationHandler.ListManifests",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/storage/manifests/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write.",
+      "handler": "StorageMigrationHandler.DeleteManifest",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/storage/manifests/{id:[0-9]+}/export",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read.",
+      "handler": "StorageMigrationHandler.ExportManifest",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/storage/migration",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read.",
+      "handler": "StorageMigrationHandler.GetJob",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/storage/migration",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write.",
+      "handler": "StorageMigrationHandler.Start",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/storage/migration/cancel",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write.",
+      "handler": "StorageMigrationHandler.Cancel",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/storage/overview",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read.",
+      "handler": "StorageMigrationHandler.Overview",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/ticket-canned-responses",
+      "auth": "session",
+      "authorization": "tickets.read",
+      "description": "RequireCap(\"tickets.read\") at the route, full list.",
+      "handler": "CannedResponsesHandler.AdminList",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/ticket-canned-responses",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "RequireCap(\"tickets.write\") at the route.",
+      "handler": "CannedResponsesHandler.Create",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/ticket-canned-responses/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "tickets.delete",
+      "description": "RequireCap(\"tickets.delete\") at the route.",
+      "handler": "CannedResponsesHandler.Delete",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/ticket-canned-responses/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "RequireCap(\"tickets.write\") at the route.",
+      "handler": "CannedResponsesHandler.Update",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/ticket-categories",
+      "auth": "session",
+      "authorization": "tickets.read",
+      "description": "RequireCap(\"tickets.read\") at the route.",
+      "handler": "TicketCategoriesHandler.AdminListCategories",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/ticket-categories",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "RequireCap(\"tickets.write\") at the route.",
+      "handler": "TicketCategoriesHandler.CreateCategory",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/ticket-categories/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "tickets.delete",
+      "description": "RequireCap(\"tickets.delete\") at the route.",
+      "handler": "TicketCategoriesHandler.DeleteCategory",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/ticket-categories/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "RequireCap(\"tickets.write\") at the route.",
+      "handler": "TicketCategoriesHandler.UpdateCategory",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/tickets/backup",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "Dumps every ticket table to one JSON file under the configured Core file storage backend, scoped to CoreStoragePrefixBackups.",
+      "handler": "TicketMigrationHandler.CreateBackup",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/tickets/backups",
+      "auth": "session",
+      "authorization": "tickets.read",
+      "description": "CreatedAt is intentionally left zero-valued here: object stores expose no cheap per-key mtime through ListFiles, so per-file creation time is not available on the provider path.",
+      "handler": "TicketMigrationHandler.ListBackups",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/tickets/backups/{name}",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "deletes one ticket backup.",
+      "handler": "TicketMigrationHandler.DeleteBackup",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/tickets/backups/{name}/download",
+      "auth": "session",
+      "authorization": "tickets.read",
+      "description": "streams one ticket backup, with the same name sanitising as the delete.",
+      "handler": "TicketMigrationHandler.DownloadBackup",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/tickets/deletion-log",
+      "auth": "session",
+      "authorization": "tickets.read",
+      "description": "RequireCap(\"tickets.read\") at the route.",
+      "handler": "TicketDeletionsHandler.ListDeletions",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/tickets/migration/dry-run",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "Counts source rows + (best-effort) target rows so admins see the gap before they pull the trigger.",
+      "handler": "TicketMigrationHandler.DryRunMigration",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/tickets/migration/execute",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "Copies every ticket row from main → external.",
+      "handler": "TicketMigrationHandler.ExecuteMigration",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/tickets/migration/status",
+      "auth": "session",
+      "authorization": "tickets.read",
+      "description": "Returns the current row counts per ticket table + whether the external DB env var is configured.",
+      "handler": "TicketMigrationHandler.GetStatus",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/tickets/migration/test-connection",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "Takes a Postgres DSN, opens it, runs a SELECT 1, returns the version string so admins can confirm they hit the right server.",
+      "handler": "TicketMigrationHandler.TestExternalConnection",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/tickets/restore/execute",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "Validates: token exists + not expired + cooldown passed + caller matches the token's user + TOTP verifies + typed phrase matches.",
+      "handler": "TicketMigrationHandler.ExecuteRestore",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/tickets/restore/init",
+      "auth": "session",
+      "authorization": "tickets.write",
+      "description": "Issues a token tied to the backup name.",
+      "handler": "TicketMigrationHandler.InitRestore",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/usage",
+      "auth": "session",
+      "authorization": "plans.read",
+      "description": "RequireCap(\"plans.read\") at the route.",
+      "handler": "UsageHandler.GetAllUsage",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/billing",
+      "auth": "session",
+      "authorization": "plans.read",
+      "description": "RequireCap(\"plans.read\") at the route.",
+      "handler": "BillingHandler.GetUserBilling",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/billing",
+      "auth": "session",
+      "authorization": "plans.write",
+      "description": "RequireCap(\"plans.write\") at the route.",
+      "handler": "BillingHandler.SetBillingStatus",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/billing-overrides",
+      "auth": "session",
+      "authorization": "plans.write",
+      "description": "RequireCap(\"plans.write\") at the route.",
+      "handler": "BillingHandler.SetBillingOverrides",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "Admin override: clears the pending_deletion stamps and returns the user to active state.",
+      "handler": "UserHandler.CancelUserDeletion",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/entitlement",
+      "auth": "session",
+      "authorization": "plans.write",
+      "description": "RequireCap(\"plans.write\").",
+      "handler": "EntitlementHandler.Revoke",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/entitlement",
+      "auth": "session",
+      "authorization": "plans.read",
+      "description": "RequireCap(\"plans.read\").",
+      "handler": "EntitlementHandler.GetForUser",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/entitlement",
+      "auth": "session",
+      "authorization": "plans.write",
+      "description": "RequireCap(\"plans.write\").",
+      "handler": "EntitlementHandler.Grant",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides",
+      "auth": "session",
+      "authorization": "plans.write",
+      "description": "RequireCap(\"plans.write\").",
+      "handler": "PlansHandler.SetUserLimitOverrides",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "ModpackSettingsHandler.ClearUserFlagOverride",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "ModpackSettingsHandler.SetUserFlag",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/panel-role",
+      "auth": "session",
+      "authorization": "panelroles.read",
+      "description": "Reads the user's level-1 panel role id + per-user override caps, symmetric with the PUT.",
+      "handler": "UserHandler.GetUserPanelRoleHandler",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/panel-role",
+      "auth": "session",
+      "authorization": "panelroles.write",
+      "description": "Assigns (panelRoleId) or clears (panelRoleId=null) the user's level-1 panel role and their per-user panel cap grant/deny overrides.",
+      "handler": "UserHandler.SetUserPanelRoleHandler",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/permissions",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "SetUserPermissions PUT /api/admin/users/{id}/permissions Sets per-user capability flags.",
+      "handler": "UserHandler.SetUserPermissionsHandler",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/plan",
+      "auth": "session",
+      "authorization": "plans.write",
+      "description": "RequireCap(\"plans.write\").",
+      "handler": "PlansHandler.SetUserPlan",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/regions",
+      "auth": "session",
+      "authorization": "regions.read",
+      "description": "RequireCap(\"regions.read\") at the route.",
+      "handler": "UserRegionsHandler.GetUserRegions",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/regions",
+      "auth": "session",
+      "authorization": "regions.write",
+      "description": "RequireCap(\"regions.write\") at the route.",
+      "handler": "UserRegionsHandler.SetUserRegions",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/role",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "SetUserRole PUT /api/admin/users/{id}/role Valid roles: \"user\", \"support\", \"admin\".",
+      "handler": "UserHandler.SetUserRoleHandler",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/username",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "Body: {\"username\": \"newname\"} — bypasses cooldown + platform toggle.",
+      "handler": "UsernameHistoryHandler.AdminRename",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/username-history",
+      "auth": "session",
+      "authorization": "users.read",
+      "description": "Gated at the route with RequireCap(\"users.read\"); admin short-circuits.",
+      "handler": "UsernameHistoryHandler.Admin",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/warp/keys",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "the external-node inventory.",
+      "handler": "WarpHandler.ListAPIKeys",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/warp/keys",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "(admin) creates a warp enrollment key and returns the plaintext ONCE.",
+      "handler": "WarpHandler.MintAPIKey",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/warp/keys/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "revoke an enrollment key AND disconnect whatever it already enrolled.",
+      "handler": "WarpHandler.RevokeAPIKey",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/warp/keys/{id:[0-9]+}/purge",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "remove the key row entirely, after disconnecting whatever it enrolled.",
+      "handler": "WarpHandler.DeleteAPIKey",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/xdp/config",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "XDPHandler.GetConfig",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/xdp/config",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "XDPHandler.UpdateConfig",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/2fa/disable",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "User-initiated 2FA disable.",
+      "handler": "AuthHandler.DisableTOTPHandler",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/2fa/regenerate-backup-codes",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Issues a fresh set of 10 backup codes for a user who has 2FA already enabled.",
+      "handler": "AuthHandler.RegenerateBackupCodesHandler",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/2fa/setup",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Generates a fresh TOTP secret + otpauth URI for the authenticated user.",
+      "handler": "AuthHandler.SetupTOTPHandler",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/2fa/status",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Returns whether 2FA is enabled and the count of unconsumed backup codes.",
+      "handler": "AuthHandler.Get2FAStatusHandler",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/2fa/verify",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Validates the user's 6-digit code against the freshly-generated secret.",
+      "handler": "AuthHandler.VerifyTOTPHandler",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/demo-login",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public, rate-limited.",
+      "handler": "AuthHandler.DemoStatus",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/demo-login",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public, rate-limited.",
+      "handler": "AuthHandler.DemoLogin",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/forgot-password",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public.",
+      "handler": "PasswordResetHandler.ForgotPassword",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "auth": "none",
+      "authorization": "public",
+      "description": "issues the session JWT.",
+      "handler": "AuthHandler.LoginHandler",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/profile",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the calling user's own row, with the password hash cleared before it is written out.",
+      "handler": "AuthHandler.GetProfileHandler",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/auth/profile",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "updates the calling user's own profile.",
+      "handler": "AuthHandler.UpdateProfileHandler",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/register",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public, gated on auth.registration_enabled.",
+      "handler": "RegistrationHandler.Register",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/registration-status",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public.",
+      "handler": "RegistrationHandler.RegistrationStatus",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/resend-verification",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public.",
+      "handler": "RegistrationHandler.ResendVerification",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/reset-password",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public.",
+      "handler": "PasswordResetHandler.ResetPassword",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/security-questions/pool",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public.",
+      "handler": "SecurityQuestionsHandler.GetPool",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/validate-reset-token",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public.",
+      "handler": "PasswordResetHandler.ValidateResetToken",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/verify-email",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public.",
+      "handler": "RegistrationHandler.VerifyEmail",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/authz/catalog",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "returns the capability catalog grouped by scope then category, so the panel role editor and simple/advanced UI render entirely from the backend list (no hard-coded frontend permission arrays).",
+      "handler": "AuthzHandler.Catalog",
+      "group": "authz",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/authz/mode",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "\u003e {\"success\":true,\"mode\":\"off|simple|advanced\"}.",
+      "handler": "PermissionsModeHandler.GetMode",
+      "group": "authz",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/authz/presets",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the simple-mode preset bundles, so the assign-only UI renders from the backend (no hard-coded frontend presets).",
+      "handler": "AuthzHandler.Presets",
+      "group": "authz",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/backup-jobs/{jobId:[0-9]+}",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "removes a schedule, gated on backups.delete for the job's server.",
+      "handler": "BackupHandler.DeleteJob",
+      "group": "backup-jobs",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/backup-jobs/{jobId:[0-9]+}",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "edits a job and recomputes its next run.",
+      "handler": "BackupHandler.UpdateJob",
+      "group": "backup-jobs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/backup-jobs/{jobId:[0-9]+}/runs",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "the 50 most recent runs of one schedule.",
+      "handler": "BackupHandler.ListRuns",
+      "group": "backup-jobs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/backup-jobs/{jobId:[0-9]+}/trigger",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "starts a run immediately.",
+      "handler": "BackupHandler.TriggerJob",
+      "group": "backup-jobs",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/backup-runs/{runId:[0-9]+}",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "deletes the stored archive and then the run row.",
+      "handler": "BackupHandler.DeleteRun",
+      "group": "backup-runs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/backup-runs/{runId:[0-9]+}/download",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "For S3-backed storage returns 302 to a pre-signed URL.",
+      "handler": "BackupHandler.DownloadRun",
+      "group": "backup-runs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/backup-runs/{runId:[0-9]+}/restore",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "Dispatches a restore command to the node.",
+      "handler": "BackupHandler.RestoreRun",
+      "group": "backup-runs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/backup-storages",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "every configured backup target, with the S3 secret stripped from each row so a settings.read holder cannot harvest backup credentials out of a list.",
+      "handler": "BackupHandler.ListStorages",
+      "group": "backup-storages",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/backup-storages",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "adds a backup target.",
+      "handler": "BackupHandler.CreateStorage",
+      "group": "backup-storages",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/backup-storages/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "removes a backup target.",
+      "handler": "BackupHandler.DeleteStorage",
+      "group": "backup-storages",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/backup-storages/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "edits a backup target; an unknown id is 404.",
+      "handler": "BackupHandler.UpdateStorage",
+      "group": "backup-storages",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/backup-storages/{id:[0-9]+}/test",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "round-trip put/get/delete a tiny object to confirm credentials and bucket access.",
+      "handler": "BackupHandler.TestStorage",
+      "group": "backup-storages",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/beam/config",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "returns the Beam relay address and branding info.",
+      "handler": "BeamHandler.GetBeamConfig",
+      "group": "beam",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/beam/download",
+      "auth": "none",
+      "authorization": "public",
+      "description": "streams a Beam binary through Core.",
+      "handler": "BeamHandler.GetBeamDownload",
+      "group": "beam",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/beam/servers",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "returns the server list with node_id for Beam clients.",
+      "handler": "BeamHandler.GetBeamServers",
+      "group": "beam",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/beam/ticket",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "signs a JWT ticket for a specific server.",
+      "handler": "BeamHandler.GetBeamTicket",
+      "group": "beam",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/beam/ticket",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "signs a JWT ticket for a specific server.",
+      "handler": "BeamHandler.GetBeamTicket",
+      "group": "beam",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/disk/orphans/assign",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "adopts an on-disk orphan folder into a proper DB server row.",
+      "handler": "NodeHandler.AssignOrphan",
+      "group": "disk",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/content",
+      "auth": "session",
+      "authorization": "nodes.read",
+      "description": "returns the text content of a file inside an orphaned folder.",
+      "handler": "NodeHandler.GetOrphanFileContent",
+      "group": "disk",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/files",
+      "auth": "session",
+      "authorization": "nodes.read",
+      "description": "lists the files inside an orphaned folder on a node.",
+      "handler": "NodeHandler.ListOrphanFiles",
+      "group": "disk",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect",
+      "auth": "session",
+      "authorization": "nodes.read",
+      "description": "returns metadata about an orphaned folder without assigning it.",
+      "handler": "NodeHandler.InspectOrphan",
+      "group": "disk",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/rcon/{uuid}/exec",
+      "auth": "user API key",
+      "authorization": "rcon.exec",
+      "description": "automation entry.",
+      "handler": "RconHandler.ExecExternal",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/servers",
+      "auth": "user API key",
+      "authorization": "no capability",
+      "description": "the servers this KEY may act on: the servers of its owner, narrowed to the allowlist of the key.",
+      "handler": "APIKeysHandler.ListExternalServers",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/servers/{uuid}",
+      "auth": "user API key",
+      "authorization": "overview.read",
+      "description": "the record of one server.",
+      "handler": "APIKeysHandler.GetExternalServer",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/servers/{uuid}/backup-jobs",
+      "auth": "user API key",
+      "authorization": "backups.read",
+      "description": "the backup schedules configured for one server.",
+      "handler": "BackupHandler.ListJobs",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/servers/{uuid}/backup-jobs/{jobId:[0-9]+}/trigger",
+      "auth": "user API key",
+      "authorization": "backups.create",
+      "description": "starts a run immediately.",
+      "handler": "BackupHandler.TriggerJob",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/servers/{uuid}/console/command",
+      "auth": "user API key",
+      "authorization": "console.send",
+      "description": "pushes one line onto the server's Redis input queue.",
+      "handler": "ConsoleHandler.SendCommand",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/servers/{uuid}/console/history",
+      "auth": "user API key",
+      "authorization": "console.read",
+      "description": "Returns the last 1000 log lines from the Redis Stream for this server.",
+      "handler": "ConsoleHandler.GetHistory",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/servers/{uuid}/power",
+      "auth": "user API key",
+      "authorization": "no capability",
+      "description": "Controls Start, Stop, Kill and Restart",
+      "handler": "ServerHandler.ServerPowerHandler",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/servers/{uuid}/stats/history",
+      "auth": "user API key",
+      "authorization": "stats.read",
+      "description": "Returns historical stats data points from PostgreSQL.",
+      "handler": "StatsHandler.GetHistory",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/usage",
+      "auth": "user API key",
+      "authorization": "usage.read",
+      "description": "the caller's metered usage for the period.",
+      "handler": "UsageHandler.GetMyUsage",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/files",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles requests to list files in a directory",
+      "handler": "FileHandler.GetFilesHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/content",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles requests to read the content of a file",
+      "handler": "FileHandler.GetFileContentHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/copy",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles copying files and directories",
+      "handler": "FileHandler.CopyFileHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/create",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles requests to create a new file or directory",
+      "handler": "FileHandler.CreateFileHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/delete",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles requests to delete a file",
+      "handler": "FileHandler.DeleteFileHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/download",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles file and folder downloads via gRPC streaming",
+      "handler": "FileHandler.DownloadFileHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/download/selective",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles selective folder downloads.",
+      "handler": "FileHandler.SelectiveDownloadHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/rename",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles renaming files and directories",
+      "handler": "FileHandler.RenameFileHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/save",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles requests to save file content",
+      "handler": "FileHandler.SaveFileHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/upload",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "handles uploads — receives files via HTTP multipart, then streams them to the Node via gRPC chunks.",
+      "handler": "FileHandler.UploadFileHandler",
+      "group": "files",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/check-domain",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "tells the panel whether a candidate domain is already registered, so the route-create form can show a live \"available / in use\" hint while the user types.",
+      "handler": "GatewayHandler.CheckDomainAvailability",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/custom-domains",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "the caller's OWN claims.",
+      "handler": "CustomDomainHandler.List",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/custom-domains/{domain:.+}/txt-token",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "Mints (once) the record a permanently blocked user must publish to prove ownership the strict way.",
+      "handler": "CustomDomainHandler.IssueTXTToken",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/custom-domains/{domain:.+}/verify-txt",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "Checks the published record and, on success, lifts the permanent block.",
+      "handler": "CustomDomainHandler.VerifyTXT",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/dns-check",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "computes the required DNS records from the operator's OWN config (FRONTEND_URL + gateway settings + registered edges) and verifies them against the public DNS view plus a TCP reachability probe.",
+      "handler": "DNSHandler.CheckDNS",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/edges",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "every edge currently registered in Redis.",
+      "handler": "GatewayHandler.GetEdges",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/errors",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "the 50 most recent gateway service errors; ?service= narrows them to one component.",
+      "handler": "GatewayHandler.GetErrors",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/link-routes",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the caller's route-only entries.",
+      "handler": "GatewayHandler.ListLinkRoutes",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/link-routes",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "authed, gateway-gated.",
+      "handler": "GatewayHandler.CreateLinkRoute",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/gateway/link-routes/{domain:.+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "owner-scoped.",
+      "handler": "GatewayHandler.DeleteLinkRoute",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/links",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "every link registered in Redis, each with its online flag.",
+      "handler": "GatewayHandler.GetLinks",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/logs",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead.",
+      "handler": "GatewayHandler.GetLogs",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/route-options",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Available to all authenticated users — the user-facing route form needs the hoster list + custom-domain config to render itself.",
+      "handler": "SettingsHandler.GetGatewayRouteOptions",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/routes",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "every gateway route across the whole fleet, read from Redis.",
+      "handler": "GatewayHandler.GetAllRoutes",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/routes/bulk-delete",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "deletes every route whose domain equals OR ends with `.\u003csuffix\u003e`.",
+      "handler": "GatewayHandler.BulkDeleteRoutesBySuffix",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/routes/suffixes",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "returns the unique apex (1-dot) and parent (2-dot) suffixes across every route currently registered.",
+      "handler": "GatewayHandler.GetRouteSuffixes",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/gateway/routes/{domain:.+}",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "removes any route by domain, without the per-server ownership check its /api/servers twin applies.",
+      "handler": "GatewayHandler.AdminDeleteRoute",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/stats",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "counts only: links and edges, how many of each are online, and the route total.",
+      "handler": "GatewayHandler.GetStats",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/sync",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "a no-op kept for the panel button.",
+      "handler": "GatewayHandler.TriggerSync",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway-bandwidth/history",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "Time-bucketed summed throughput from gateway_bandwidth_stats.",
+      "handler": "GatewayBandwidthHandler.GetHistory",
+      "group": "gateway-bandwidth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway-bandwidth/overview",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "Live per-component + per-host utilisation and sustained-threshold alerts.",
+      "handler": "GatewayBandwidthHandler.GetOverview",
+      "group": "gateway-bandwidth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway-bandwidth/rebalance",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "the F3 rebalancer mode + recent decision feed.",
+      "handler": "GatewayBandwidthHandler.GetRebalance",
+      "group": "gateway-bandwidth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway-bandwidth/rebalance",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "sets the warp rebalancer mode (off | dry-run | armed).",
+      "handler": "GatewayBandwidthHandler.SetRebalanceMode",
+      "group": "gateway-bandwidth",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/grants",
+      "auth": "session",
+      "authorization": "roles.delete",
+      "description": "Removes a friend's per-server or account-wide grant.",
+      "handler": "ServerRolesHandler.RevokeGrant",
+      "group": "grants",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/grants",
+      "auth": "session",
+      "authorization": "roles.read",
+      "description": "every grant in the acting owner's realm (account-wide server_id NULL + per-server), for the /access grants table.",
+      "handler": "ServerRolesHandler.ListGrants",
+      "group": "grants",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/grants",
+      "auth": "session",
+      "authorization": "roles.write",
+      "description": "Assigns a friend a server-role and/or granular overrides, per-server (serverId set) or account-wide (serverId null = the acting user's own realm).",
+      "handler": "ServerRolesHandler.AssignGrant",
+      "group": "grants",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "auth": "none",
+      "authorization": "public",
+      "description": "Unauthenticated infra readiness probe (Docker/Swarm HEALTHCHECK, load balancers).",
+      "handler": "HealthHandler.Healthz",
+      "group": "healthz",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/infrastructure/overview",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "one payload for the infrastructure page: edges, links and nodes with their live heartbeat stats, plus route, tunnel and online counts and the recent service errors.",
+      "handler": "InfrastructureHandler.GetOverview",
+      "group": "infrastructure",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/infrastructure/routing-migration",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "progress of the routing migration job.",
+      "handler": "InfrastructureHandler.GetRoutingMigrationStatus",
+      "group": "infrastructure",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/library",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Admins see all entries with their `enabled` flag set per-path so the UI can render a toggle.",
+      "handler": "LibraryHandler.GetLibraryHandler",
+      "group": "library",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/library/delete",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "Route-gated by RequireCap(\"settings.write\") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job.",
+      "handler": "LibraryHandler.DeleteLibraryHandler",
+      "group": "library",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/library/download",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "streams the library file named by ?path.",
+      "handler": "LibraryHandler.DownloadLibraryHandler",
+      "group": "library",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/library/mkdir",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "Route-gated by RequireCap(\"settings.write\") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job.",
+      "handler": "LibraryHandler.MkdirLibraryHandler",
+      "group": "library",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/library/toggle",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "Body: { \"path\": \"...\", \"enabled\": false } Route-gated by RequireCap(\"settings.write\") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job.",
+      "handler": "LibraryHandler.ToggleLibraryPathHandler",
+      "group": "library",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/library/upload",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "Route-gated by RequireCap(\"settings.write\") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job.",
+      "handler": "LibraryHandler.UploadLibraryHandler",
+      "group": "library",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/maintenance",
+      "auth": "none",
+      "authorization": "public",
+      "description": "public.",
+      "handler": "MaintenanceHandler.GetState",
+      "group": "maintenance",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/api-keys",
+      "auth": "session",
+      "authorization": "apikeys.read",
+      "description": "the calling user's own API keys, plus what they are allowed to mint.",
+      "handler": "APIKeysHandler.List",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/api-keys",
+      "auth": "session",
+      "authorization": "apikeys.write",
+      "description": "mints a key and returns its plaintext exactly once.",
+      "handler": "APIKeysHandler.Create",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/me/api-keys/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "apikeys.delete",
+      "description": "revokes one of the caller's own keys.",
+      "handler": "APIKeysHandler.Revoke",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/billing",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the caller's lifecycle state for the banner.",
+      "handler": "BillingHandler.GetMyBilling",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/entitlement",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the caller's own entitlement.",
+      "handler": "EntitlementHandler.GetMine",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/me/modrinth-pat",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "wipes the PAT entirely.",
+      "handler": "ModrinthPATHandler.Clear",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/modrinth-pat",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "returns whether the user has a PAT configured + (if so) the username + last_validated timestamp.",
+      "handler": "ModrinthPATHandler.Status",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/modrinth-pat",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "accepts the plaintext PAT, validates it against Modrinth /v2/user, encrypts, and stores.",
+      "handler": "ModrinthPATHandler.Set",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/packs",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "the modpacks the calling user owns.",
+      "handler": "PacksHandler.List",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/packs",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "creates a modpack owned by the caller.",
+      "handler": "PacksHandler.Create",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/packs/import-solder",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "imports one modpack (all its builds) from an external Solder instance into a new draft pack owned by the caller.",
+      "handler": "PacksHandler.ImportSolder",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/packs/import-solder/preview",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "reads the pack index of an external Solder instance so the UI can list what is importable.",
+      "handler": "PacksHandler.ImportSolderPreview",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/regions",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "current user's own region assignment (any authenticated user).",
+      "handler": "UserRegionsHandler.GetMyRegions",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/security-questions",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "auth required.",
+      "handler": "SecurityQuestionsHandler.GetMyQuestions",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/security-questions",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "auth required.",
+      "handler": "SecurityQuestionsHandler.SetMyQuestions",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/servers/via-tickets",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Drives the sidebar tab.",
+      "handler": "TicketsHandler.ListMyServersViaTickets",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/updates-seen",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "acknowledge the current feeds so the caller's navbar badge clears.",
+      "handler": "UpdatesHandler.MarkUpdatesSeen",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/usage",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the caller's metered usage for the period.",
+      "handler": "UsageHandler.GetMyUsage",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/username-history",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the calling user's own past usernames.",
+      "handler": "UsernameHistoryHandler.Me",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/modrinth/categories",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the Modrinth category tag list (each entry: name, project_type, header, icon SVG).",
+      "handler": "ModrinthHandler.Categories",
+      "group": "modrinth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/modrinth/project/{slug}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "full project metadata.",
+      "handler": "ModrinthHandler.Project",
+      "group": "modrinth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/modrinth/project/{slug}/versions",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "a cached proxy to Modrinth's version list.",
+      "handler": "ModrinthHandler.ProjectVersions",
+      "group": "modrinth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/modrinth/search",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Query params (Modrinth-compatible): query, limit, offset, facets (JSON array of arrays), loaders (comma list), versions (comma list), categories (comma list), project_type.",
+      "handler": "ModrinthHandler.Search",
+      "group": "modrinth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/modrinth/version/{id}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "single version metadata.",
+      "handler": "ModrinthHandler.Version",
+      "group": "modrinth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/modules",
+      "auth": "session",
+      "authorization": "no capability on this method",
+      "description": "the navbar module rows.",
+      "handler": "ModuleHandler.GetModulesHandler",
+      "group": "modules",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/modules",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "RequireCap(\"settings.write\") at the route (Phase 4 Task 19).",
+      "handler": "ModuleHandler.CreateModuleHandler",
+      "group": "modules",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/modules/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "RequireCap(\"settings.write\") at the route (Phase 4 Task 19).",
+      "handler": "ModuleHandler.DeleteModuleHandler",
+      "group": "modules",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/modules/{id:[0-9]+}/position",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "RequireCap( \"settings.write\") at the route (Phase 4 Task 19).",
+      "handler": "ModuleHandler.UpdateModulePositionHandler",
+      "group": "modules",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/modules/{id:[0-9]+}/role",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "RequireCap(\"settings.write\") at the route (Phase 4 Task 19).",
+      "handler": "ModuleHandler.SetModuleAccessRoleHandler",
+      "group": "modules",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/modules/{id:[0-9]+}/toggle",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "for enabling/disabling modules - RequireCap(\"settings.write\") at the route (Phase 4 Task 19).",
+      "handler": "ModuleHandler.ToggleModuleHandler",
+      "group": "modules",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/nodes",
+      "auth": "session",
+      "authorization": "no capability on this method",
+      "description": "the machine list.",
+      "handler": "NodeHandler.GetNodes",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/nodes",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "registers a node and mints its token.",
+      "handler": "NodeHandler.CreateNode",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/nodes/enroll-token",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the caller's tokens (metadata only).",
+      "handler": "NodeEnrollHandler.ListTokens",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/nodes/enroll-token",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "generate a new enroll token for the calling user.",
+      "handler": "NodeEnrollHandler.MintToken",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/nodes/enroll-token/{id}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "revoke one of the caller's tokens (scoped to owner).",
+      "handler": "NodeEnrollHandler.RevokeToken",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/nodes/link-updates",
+      "auth": "session",
+      "authorization": "nodes.read",
+      "description": "returns the per-node Link image status published by the discovery sweep.",
+      "handler": "NodeHandler.GetLinkUpdateStates",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/nodes/link-updates",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "queues the node-level \"link_update\" command.",
+      "handler": "NodeHandler.TriggerLinkUpdate",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/nodes/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "nodes.delete",
+      "description": "removes a node, then cleans up the Redis ACL user and keys that belong to it.",
+      "handler": "NodeHandler.DeleteNode",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/nodes/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "edits a node.",
+      "handler": "NodeHandler.UpdateNode",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/nodes/{id:[0-9]+}/config",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "adopts an auto-discovered node: an admin sets its name, region and tags, which are persisted to the DB and marked configured=true so the heartbeat env stops overwriting them.",
+      "handler": "NodeHandler.ConfigureNode",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/nodes/{id:[0-9]+}/cpu",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the host CPU topology a node reported plus the per-core pinning load (how many servers are pinned to each core).",
+      "handler": "CPUPinningHandler.GetNodeCPU",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/nodes/{id:[0-9]+}/deploy-bundle",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint plus the node's Link tunnel token and discovery proof (both Core-derived from CLUSTER_SECRET, so Link never holds it).",
+      "handler": "NodeHandler.GetDeployBundle",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/nodes/{id:[0-9]+}/force",
+      "auth": "session",
+      "authorization": "nodes.delete",
+      "description": "deletes an offline node and all its servers",
+      "handler": "NodeHandler.ForceDeleteNode",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/nodes/{id:[0-9]+}/placement",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "PANEL nodes.write.",
+      "handler": "PlacementHandler.SetNodePlacement",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/nodes/{id:[0-9]+}/servers",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "returns all servers assigned to a node",
+      "handler": "NodeHandler.GetNodeServers",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/nodes/{id:[0-9]+}/storage",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "returns storage path info from the node's Redis heartbeat.",
+      "handler": "NodeHandler.GetNodeStorage",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/nodes/{id:[0-9]+}/storage-placement",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "Sets how the node places NEW servers across its storage paths.",
+      "handler": "NodeHandler.SetNodeStoragePlacement",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/notifications",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the caller's own notifications plus the unread count.",
+      "handler": "NotificationsHandler.List",
+      "group": "notifications",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/read-all",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "marks every one of the caller's notifications read.",
+      "handler": "NotificationsHandler.MarkAllRead",
+      "group": "notifications",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/notifications/unread-count",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "cheap polling endpoint for the bell badge.",
+      "handler": "NotificationsHandler.UnreadCount",
+      "group": "notifications",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/{id:[0-9]+}/read",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "marks one notification read.",
+      "handler": "NotificationsHandler.MarkRead",
+      "group": "notifications",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/packs/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.delete",
+      "description": "deletes a modpack the caller owns.",
+      "handler": "PacksHandler.Delete",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "one modpack.",
+      "handler": "PacksHandler.Get",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/packs/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "edits a modpack the caller owns.",
+      "handler": "PacksHandler.Update",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/builds",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "the builds of one modpack.",
+      "handler": "PacksHandler.ListBuilds",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "adds a build.",
+      "handler": "PacksHandler.CreateBuild",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.delete",
+      "description": "deletes a build that belongs to the pack in the path.",
+      "handler": "PacksHandler.DeleteBuild",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "edits a build.",
+      "handler": "PacksHandler.UpdateBuild",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "the mods and files in one build.",
+      "handler": "PacksHandler.ListContent",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "adds a Modrinth version to a build and, on request, its dependencies.",
+      "handler": "PacksHandler.AddModrinth",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "uploads a file into a build.",
+      "handler": "PacksHandler.UploadContent",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.delete",
+      "description": "detaches one entry from a build.",
+      "handler": "PacksHandler.RemoveContent",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "swaps a stored content artifact for Modrinth's exact file: download the chosen Modrinth version's primary file, verify its bytes against Modrinth's published hashes, re-wrap + store it, delete the old storage object, and rewrite the modversion so it becomes byte-identical to Modrinth (clean files[] reference + auto-update eligible).",
+      "handler": "PacksHandler.ReplaceWithModrinth",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "sets whether an entry ships to the client, the server or both.",
+      "handler": "PacksHandler.SetSide",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "returns the UTF-8 text of a single stored content entry (e.g. a config file) so the panel can edit it in place.",
+      "handler": "PacksHandler.GetContentText",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "overwrites a stored text content entry with edited bytes, re-wrapping into the Solder zip at the same key and re-hashing.",
+      "handler": "PacksHandler.SetContentText",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "streams the .mrpack for a build (self-distributed download).",
+      "handler": "PacksHandler.ExportMrpack",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "returns the cached loader row for a build's (minecraft, loader, loader_version) triple, so the panel / hand-test can see build status + md5.",
+      "handler": "PacksHandler.GetBuildLoader",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "publishes a build to Modrinth under the caller's own personal access token.",
+      "handler": "PacksHandler.PublishModrinth",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "renders + publishes a build to the public Solder API.",
+      "handler": "PacksHandler.PublishSolder",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "mints a share token for one build, so it can be downloaded without a session.",
+      "handler": "PacksHandler.CreateShareLink",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "the share links issued for one build.",
+      "handler": "PacksHandler.ListShareLinks",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.delete",
+      "description": "revokes one share link.",
+      "handler": "PacksHandler.RevokeShareLink",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "upgrades Modrinth-linked mods in a DRAFT build to a newer version.",
+      "handler": "PacksHandler.UpdateMods",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/clients",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "the Technic clients whitelisted for one pack.",
+      "handler": "SolderHandler.ListPackClientsHandler",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.delete",
+      "description": "drops a client from a pack's whitelist.",
+      "handler": "SolderHandler.RemovePackClient",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "whitelists one client for a private pack.",
+      "handler": "SolderHandler.AddPackClient",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/packs/{id:[0-9]+}/solder-config",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "sets the pack's public Solder identity + visibility.",
+      "handler": "PacksHandler.SetSolderConfig",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/placement/pick",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "any authed user (helper).",
+      "handler": "PlacementHandler.PickNode",
+      "group": "placement",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/placement/regions",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "returns the union of region keys currently advertised by online nodes.",
+      "handler": "PlacementHandler.AvailableRegionsHandler",
+      "group": "placement",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/placement/tags",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "returns the union of all tags currently advertised by online nodes, optionally scoped to a single region.",
+      "handler": "PlacementHandler.AvailableTagsHandler",
+      "group": "placement",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/regions",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "available to all authenticated users.",
+      "handler": "RegionsHandler.ListRegions",
+      "group": "regions",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/scheduled-tasks/validate",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "used by the panel to preview the next-run timestamp for a cron string before the user saves.",
+      "handler": "ScheduledTasksHandler.ValidateCron",
+      "group": "scheduled-tasks",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/server-roles",
+      "auth": "session",
+      "authorization": "roles.read",
+      "description": "the custom roles in the acting owner's realm.",
+      "handler": "ServerRolesHandler.ListServerRoles",
+      "group": "server-roles",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/server-roles",
+      "auth": "session",
+      "authorization": "roles.write",
+      "description": "adds a custom role to the acting owner's realm.",
+      "handler": "ServerRolesHandler.CreateServerRole",
+      "group": "server-roles",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/server-roles/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "roles.delete",
+      "description": "deletes a role in the acting owner's realm; another realm's role is 404.",
+      "handler": "ServerRolesHandler.DeleteServerRole",
+      "group": "server-roles",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/server-roles/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "roles.write",
+      "description": "renames a role and replaces its capabilities.",
+      "handler": "ServerRolesHandler.UpdateServerRole",
+      "group": "server-roles",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the servers the caller may see: their own plus any they were invited to, or the whole fleet for an admin.",
+      "handler": "ServerHandler.GetServers",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "(Step 1): Creates container with resources, status=pending_setup",
+      "handler": "ServerHandler.CreateServer",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "server.delete",
+      "description": "Completely delete a server",
+      "handler": "ServerHandler.DeleteServer",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/audit",
+      "auth": "session",
+      "authorization": "server.audit.read",
+      "description": "the server's audit trail, paged with ?limit and ?offset and filterable by ?eventType.",
+      "handler": "ServerAuditHandler.ListAudit",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/servers/{id:[0-9]+}/audit/force",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "gated by the route (RequireCap(server.settings.write)): the owner, or a role-holder granted that cap, can force their own server's audit on regardless of member state.",
+      "handler": "ServerAuditHandler.SetForce",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/audit/status",
+      "auth": "session",
+      "authorization": "server.audit.read",
+      "description": "whether auditing is on for this server, whether an admin forced it on, and how many events are stored.",
+      "handler": "ServerAuditHandler.GetStatus",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/automove",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "Flips the auto-move opt-in flag.",
+      "handler": "ServerHandler.SetServerAutoMove",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/backup-jobs",
+      "auth": "session",
+      "authorization": "backups.read",
+      "description": "the backup schedules configured for one server.",
+      "handler": "BackupHandler.ListJobs",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/backup-jobs",
+      "auth": "session",
+      "authorization": "backups.create",
+      "description": "adds a backup schedule and computes its first run from the cron expression.",
+      "handler": "BackupHandler.CreateJob",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/backup-restores",
+      "auth": "session",
+      "authorization": "backups.read",
+      "description": "Recent restore history for a server, newest first.",
+      "handler": "BackupHandler.ListRestores",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/backup-usage",
+      "auth": "session",
+      "authorization": "backups.read",
+      "description": "Returns the on-disk bytes used by node-local backups for the given server, plus archive count.",
+      "handler": "BackupHandler.BackupUsage",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/console/command",
+      "auth": "session",
+      "authorization": "console.send",
+      "description": "pushes one line onto the server's Redis input queue.",
+      "handler": "ConsoleHandler.SendCommand",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/console/history",
+      "auth": "session",
+      "authorization": "console.read",
+      "description": "Returns the last 1000 log lines from the Redis Stream for this server.",
+      "handler": "ConsoleHandler.GetHistory",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/console/stream",
+      "auth": "session",
+      "authorization": "console.read",
+      "description": "Streams live server logs via SSE (Server-Sent Events).",
+      "handler": "ConsoleHandler.StreamConsole",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/edge-motd",
+      "auth": "session",
+      "authorization": "overview.read",
+      "description": "Returns the per-server edge transitional-MOTD config (mode + custom text).",
+      "handler": "ServerHandler.GetServerEdgeMotd",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/edge-motd",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "Updates the per-server edge transitional-MOTD mode/text and publishes it to Redis so the gateway edge picks it up (auto/custom/off; see the edge's handleSpliceServerStatus).",
+      "handler": "ServerHandler.SetServerEdgeMotd",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/install-cooldown",
+      "auth": "session",
+      "authorization": "overview.read",
+      "description": "returns how many seconds remain on the post-install cooldown for a server, so the UI can disable power actions and show a countdown instead of letting the user click and get a 429.",
+      "handler": "ServerHandler.GetInstallCooldown",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/loader-metadata",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "persists a server's InstallerType (loader) + MinecraftVersion (and optional BuildNumber) WITHOUT reinstalling or wiping the server.",
+      "handler": "ServerHandler.DeclareServerLoaderMetadata",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/members",
+      "auth": "session",
+      "authorization": "members.read",
+      "description": "the member invites on one server.",
+      "handler": "MemberHandler.GetMembers",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/members",
+      "auth": "session",
+      "authorization": "members.write",
+      "description": "invites a user onto the server with a permission set.",
+      "handler": "MemberHandler.InviteMember",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/members/inherited",
+      "auth": "session",
+      "authorization": "members.read",
+      "description": "Returns users who have access via proxy inheritance (read-only view).",
+      "handler": "MemberHandler.GetInheritedMembers",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}",
+      "auth": "session",
+      "authorization": "members.delete",
+      "description": "revokes a member's access and records it in the server audit trail.",
+      "handler": "MemberHandler.RemoveMember",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/members/{userId:[0-9a-f-]{36}}",
+      "auth": "session",
+      "authorization": "members.write",
+      "description": "replaces one member's permission set and records the change in the server audit trail.",
+      "handler": "MemberHandler.UpdateMemberPermissions",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/migrate-storage",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "queues a migrate_storage command on the server's node.",
+      "handler": "ServerHandler.MigrateServerStorage",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/migration-status",
+      "auth": "session",
+      "authorization": "overview.read",
+      "description": "Returns the orchestrator-owned progress record the migration worker writes to dylaris:migration:\u003cuuid\u003e:orchestration, so the panel can poll it while a move is in flight.",
+      "handler": "ServerHandler.GetMigrationStatus",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/modpack-contents",
+      "auth": "session",
+      "authorization": "mods.read",
+      "description": "returns the modpack snapshot for the active sub-server: the Modrinth-identified members of the pack this server was installed from.",
+      "handler": "ServerModsHandler.ModpackContents",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/mods",
+      "auth": "session",
+      "authorization": "mods.read",
+      "description": "the mods installed on the server's ACTIVE sub-server, not on every sub-server it has.",
+      "handler": "ServerModsHandler.List",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/mods",
+      "auth": "session",
+      "authorization": "mods.write",
+      "description": "queues a mod install onto the active sub-server.",
+      "handler": "ServerModsHandler.Install",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}",
+      "auth": "session",
+      "authorization": "mods.delete",
+      "description": "queues removal of one mod from the active sub-server.",
+      "handler": "ServerModsHandler.Uninstall",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/name",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "renames a server and records the old and new name in its audit trail.",
+      "handler": "ServerHandler.UpdateServerName",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/players/action",
+      "auth": "session",
+      "authorization": "players.manage",
+      "description": "one of a fixed set of player commands.",
+      "handler": "PlayersHandler.Action",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/players/lists",
+      "auth": "session",
+      "authorization": "players.read",
+      "description": "bans, whitelist and operators straight out of the active sub-server's JSON files.",
+      "handler": "PlayersHandler.GetLists",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/players/online",
+      "auth": "session",
+      "authorization": "players.read",
+      "description": "RCON `list`, so the roster needs players.read rather than the right to run any command.",
+      "handler": "PlayersHandler.GetOnline",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/power",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "Controls Start, Stop, Kill and Restart",
+      "handler": "ServerHandler.ServerPowerHandler",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/proxy",
+      "auth": "session",
+      "authorization": "network.write",
+      "description": "Remove a server's proxy link",
+      "handler": "ServerHandler.UnlinkServerFromProxy",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/servers/{id:[0-9]+}/proxy",
+      "auth": "session",
+      "authorization": "network.write",
+      "description": "Link a game server to a proxy server",
+      "handler": "ServerHandler.LinkServerToProxy",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/proxy-endpoint",
+      "auth": "session",
+      "authorization": "network.read",
+      "description": "returns the private IP a server holds inside its proxy's overlay network.",
+      "handler": "ServerHandler.GetProxyEndpoint",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/rcon",
+      "auth": "session",
+      "authorization": "rcon.exec",
+      "description": "panel-side entry.",
+      "handler": "RconHandler.ExecForUser",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/rcon/config",
+      "auth": "session",
+      "authorization": "config.read",
+      "description": "returns enabled/port + whether a password is set.",
+      "handler": "RconHandler.GetConfig",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/servers/{id:[0-9]+}/rcon/config",
+      "auth": "session",
+      "authorization": "config.write",
+      "description": "enable/disable, set port + password.",
+      "handler": "RconHandler.SetConfig",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/reinstall",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "Reinstalls the active sub-server (version update)",
+      "handler": "ServerHandler.ReinstallServer",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/resources",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "changes RAM, CPU and disk limits.",
+      "handler": "ServerHandler.UpdateServerResources",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/routes",
+      "auth": "session",
+      "authorization": "network.read",
+      "description": "the gateway routes belonging to one server, filtered out of the full Redis set by server UUID.",
+      "handler": "GatewayHandler.GetServerRoutes",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/routes",
+      "auth": "session",
+      "authorization": "network.write",
+      "description": "queues a route for one server.",
+      "handler": "GatewayHandler.CreateServerRoute",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/routes/{domain:.+}",
+      "auth": "session",
+      "authorization": "network.write",
+      "description": "queues removal of one of this server's routes.",
+      "handler": "GatewayHandler.DeleteServerRoute",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/scheduled-tasks",
+      "auth": "session",
+      "authorization": "schedule.read",
+      "description": "the cron tasks configured on one server.",
+      "handler": "ScheduledTasksHandler.List",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/scheduled-tasks",
+      "auth": "session",
+      "authorization": "schedule.write",
+      "description": "adds a cron task.",
+      "handler": "ScheduledTasksHandler.Create",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}",
+      "auth": "session",
+      "authorization": "schedule.delete",
+      "description": "removes a cron task belonging to the server in the path.",
+      "handler": "ScheduledTasksHandler.Delete",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}",
+      "auth": "session",
+      "authorization": "schedule.write",
+      "description": "edits a cron task belonging to the server in the path.",
+      "handler": "ScheduledTasksHandler.Update",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/setup",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "queues first-time provisioning of a created server: image, loader and version.",
+      "handler": "ServerHandler.SetupServer",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/sftp-credentials",
+      "auth": "session",
+      "authorization": "sftp.access",
+      "description": "Returns SFTP connection info.",
+      "handler": "ServerHandler.GetSftpCredentials",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/spark/profiles",
+      "auth": "session",
+      "authorization": "spark.use",
+      "description": "the 50 most recent spark profiles for one server, newest first.",
+      "handler": "SparkHandler.List",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/spark/profiles",
+      "auth": "session",
+      "authorization": "spark.use",
+      "description": "records a finished spark profile.",
+      "handler": "SparkHandler.Record",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}",
+      "auth": "session",
+      "authorization": "spark.use",
+      "description": "removes one profile reference.",
+      "handler": "SparkHandler.Delete",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/stats/disk",
+      "auth": "session",
+      "authorization": "stats.read",
+      "description": "Returns disk usage data for the server.",
+      "handler": "StatsHandler.GetDisk",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/stats/history",
+      "auth": "session",
+      "authorization": "stats.read",
+      "description": "Returns historical stats data points from PostgreSQL.",
+      "handler": "StatsHandler.GetHistory",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/stats/stream",
+      "auth": "session",
+      "authorization": "stats.read",
+      "description": "SSE endpoint: sends buffered data from Redis Stream first, then live pub/sub updates.",
+      "handler": "StatsHandler.StreamStats",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/storage-path",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "returns the current storage path for a server and all available storage paths on its node (from the node's Redis heartbeat).",
+      "handler": "ServerHandler.GetServerStoragePath",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/sub-servers/{subServerName}",
+      "auth": "session",
+      "authorization": "server.delete",
+      "description": "Delete a single sub-server",
+      "handler": "ServerHandler.DeleteSubServer",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/switch",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "Switches the active MC server in the container",
+      "handler": "ServerHandler.SwitchSubServer",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/tabs",
+      "auth": "session",
+      "authorization": "tabs.read",
+      "description": "the custom tabs configured on one server, including share slug and expiry where a proxied tab has them.",
+      "handler": "ServerTabsHandler.List",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/tabs",
+      "auth": "session",
+      "authorization": "tabs.write",
+      "description": "adds a custom tab.",
+      "handler": "ServerTabsHandler.Create",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}",
+      "auth": "session",
+      "authorization": "tabs.write",
+      "description": "removes a custom tab from the server in the path.",
+      "handler": "ServerTabsHandler.Delete",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}",
+      "auth": "session",
+      "authorization": "tabs.write",
+      "description": "edits a custom tab, applying the same proxied-tab gates as creation.",
+      "handler": "ServerTabsHandler.Update",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "ANY",
+      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy",
+      "auth": "none",
+      "authorization": "public",
+      "description": "ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth).",
+      "handler": "ProxyHandler.InDashboard",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth",
+      "auth": "session",
+      "authorization": "tabs.read",
+      "description": "registered on the NORMAL /api subrouter behind AuthMiddleware and the router's tabs.read RequireCap - this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) plus server-level access enforcement for free instead of re-implementing it here.",
+      "handler": "ProxyHandler.MintProxyAuth",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "ANY",
+      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth).",
+      "handler": "ProxyHandler.InDashboard",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link",
+      "auth": "session",
+      "authorization": "tabs.write",
+      "description": "null the slug so the standalone page 404s.",
+      "handler": "ServerTabsHandler.RevokeShareLink",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link",
+      "auth": "session",
+      "authorization": "tabs.write",
+      "description": "(re)generate the unguessable slug for a proxied page tab.",
+      "handler": "ServerTabsHandler.RotateShareLink",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/transfer",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "(tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on.",
+      "handler": "ServerHandler.TransferServer",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/backup",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "SettingsHandler.GetBackupConfig",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/backup",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "SettingsHandler.SaveBackupConfig",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/beam",
+      "auth": "session",
+      "authorization": "no capability on this method",
+      "description": "all authenticated users (relay address + download link needed in Files tab)",
+      "handler": "SettingsHandler.GetBeamSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/beam",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "SettingsHandler.SaveBeamSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/core-storage",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "CoreStorageHandler.GetConfig",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/core-storage",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "CoreStorageHandler.SaveConfig",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/core-storage/test",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "CoreStorageHandler.TestConnection",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/dns",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "the effective DNS configuration: provider, zones, per-region names, orphan grace and the names Core currently manages.",
+      "handler": "DNSSettingsHandler.Get",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/dns",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "settings.write.",
+      "handler": "DNSSettingsHandler.Save",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/dns/zones",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "lists the zones the credential can see.",
+      "handler": "DNSSettingsHandler.Zones",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/features",
+      "auth": "session",
+      "authorization": "no capability on this method",
+      "description": "which optional features are switched on.",
+      "handler": "SettingsHandler.GetFeatureSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/features",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "SettingsHandler.SaveFeatureSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/filemanager",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "SettingsHandler.GetFileManagerSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/filemanager",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "SettingsHandler.SaveFileManagerSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/filemanager/limits",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "available to ALL authenticated users",
+      "handler": "SettingsHandler.GetUserLimits",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/gateway",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "SettingsHandler.GetGatewaySettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/gateway",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "SettingsHandler.SaveGatewaySettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/gateway/hub-redis-admin",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "non-secret status only.",
+      "handler": "HubRedisAdminHandler.GetStatus",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/gateway/hub-redis-admin",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "create gw-hub-admin on Core's own Redis (the ONE shared instance) and return the generated password ONCE, or in manual mode return the ready-to-paste command.",
+      "handler": "HubRedisAdminHandler.Provision",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/gateway/hub-redis-admin/roll",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "re-mint the password on the recorded target.",
+      "handler": "HubRedisAdminHandler.Roll",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/placement",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "SettingsHandler.GetPlacementSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/placement",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "SettingsHandler.SavePlacementSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/routing-mode",
+      "auth": "session",
+      "authorization": "no capability on this method",
+      "description": "available to all authenticated users",
+      "handler": "SettingsHandler.GetRoutingMode",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/routing-mode",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route)",
+      "handler": "SettingsHandler.SaveRoutingMode",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/servers",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "SettingsHandler.GetServerSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/servers",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "SettingsHandler.SaveServerSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/storage-placement",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "The fleet-wide default a node uses when it has no policy of its own, plus every storage path any node currently reports (no single node's list describes the fleet).",
+      "handler": "NodeHandler.GetFleetStoragePlacement",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/settings/storage-placement",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "sets fleet- wide storage placement to auto or manual, manual carrying an explicit node order.",
+      "handler": "NodeHandler.SetFleetStoragePlacement",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/storage-reach",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read.",
+      "handler": "CoreStorageHandler.StorageReachStatus",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/warp-firewall",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read (RequireCap at the route).",
+      "handler": "SettingsHandler.GetWarpFirewallSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/warp-firewall",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write (RequireCap at the route).",
+      "handler": "SettingsHandler.SaveWarpFirewallSettings",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/setup/admin",
+      "auth": "none",
+      "authorization": "public",
+      "description": "open route (rate-limited).",
+      "handler": "SetupHandler.CreateAdmin",
+      "group": "setup",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/setup/status",
+      "auth": "none",
+      "authorization": "public",
+      "description": "open route.",
+      "handler": "SetupHandler.Status",
+      "group": "setup",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/share/{token}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "is PUBLIC, unauthenticated.",
+      "handler": "PacksHandler.ServeShare",
+      "group": "share",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/solder/clients",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "the Technic launcher clients the caller has registered.",
+      "handler": "SolderHandler.ListClients",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/solder/clients",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "registers a Technic launcher client under the caller.",
+      "handler": "SolderHandler.CreateClient",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/solder/clients/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.delete",
+      "description": "removes one of the caller's clients; the delete is owner-scoped.",
+      "handler": "SolderHandler.DeleteClient",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/solder/keys",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "the caller's Solder API keys, hashes only.",
+      "handler": "SolderHandler.ListKeys",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/solder/keys",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "mints a 64-character Solder API key.",
+      "handler": "SolderHandler.CreateKey",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/solder/keys/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.delete",
+      "description": "revokes one of the caller's Solder keys.",
+      "handler": "SolderHandler.DeleteKey",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/api/",
+      "auth": "none",
+      "authorization": "public",
+      "description": "the root probe.",
+      "handler": "SolderHandler.Info",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/api/modpack",
+      "auth": "none",
+      "authorization": "public",
+      "description": "Default: {modpacks:{slug:displayName}, mirror_url}.",
+      "handler": "SolderHandler.ListModpacks",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/api/modpack/{slug}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "404 (Solder-shaped) when the pack does not exist or is private/hidden without valid auth.",
+      "handler": "SolderHandler.GetModpack",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/api/modpack/{slug}/{build}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "the differential-update payload.",
+      "handler": "SolderHandler.GetBuild",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/api/verify/{key}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "Validates a Solder API key by hash lookup.",
+      "handler": "SolderHandler.VerifyKey",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/mirror/{rest:.*}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "streams a stored public artifact (a Solder mod zip, a loader zip, or a rendered pack .mrpack).",
+      "handler": "SolderHandler.SolderMirror",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/sse-ticket",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "issues a short-lived, single-purpose ticket that an EventSource can carry in the URL (?ticket=) instead of the long-lived session JWT.",
+      "handler": "AuthHandler.MintSSETicket",
+      "group": "sse-ticket",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/status",
+      "auth": "none",
+      "authorization": "public",
+      "description": "liveness for the login page.",
+      "handler": "AuthHandler.StatusHandler",
+      "group": "status",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/storage/connection",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "This exists because the SSE channel has no replay and its hello frame carries no state: a panel that connects DURING an outage would otherwise wait for the recovery event without ever having been told there was something to recover from.",
+      "handler": "StorageConnectionHandler.GetConnection",
+      "group": "storage",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/storage-connections",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "The secret never appears in the response: SecretAccessKey is json:\"-\" and the store does not decrypt on the list path, so only the SecretSet flag reports that one is stored.",
+      "handler": "StorageConnectionsHandler.ListConnections",
+      "group": "storage-connections",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/storage-connections",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "adds a reusable storage connection.",
+      "handler": "StorageConnectionsHandler.CreateConnection",
+      "group": "storage-connections",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/storage-connections/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "removes a storage connection.",
+      "handler": "StorageConnectionsHandler.DeleteConnection",
+      "group": "storage-connections",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/storage-connections/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "The secret is write-only: the metadata update never touches secret_enc, and the secret is rotated only when a non-blank value was submitted.",
+      "handler": "StorageConnectionsHandler.UpdateConnection",
+      "group": "storage-connections",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/storage-connections/{id:[0-9]+}/test",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "Loads the saved connection (which decrypts the secret), builds a provider and runs the write/read-back/delete probe.",
+      "handler": "StorageConnectionsHandler.TestConnection",
+      "group": "storage-connections",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/store/link/start",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "authed panel user.",
+      "handler": "StoreHandler.LinkStart",
+      "group": "store",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/store/link/verify",
+      "auth": "none",
+      "authorization": "public",
+      "description": "store-key.",
+      "handler": "StoreHandler.LinkVerify",
+      "group": "store",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/store/provision",
+      "auth": "none",
+      "authorization": "public",
+      "description": "store-key.",
+      "handler": "StoreHandler.Provision",
+      "group": "store",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/store/status",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "authed panel user.",
+      "handler": "StoreHandler.Status",
+      "group": "store",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/store/usage",
+      "auth": "none",
+      "authorization": "public",
+      "description": "store-key.",
+      "handler": "StoreHandler.GetUsage",
+      "group": "store",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/store/verify-user",
+      "auth": "none",
+      "authorization": "public",
+      "description": "store-key.",
+      "handler": "StoreHandler.VerifyUser",
+      "group": "store",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/capabilities",
+      "auth": "none",
+      "authorization": "public",
+      "description": "returns the system capabilities",
+      "handler": "SystemHandler.GetCapabilities",
+      "group": "system",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/core-info",
+      "auth": "none",
+      "authorization": "public",
+      "description": "returns the region + id of the Core instance that handled the request.",
+      "handler": "SystemHandler.GetCoreInfo",
+      "group": "system",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/events",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "SSE stream subscribed to Redis Pub/Sub channel `dylaris:system:events`.",
+      "handler": "SystemEventsHandler.StreamEvents",
+      "group": "system",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/features",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Returns the platform-wide feature toggles the panel needs to gate UI without hitting per-resource endpoints first.",
+      "handler": "SystemFeaturesHandler.Get",
+      "group": "system",
+      "external": false
+    },
+    {
+      "method": "ANY",
+      "path": "/api/tabproxy/{token}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "serves the share data plane's STATUS, and only its status, as reached on the PANEL origin: it runs the full gate chain and answers with the resulting code alone, never with a byte of the container's response.",
+      "handler": "ProxyHandler.Public",
+      "group": "tabproxy",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/tabproxy/{token}/auth",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "registered on the NORMAL /api subrouter behind AuthMiddleware - like MintProxyAuth, this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) for free instead of re-implementing it.",
+      "handler": "ProxyHandler.MintPublicProxyAuth",
+      "group": "tabproxy",
+      "external": false
+    },
+    {
+      "method": "ANY",
+      "path": "/api/tabproxy/{token}/{rest:.*}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "serves the share data plane's STATUS, and only its status, as reached on the PANEL origin: it runs the full gate chain and answers with the resulting code alone, never with a byte of the container's response.",
+      "handler": "ProxyHandler.Public",
+      "group": "tabproxy",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/ticket-canned-responses",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Available to support+admin.",
+      "handler": "CannedResponsesHandler.ListForSupport",
+      "group": "ticket-canned-responses",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/ticket-categories",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "any auth.",
+      "handler": "TicketCategoriesHandler.ListCategories",
+      "group": "ticket-categories",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/tickets",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "ListTickets GET /api/tickets — user's own tickets (with watcher includes).",
+      "handler": "TicketsHandler.ListMyTickets",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "opens a ticket and records its creation in the ticket audit trail.",
+      "handler": "TicketsHandler.CreateTicket",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/tickets/inbox",
+      "auth": "session",
+      "authorization": "tickets.read",
+      "description": "support inbox view, gated by RequireCap(\"tickets.read\") at the route (Phase 4 Task 15; the former in-handler \"support or admin\" pure gate was removed since the route now supersedes it).",
+      "handler": "TicketsHandler.ListInboxTickets",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tickets/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "admin only, gated by tickets.deletion_enabled.",
+      "handler": "TicketDeletionsHandler.DeleteTicket",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/tickets/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "one ticket with its messages, watchers and audit trail.",
+      "handler": "TicketsHandler.GetTicket",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/tickets/{id:[0-9]+}/assignment",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "support/admin only.",
+      "handler": "TicketsHandler.UpdateAssignment",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/tickets/{id:[0-9]+}/attachments",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the files on one ticket, once the caller passes the same visibility check the ticket itself uses: author, watcher, or staff whose support team matches.",
+      "handler": "TicketAttachmentsHandler.ListAttachments",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/{id:[0-9]+}/attachments",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "attaches a file to a ticket.",
+      "handler": "TicketAttachmentsHandler.UploadAttachment",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Uploader OR support/admin OR ticket owner can delete.",
+      "handler": "TicketAttachmentsHandler.DeleteAttachment",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "streams one attachment.",
+      "handler": "TicketAttachmentsHandler.DownloadAttachment",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/{id:[0-9]+}/messages",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "adds a reply and notifies the other participants.",
+      "handler": "TicketsHandler.AddReply",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/tickets/{id:[0-9]+}/priority",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "support/admin only.",
+      "handler": "TicketsHandler.UpdatePriority",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/tickets/{id:[0-9]+}/status",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "changes a ticket's status and records the transition, from and to, in the audit trail.",
+      "handler": "TicketsHandler.UpdateStatus",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/{id:[0-9]+}/watchers",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Users may add watchers when tickets.allow_users_to_add_watchers=TRUE.",
+      "handler": "TicketsHandler.AddWatcher",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "removes a watcher and records it in the audit trail.",
+      "handler": "TicketsHandler.RemoveWatcher",
+      "group": "tickets",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/tools/beam",
+      "auth": "none",
+      "authorization": "public",
+      "description": "the public, session-less \"download Beam\" link.",
+      "handler": "beamToolsRedirect",
+      "group": "tools",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/updates",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "ADMIN ONLY.",
+      "handler": "UpdatesHandler.GetUpdates",
+      "group": "updates",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/users",
+      "auth": "session",
+      "authorization": "users.read",
+      "description": "every account.",
+      "handler": "UserHandler.GetAllUsers",
+      "group": "users",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/users",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "creates an account and assigns its regions.",
+      "handler": "UserHandler.CreateUser",
+      "group": "users",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users/{id:[0-9a-f-]{36}}",
+      "auth": "session",
+      "authorization": "users.delete",
+      "description": "deletes an account.",
+      "handler": "UserHandler.DeleteUser",
+      "group": "users",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users/{id:[0-9a-f-]{36}}/2fa",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "(admin-only) Wipes a user's 2FA without their password — for the case when the user has lost both their authenticator AND their backup codes.",
+      "handler": "AuthHandler.AdminResetTOTPHandler",
+      "group": "users",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/users/{id:[0-9a-f-]{36}}/password",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "sets a new password for an account, hashed before it is stored.",
+      "handler": "UserHandler.ResetUserPassword",
+      "group": "users",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/{id:[0-9a-f-]{36}}/route-limit",
+      "auth": "session",
+      "authorization": "users.read",
+      "description": "one user's gateway route allowance: default when no override exists, otherwise custom or disabled.",
+      "handler": "UserHandler.GetUserRouteLimit",
+      "group": "users",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/users/{id:[0-9a-f-]{36}}/route-limit",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "sets a user's gateway route allowance to default, custom with a count, or disabled.",
+      "handler": "UserHandler.SetUserRouteLimit",
+      "group": "users",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/versions",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the available versions for one server software, chosen with ?software=.",
+      "handler": "VersionHandler.GetVersions",
+      "group": "versions",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/versions/software",
+      "auth": "none",
+      "authorization": "public",
+      "description": "(public)",
+      "handler": "VersionHandler.GetSoftwareList",
+      "group": "versions",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/warp/assignment",
+      "auth": "warp key",
+      "authorization": "no capability",
+      "description": "the client's lightweight poll for its current endpoint order (warp API-key auth).",
+      "handler": "WarpHandler.Assignment",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/warp/deploy-config",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "any authenticated user.",
+      "handler": "WarpHandler.GetDeployConfig",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/warp/enroll",
+      "auth": "warp key",
+      "authorization": "no capability",
+      "description": "registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to.",
+      "handler": "WarpHandler.Enroll",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/warp/leaders",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "(admin) creates or updates a leader endpoint within a region.",
+      "handler": "WarpHandler.UpsertLeader",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/warp/leaders/{leaderId}",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "(admin) removes a leader endpoint.",
+      "handler": "WarpHandler.DeleteLeader",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/warp/link-boot",
+      "auth": "warp key",
+      "authorization": "no capability",
+      "description": "a route-only link presents its warp key and receives its derived tunnel token plus a Redis credential scoped to its own keys.",
+      "handler": "WarpHandler.LinkBoot",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/warp/link-kits",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "(tenant) returns the caller's route-only link kits (metadata only, no secrets).",
+      "handler": "WarpHandler.ListLinkKits",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/warp/link-kits",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "(tenant) creates a route-only \"link kit\": a warp enrollment key bound to the calling user plus an auto-generated link identity (node_id).",
+      "handler": "WarpHandler.MintLinkKit",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/warp/link-kits/{linkID}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "owner or admin.",
+      "handler": "WarpHandler.RevokeLinkKit",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/warp/node-keys",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting).",
+      "handler": "WarpHandler.ListNodeWarpKeys",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/warp/node-keys",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "tenant self-service.",
+      "handler": "WarpHandler.MintNodeWarpKey",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/warp/node-keys/{nodeID}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "owner or admin.",
+      "handler": "WarpHandler.RevokeNodeWarpKey",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/warp/regions",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "returns the full warp registry (regions + leaders + liveness + peer counts) for the admin panel.",
+      "handler": "WarpHandler.ListRegions",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/warp/regions",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "(admin) creates or updates a region's subnet + enabled flag.",
+      "handler": "WarpHandler.UpsertRegion",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/warp/regions/{region}",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "(admin) removes a region (cascades its leaders).",
+      "handler": "WarpHandler.DeleteRegion",
+      "group": "warp",
+      "external": false
+    }
+  ],
+  "counts": {
+    "total": 476,
+    "byAuth": {
+      "none": 36,
+      "session": 427,
+      "user API key": 10,
+      "warp key": 3
+    },
+    "byGroup": {
+      "admin": 111,
+      "auth": 18,
+      "authz": 3,
+      "backup-jobs": 4,
+      "backup-runs": 3,
+      "backup-storages": 5,
+      "beam": 5,
+      "disk": 4,
+      "external": 10,
+      "files": 10,
+      "gateway": 19,
+      "gateway-bandwidth": 4,
+      "grants": 3,
+      "healthz": 1,
+      "infrastructure": 2,
+      "library": 6,
+      "maintenance": 1,
+      "me": 19,
+      "modrinth": 5,
+      "modules": 6,
+      "nodes": 17,
+      "notifications": 4,
+      "packs": 27,
+      "placement": 3,
+      "regions": 1,
+      "scheduled-tasks": 1,
+      "server-roles": 4,
+      "servers": 70,
+      "settings": 31,
+      "setup": 2,
+      "share": 1,
+      "solder": 12,
+      "sse-ticket": 1,
+      "status": 1,
+      "storage": 1,
+      "storage-connections": 5,
+      "store": 6,
+      "system": 4,
+      "tabproxy": 3,
+      "ticket-canned-responses": 1,
+      "ticket-categories": 1,
+      "tickets": 15,
+      "tools": 1,
+      "updates": 1,
+      "users": 7,
+      "versions": 2,
+      "warp": 15
+    },
+    "external": 10
+  }
+}
