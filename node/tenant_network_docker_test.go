@@ -16,6 +16,9 @@ type fakeDockerNet struct {
 	connects []string // "netID|container"
 	removed  []string
 	nextID   int
+	// connectErr[container] is returned by NetworkConnect for that container,
+	// so a test can stage an absent Link the way Docker reports one.
+	connectErr map[string]error
 }
 
 func (f *fakeDockerNet) NetworkList(_ context.Context, _ network.ListOptions) ([]network.Summary, error) {
@@ -33,7 +36,7 @@ func (f *fakeDockerNet) NetworkCreate(_ context.Context, name string, opts netwo
 	f.nextID++
 	id := fmt.Sprintf("net%d", f.nextID)
 	f.created = append(f.created, opts)
-	sum := network.Summary{Name: name, ID: id, Driver: opts.Driver}
+	sum := network.Summary{Name: name, ID: id, Driver: opts.Driver, Labels: opts.Labels}
 	if opts.IPAM != nil {
 		sum.IPAM = *opts.IPAM
 	}
@@ -41,6 +44,9 @@ func (f *fakeDockerNet) NetworkCreate(_ context.Context, name string, opts netwo
 	return network.CreateResponse{ID: id}, nil
 }
 func (f *fakeDockerNet) NetworkConnect(_ context.Context, id, c string, _ *network.EndpointSettings) error {
+	if err, ok := f.connectErr[c]; ok {
+		return err
+	}
 	f.connects = append(f.connects, id+"|"+c)
 	return nil
 }
@@ -80,9 +86,11 @@ func TestEnsureTenantNetworkCreatesAndIsIdempotent(t *testing.T) {
 	if f.created[0].Driver != "bridge" || f.created[0].Attachable {
 		t.Fatalf("driver/attachable = %s/%v, want bridge/false", f.created[0].Driver, f.created[0].Attachable)
 	}
-	// Node connected to the tenant net.
-	if len(f.connects) != 1 || f.connects[0] != "net1|node-host" {
-		t.Fatalf("connects = %v, want [net1|node-host]", f.connects)
+	// Node AND Link connected to the tenant net. The Link is not optional: a
+	// managed server's route target is mc_<uuid> by name, which resolves only
+	// on a network the Link is on.
+	if len(f.connects) != 2 || f.connects[0] != "net1|node-host" || f.connects[1] != "net1|"+linkContainerName {
+		t.Fatalf("connects = %v, want [net1|node-host net1|%s]", f.connects, linkContainerName)
 	}
 	// Second call: no new network.
 	m.mu.Lock()
@@ -93,6 +101,54 @@ func TestEnsureTenantNetworkCreatesAndIsIdempotent(t *testing.T) {
 	}
 	if len(f.created) != 1 {
 		t.Fatalf("idempotency broken: created %d networks", len(f.created))
+	}
+}
+
+// AttachLinkToAll is what covers a Link recreated AFTER the tenant nets exist
+// (image update, token roll). It must join every tenant net and nothing else -
+// putting the Link on dylaris_net a second time is harmless, but joining an
+// unrelated network is not.
+func TestAttachLinkToAllJoinsOnlyTenantNets(t *testing.T) {
+	m, f := newTestManager(t, "bridge")
+	f.nets = append(f.nets, network.Summary{Name: "some-other-stack", ID: "foreign1"})
+	for _, owner := range []string{"owner-A", "owner-B"} {
+		m.mu.Lock()
+		if _, err := m.EnsureTenantNetwork(owner); err != nil {
+			m.mu.Unlock()
+			t.Fatalf("EnsureTenantNetwork(%s): %v", owner, err)
+		}
+		m.mu.Unlock()
+	}
+	f.connects = nil // only look at what AttachLinkToAll does
+
+	m.AttachLinkToAll()
+
+	want := []string{"net1|" + linkContainerName, "net2|" + linkContainerName}
+	if len(f.connects) != len(want) {
+		t.Fatalf("connects = %v, want %v", f.connects, want)
+	}
+	for i, w := range want {
+		if f.connects[i] != w {
+			t.Fatalf("connects = %v, want %v", f.connects, want)
+		}
+	}
+}
+
+// A Link that does not exist (direct-port mode, or no gateway configured) is a
+// no-op, not a failure: server creation must not depend on a sidecar that this
+// deployment never runs.
+func TestEnsureTenantNetworkSurvivesAMissingLink(t *testing.T) {
+	m, f := newTestManager(t, "bridge")
+	f.connectErr = map[string]error{linkContainerName: fmt.Errorf("Error: No such container: %s", linkContainerName)}
+
+	m.mu.Lock()
+	name, err := m.EnsureTenantNetwork("owner-A")
+	m.mu.Unlock()
+	if err != nil {
+		t.Fatalf("EnsureTenantNetwork must not fail when the Link is absent: %v", err)
+	}
+	if name != "dylaris_tenant_owner-a" {
+		t.Fatalf("name = %s, want dylaris_tenant_owner-a", name)
 	}
 }
 
@@ -119,8 +175,8 @@ func TestEndpointsForAssignsFixedIP(t *testing.T) {
 	if !ok {
 		t.Fatalf("no endpoint for tenant net in %v", nc.EndpointsConfig)
 	}
-	if ep.IPAMConfig == nil || ep.IPAMConfig.IPv4Address != "10.0.0.3" {
-		t.Fatalf("fixed IP = %v, want 10.0.0.3", ep.IPAMConfig)
+	if ep.IPAMConfig == nil || ep.IPAMConfig.IPv4Address != "10.0.0.4" {
+		t.Fatalf("fixed IP = %v, want 10.0.0.4", ep.IPAMConfig)
 	}
 	// Empty ownerID reverse-resolves via the allocator (restart path).
 	nc2, err := m.endpointsFor("srv-1", "")

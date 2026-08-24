@@ -136,6 +136,7 @@ func (t *TenantNetworkManager) EnsureTenantNetwork(ownerID string) (string, erro
 	if err := t.connectNode(netID, nodeIPInSubnet(subnet)); err != nil {
 		return "", err
 	}
+	t.connectLink(netID, linkIPInSubnet(subnet))
 	return name, nil
 }
 
@@ -152,6 +153,63 @@ func (t *TenantNetworkManager) connectNode(netID string, ip net.IP) error {
 		return nil
 	}
 	return fmt.Errorf("connect node to tenant net: %w", err)
+}
+
+// connectLink attaches the node-managed Link sidecar to a tenant net.
+//
+// A managed server's route target is its CONTAINER NAME (mc_<uuid>, written by
+// Core's hub bridge), so it resolves only on a network the Link is on. Without
+// this an isolated server has no player ingress at all - and nothing looks
+// wrong: the route exists, the container runs, the Link is healthy, and the
+// name simply never resolves. Measured 2026-08-24.
+//
+// The address is PINNED (linkIPInSubnet), not left to Docker: a dynamic address
+// comes out of the same space the allocator pins server slots in, and Docker
+// hands out the lowest free one - which is a stopped server's reserved address.
+//
+// No Link container (direct-port mode, or no gateway configured) is a no-op,
+// not a failure.
+func (t *TenantNetworkManager) connectLink(netID string, ip net.IP) {
+	err := t.api.NetworkConnect(t.ctx, netID, linkContainerName, &network.EndpointSettings{
+		IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: ip.String()},
+	})
+	if err == nil {
+		return
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "already exists") || strings.Contains(msg, "already connected") || strings.Contains(msg, "No such container") {
+		return
+	}
+	log.Printf("tenant-net: could not attach %s to %s - isolated servers on it have no player ingress: %v", linkContainerName, netID, err)
+}
+
+// AttachLinkToAll connects the Link sidecar to every existing tenant net. The
+// Link is recreated on its own schedule (image update, token roll), so one that
+// comes up after the tenant nets exist would otherwise never join them.
+func (t *TenantNetworkManager) AttachLinkToAll() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	nets, err := t.api.NetworkList(t.ctx, network.ListOptions{})
+	if err != nil {
+		log.Printf("tenant-net: cannot list networks to attach %s: %v", linkContainerName, err)
+		return
+	}
+	for _, n := range nets {
+		if n.Labels["dylaris.role"] != "tenant-network" {
+			continue
+		}
+		// The pinned address is derived from the network's OWN subnet, so an
+		// enlarged tenant net gets the right one without any stored state.
+		for _, c := range n.IPAM.Config {
+			_, subnet, err := net.ParseCIDR(c.Subnet)
+			if err != nil {
+				continue
+			}
+			t.connectLink(n.ID, linkIPInSubnet(subnet))
+			break
+		}
+	}
 }
 
 // resolveOwner returns the owner for a server: the supplied ownerID when set,
@@ -216,6 +274,9 @@ func (t *TenantNetworkManager) release(serverUUID string) {
 		return
 	}
 	_ = t.api.NetworkDisconnect(t.ctx, id, t.nodeContainer, true)
+	// The Link is on here too (connectLink); an endpoint left behind makes the
+	// remove below fail with "has active endpoints" and strands the network.
+	_ = t.api.NetworkDisconnect(t.ctx, id, linkContainerName, true)
 	if rerr := t.api.NetworkRemove(t.ctx, id); rerr != nil {
 		log.Printf("tenant-net: remove empty %s: %v", name, rerr)
 	} else {

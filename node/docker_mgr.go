@@ -452,6 +452,12 @@ func (dm *DockerManager) EnsureLinkContainer(image, nodeID, linkSecret, linkDisc
 	if err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("link container start error: %v", err)
 	}
+	// Isolated servers live on their owner's tenant net, and the route points at
+	// mc_<uuid> by NAME - so a Link that is not on those networks cannot resolve
+	// a single one of them. No-op when isolation is off.
+	if dm.tenant != nil {
+		dm.tenant.AttachLinkToAll()
+	}
 	return nil
 }
 

@@ -13,10 +13,17 @@ import (
 
 const (
 	// tenantPrefixDefault is the block size handed to a new owner: /26 = 64
-	// addresses, ~60 usable server slots after network/gateway/node/broadcast.
+	// addresses, ~59 usable server slots after network/gateway/node/link/broadcast.
 	tenantPrefixDefault = 26
-	// tenantSlotBase reserves .0 network, .1 gateway (Docker default) and .2 the
-	// node. Server slots are 1-based and start at .3 (base + tenantSlotBase + slot).
+	// tenantSlotBase reserves .0 network, .1 gateway (Docker default), .2 the
+	// node and .3 the Link sidecar. Server slots are 1-based and start at .4
+	// (base + tenantSlotBase + 1 + slot).
+	//
+	// The Link's address is PINNED for the same reason the node's is: connecting
+	// it without one let Docker's dynamic IPAM hand it .3, which the allocator
+	// had reserved for server slot 1 - the server then failed to start with
+	// "Address already in use" and the reconciler retried forever. Measured
+	// 2026-08-24; the collision is invisible until a pinned server restarts.
 	tenantSlotBase = 2
 )
 
@@ -55,9 +62,10 @@ func parseCIDRs(cidrs []string) []*net.IPNet {
 }
 
 // capacityForPrefix returns the usable server slots in a subnet of the given
-// prefix length: total addresses minus network, gateway, node and broadcast.
+// prefix length: total addresses minus network, gateway, node, Link and
+// broadcast.
 func capacityForPrefix(prefixLen int) int {
-	usable := (1 << (32 - prefixLen)) - 4
+	usable := (1 << (32 - prefixLen)) - 5
 	if usable < 0 {
 		return 0
 	}
@@ -78,10 +86,16 @@ func nodeIPInSubnet(subnet *net.IPNet) net.IP {
 	return offsetIP(subnet, uint32(tenantSlotBase))
 }
 
+// linkIPInSubnet returns the fixed IPv4 the Link sidecar pins: network + 3,
+// immediately after the node and before the first server slot.
+func linkIPInSubnet(subnet *net.IPNet) net.IP {
+	return offsetIP(subnet, uint32(tenantSlotBase)+1)
+}
+
 // serverIPInSubnet returns the fixed IPv4 for a 1-based server slot: network +
-// tenantSlotBase + slot (slot 1 = .3 when the subnet base is .0).
+// tenantSlotBase + 1 + slot (slot 1 = .4 when the subnet base is .0).
 func serverIPInSubnet(subnet *net.IPNet, slot int) net.IP {
-	return offsetIP(subnet, uint32(tenantSlotBase)+uint32(slot))
+	return offsetIP(subnet, uint32(tenantSlotBase)+1+uint32(slot))
 }
 
 func offsetIP(subnet *net.IPNet, off uint32) net.IP {

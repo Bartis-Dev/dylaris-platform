@@ -49,9 +49,9 @@ func TestCapacityForPrefix(t *testing.T) {
 		prefix int
 		want   int
 	}{
-		{26, 60}, // 64 - 4
-		{25, 124},
-		{24, 252},
+		{26, 59}, // 64 - 5 (network, gateway, node, link, broadcast)
+		{25, 123},
+		{24, 251},
 	}
 	for _, c := range cases {
 		if got := capacityForPrefix(c.prefix); got != c.want {
@@ -74,20 +74,20 @@ func TestNextPrefixLen(t *testing.T) {
 
 func TestServerIPInSubnetStableAndDistinct(t *testing.T) {
 	sn := mustCIDR(t, "10.0.0.0/26")
-	// node is .2; slot 1 -> .3, slot 60 -> .62.
+	// node is .2, link is .3; slot 1 -> .4, slot 59 -> .62.
 	if ip := nodeIPInSubnet(sn); ip.String() != "10.0.0.2" {
 		t.Fatalf("nodeIPInSubnet = %s, want 10.0.0.2", ip)
 	}
-	if ip := serverIPInSubnet(sn, 1); ip.String() != "10.0.0.3" {
-		t.Fatalf("serverIPInSubnet(slot 1) = %s, want 10.0.0.3", ip)
+	if ip := serverIPInSubnet(sn, 1); ip.String() != "10.0.0.4" {
+		t.Fatalf("serverIPInSubnet(slot 1) = %s, want 10.0.0.4", ip)
 	}
-	if ip := serverIPInSubnet(sn, 60); ip.String() != "10.0.0.62" {
-		t.Fatalf("serverIPInSubnet(slot 60) = %s, want 10.0.0.62", ip)
+	if ip := serverIPInSubnet(sn, 59); ip.String() != "10.0.0.62" {
+		t.Fatalf("serverIPInSubnet(slot 59) = %s, want 10.0.0.62", ip)
 	}
 	// Same slot in a shifted subnet (enlarge case) remaps deterministically.
 	big := mustCIDR(t, "10.0.1.0/25")
-	if ip := serverIPInSubnet(big, 1); ip.String() != "10.0.1.3" {
-		t.Fatalf("serverIPInSubnet in /25 slot 1 = %s, want 10.0.1.3", ip)
+	if ip := serverIPInSubnet(big, 1); ip.String() != "10.0.1.4" {
+		t.Fatalf("serverIPInSubnet in /25 slot 1 = %s, want 10.0.1.4", ip)
 	}
 }
 
@@ -150,8 +150,8 @@ func TestAllocatorSubnetAndSlotStable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ipFor: %v", err)
 	}
-	if ip.String() != "10.0.0.3" {
-		t.Fatalf("srv-1 ip = %s, want 10.0.0.3", ip)
+	if ip.String() != "10.0.0.4" {
+		t.Fatalf("srv-1 ip = %s, want 10.0.0.4", ip)
 	}
 	if owner, ok := a.ownerForServer("srv-2"); !ok || owner != "owner-A" {
 		t.Fatalf("ownerForServer(srv-2) = %q,%v want owner-A,true", owner, ok)
@@ -187,8 +187,8 @@ func TestAllocatorSubnetFullThenEnlarge(t *testing.T) {
 	if _, err := a.ensureSubnet("owner-A", nil); err != nil {
 		t.Fatalf("ensureSubnet: %v", err)
 	}
-	// Fill all 60 slots of the /26.
-	for i := 0; i < 60; i++ {
+	// Fill all 59 slots of the /26.
+	for i := 0; i < 59; i++ {
 		if _, err := a.allocateSlot("owner-A", fmt.Sprintf("srv-%d", i)); err != nil {
 			t.Fatalf("allocateSlot %d: %v", i, err)
 		}
@@ -260,7 +260,7 @@ func TestAllocatorPersistenceRoundTrip(t *testing.T) {
 		t.Fatalf("reloaded ownerForServer(srv-1) = %q,%v want owner-A,true", owner, ok)
 	}
 	ip, _, err := b.ipFor("owner-A", "srv-1")
-	if err != nil || ip.String() != "10.0.0.3" {
-		t.Fatalf("reloaded ipFor(srv-1) = %v,%v want 10.0.0.3", ip, err)
+	if err != nil || ip.String() != "10.0.0.4" {
+		t.Fatalf("reloaded ipFor(srv-1) = %v,%v want 10.0.0.4", ip, err)
 	}
 }
