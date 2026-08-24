@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { getMyBilling, BillingStatus, MyTrafficStatus } from '@/lib/api/billing';
 import { getMyUsage, EntitlementState } from '@/lib/api/usage';
 import { useAppData } from '@/lib/AppDataContext';
+import { trafficBannerState } from '@/components/trafficBanner';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
 
 // BillingBanner is the non-dismissible red bar shown to a tenant in past_due or
@@ -17,11 +18,6 @@ import { AlertTriangle, ArrowRight } from 'lucide-react';
 // answer that is structurally always "active" - and the one path that could
 // have made it say otherwise would have shown a self-hoster a pay-now bar with
 // nowhere to pay.
-// TRAFFIC_WARN_PCT is where the amber warning starts. 80% leaves a fifth of the
-// month's allowance to notice it and act, which for a server that is busy enough
-// to get here is a day or two - not the hours a 95% threshold would give.
-const TRAFFIC_WARN_PCT = 80;
-
 export default function BillingBanner() {
     const { featureFlags } = useAppData();
     const [status, setStatus] = useState<BillingStatus | null>(null);
@@ -82,21 +78,30 @@ export default function BillingBanner() {
 
     if (!featureFlags.store) return null;
 
-    // Traffic outranks dunning when the ceiling has actually been reached: at that
-    // point the tenant IS stopped, and telling them it is about non-payment sends
-    // someone who has paid perfectly well off to pay again. The store stops them
-    // with the same suspend action the dunning path uses, so the reason cannot be
-    // read off the status - it is read off the number that caused it.
-    const trafficStopped = !!traffic && !traffic.billingEnabled && traffic.pct >= 100;
-    if (trafficStopped) {
+    // The traffic states are decided in trafficBanner.ts, which has a test. The
+    // two distinctions it makes are both easy to get wrong from inside a render:
+    // "over the ceiling" must be read off the raw gigabytes rather than the
+    // truncated percentage, and "over" is not yet "stopped" because the store's
+    // guard runs hourly.
+    const trafficState = trafficBannerState(traffic, status);
+
+    // Either traffic state outranks the dunning message. The store stops a tenant
+    // with the same suspend action non-payment uses, so a traffic cutoff would
+    // otherwise read as "pay up" to someone who has paid perfectly well. A tenant
+    // who is both over the ceiling AND behind on payment is shown this one: it is
+    // the blocker that paying alone will not clear.
+    if (traffic && (trafficState === 'stopped' || trafficState === 'over')) {
+        const stopped = trafficState === 'stopped';
         const inner = (
             <div className="flex items-center justify-center gap-3 bg-(--error) text-white px-4 py-2.5 text-sm font-medium shadow-md">
                 <AlertTriangle size={18} className="shrink-0" />
                 <span>
-                    Your services are stopped: you have used{' '}
-                    <strong>{traffic!.usedGb} GB</strong> of the {traffic!.ceilingGb} GB your
-                    subscription covers, and metered billing is off, so we stopped rather than
-                    charging you. Turn metered billing on to start again. Nothing is deleted.
+                    {stopped ? 'Your services are stopped: you have used ' : 'You have used '}
+                    <strong>{traffic.usedGb} GB</strong> of the {traffic.ceilingGb} GB your
+                    subscription covers, and metered billing is off
+                    {stopped
+                        ? ', so we stopped rather than charging you. Turn metered billing on to start again. Nothing is deleted.'
+                        : '. Your servers and routing stop shortly unless you turn metered billing on.'}
                 </span>
                 {paymentUrl && (
                     <span className="inline-flex items-center gap-1 font-semibold underline underline-offset-2 whitespace-nowrap">
@@ -114,15 +119,15 @@ export default function BillingBanner() {
         // Approaching the ceiling, with time left to act. Amber rather than red:
         // nothing has happened yet, and a red bar that stays red for a week is a
         // bar people stop reading.
-        if (traffic && !traffic.billingEnabled && traffic.pct >= TRAFFIC_WARN_PCT) {
+        if (traffic && trafficState === 'approaching') {
             const inner = (
                 <div className="flex items-center justify-center gap-3 bg-(--warning) text-black px-4 py-2.5 text-sm font-medium shadow-md">
                     <AlertTriangle size={18} className="shrink-0" />
                     <span>
                         You have used <strong>{traffic.pct}%</strong> of the traffic your
                         subscription covers ({traffic.usedGb} of {traffic.ceilingGb} GB). Metered
-                        billing is off, so at 100% your servers and routing STOP rather than being
-                        billed. Turn metered billing on to keep running.
+                        billing is off, so once you pass it your servers and routing STOP rather
+                        than being billed. Turn metered billing on to keep running.
                     </span>
                     {paymentUrl && (
                         <span className="inline-flex items-center gap-1 font-semibold underline underline-offset-2 whitespace-nowrap">
