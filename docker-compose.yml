@@ -25,6 +25,10 @@ services:
       FRONTEND_URL: "${FRONTEND_URL:-http://localhost:25510}"
       JWT_SECRET: "${JWT_SECRET}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
+      # The gateway Hub's internal URL, so the panel's DNS form can be forwarded
+      # to it. Core stores no DNS credential itself - the Hub owns that row and
+      # is the only writer of records. Empty = no gateway, and the panel says so.
+      GATEWAY_HUB_URL: "${GATEWAY_HUB_URL:-}"
       DYLARIS_REGION: "${DYLARIS_REGION:-default}"
       DB_HOST: timescaledb
       DB_PORT: "5432"

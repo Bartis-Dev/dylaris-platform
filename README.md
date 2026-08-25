@@ -376,6 +376,7 @@ secrets:
 |---|---|---|---|
 | `JWT_SECRET` | `change-this-secret` (rejected) | **Yes** | Signing key for panel auth tokens and Beam tickets. Must be a strong random value — boot fails on empty/placeholder. |
 | `CLUSTER_SECRET` | `dylaris-cluster-secret` (rejected) | **Yes** | Shared secret authenticating Core ↔ Node ↔ Link ↔ Warp and deriving service keys. Same value across the whole cluster. Boot fails on empty/placeholder. |
+| `GATEWAY_HUB_URL` | *(empty)* | No | The gateway Hub's internal base URL (e.g. `http://hub:25530`), which lets the panel's DNS form reach it. Core stores **no** DNS credential of its own: the Hub owns that row and is the only writer of records. Empty means no gateway, and the panel's DNS card says so instead of offering a form that cannot work. The Hub must share this `CLUSTER_SECRET` — that is what authenticates the hop. |
 | `DB_USER` | `postgres` | **Yes** | Postgres user. |
 | `DB_PASSWORD` | *(empty)* | **Yes** | Postgres password. |
 | `DB_NAME` | `dylaris` | Recommended | Postgres database name. |

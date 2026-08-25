@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **472 routes** in 49 sections: 209 GET, 137 POST, 35 PUT, 35 PATCH, 53 DELETE, 4 (any).
+- **474 routes** in 49 sections: 210 GET, 137 POST, 36 PUT, 35 PATCH, 53 DELETE, 4 (any).
 - **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **320** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **322** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -169,7 +169,7 @@ can still show what exists.
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
 - [/api/servers](#apiservers) (70)
-- [/api/settings](#apisettings) (28)
+- [/api/settings](#apisettings) (30)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
 - [/api/solder](#apisolder) (6)
@@ -709,6 +709,8 @@ can still show what exists.
 | GET | `/api/settings/filemanager/limits` | session | _no capability_ | - | `SettingsHandler.GetUserLimits` | available to ALL authenticated users |
 | GET | `/api/settings/gateway` | session | `settings.read` | - | `SettingsHandler.GetGatewaySettings` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/gateway` | session | `settings.write` | - | `SettingsHandler.SaveGatewaySettings` | PANEL settings.write (RequireCap at the route). |
+| GET | `/api/settings/gateway/dns` | session | `settings.read` | - | `GatewayDNSHandler.Get` | PANEL settings.read. |
+| PUT | `/api/settings/gateway/dns` | session | `settings.write` | - | `GatewayDNSHandler.Save` | PANEL settings.write. |
 | GET | `/api/settings/gateway/hub-redis-admin` | session | `settings.read` | - | `HubRedisAdminHandler.GetStatus` | non-secret status only. |
 | POST | `/api/settings/gateway/hub-redis-admin` | session | `settings.write` | - | `HubRedisAdminHandler.Provision` | create gw-hub-admin on Core's own Redis (the ONE shared instance) and return the generated password ONCE, or in manual mode return the ready-to-paste command. |
 | POST | `/api/settings/gateway/hub-redis-admin/roll` | session | `settings.write` | - | `HubRedisAdminHandler.Roll` | re-mint the password on the recorded target. |

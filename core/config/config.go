@@ -26,6 +26,12 @@ type Config struct {
 
 	// Cluster
 	ClusterSecret string
+	// GatewayHubURL is the gateway Hub's internal base URL, e.g.
+	// http://hub:25530. Core stores no DNS credential of its own: the panel's
+	// DNS form is forwarded to the Hub, which owns the row and is the only
+	// writer of records. Empty means no gateway, and the panel says so rather
+	// than offering a form that cannot work.
+	GatewayHubURL string
 	CoreID        string
 	GRPCPort      int
 	// GRPCTLSEnabled turns on server-authenticated TLS + fingerprint pinning on
@@ -195,6 +201,7 @@ func LoadConfig() (Config, error) {
 		JWTSecret:      getSecret("JWT_SECRET", "change-this-secret"),
 		AdminSecret:    getSecret("ADMIN_SECRET", ""),
 		ClusterSecret:  getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
+		GatewayHubURL:  strings.TrimSpace(getEnv("GATEWAY_HUB_URL", "")),
 		CoreID:         coreID,
 		GRPCPort:       grpcPort,
 		GRPCTLSEnabled: grpcTLSEnabled,

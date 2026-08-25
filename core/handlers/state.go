@@ -158,6 +158,11 @@ type AppState struct {
 	// tokens and Redis passwords. Never sent to a tenant.
 	ClusterSecret string
 
+	// GatewayHubURL is the gateway Hub's internal base URL. Empty when no
+	// gateway is deployed, which the DNS settings surface reports rather than
+	// failing: a platform-only install has no records to write.
+	GatewayHubURL string
+
 	// AdminSecret mirrors config.AdminSecret: the RAM-only break-glass secret
 	// that gates /setup admin creation. Empty = feature disabled. Never
 	// persisted, never logged.

@@ -502,6 +502,7 @@ func main() {
 		CoreID:                  cfg.CoreID,
 		TabProxyOrigin:          cfg.TabProxyOrigin,
 		ClusterSecret:           cfg.ClusterSecret,
+		GatewayHubURL:           cfg.GatewayHubURL,
 		ModrinthUA:              "Dylaris/0.10 (+https://github.com/Bartis-Dev/dylaris-platform)",
 		TabProxyIsolationActive: cfg.TabProxyIsolationActive,
 	})
@@ -568,6 +569,7 @@ func main() {
 	// route-only link-boot endpoint can derive and provision per-link creds.
 	appState.ACLProvisioner = aclProvisioner
 	appState.ClusterSecret = cfg.ClusterSecret
+	appState.GatewayHubURL = cfg.GatewayHubURL
 	appState.AdminSecret = cfg.AdminSecret
 	appState.SuspendGrace = cfg.SuspendGrace
 

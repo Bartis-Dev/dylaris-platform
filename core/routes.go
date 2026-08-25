@@ -20,6 +20,7 @@ type routeCfg struct {
 	CoreID                  string
 	TabProxyOrigin          string
 	ClusterSecret           string
+	GatewayHubURL           string
 	ModrinthUA              string
 	TabProxyIsolationActive bool
 }
@@ -324,6 +325,7 @@ var requiredCaps = map[string]string{
 	"/api/settings/storage-reach":                     "settings.read",
 	"/api/settings/filemanager":                       "settings.read",
 	"/api/settings/gateway":                           "settings.read",
+	"/api/settings/gateway/dns":                       "settings.read",
 	"/api/settings/gateway/hub-redis-admin":           "settings.read",
 	"/api/settings/gateway/hub-redis-admin/roll":      "settings.write",
 	"/api/settings/placement":                         "settings.read",
@@ -544,6 +546,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	nodeEnrollHandler := handlers.NewNodeEnrollHandler(appState)
 	nodeAdmissionHandler := handlers.NewNodeAdmissionHandler(appState)
 	hubRedisAdminHandler := handlers.NewHubRedisAdminHandler(appState)
+	gatewayDNSHandler := handlers.NewGatewayDNSHandler(appState)
 	gatewayBandwidthHandler := handlers.NewGatewayBandwidthHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
@@ -1425,6 +1428,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Hub-admin Redis provisioner (TP2b): admin-only create/roll of the
 	// gw-hub-admin ACL user (PANEL settings.*). GET status carries no secret;
 	// the password is returned once by POST provision/roll.
+	// The DNS credential is stored by the gateway HUB, not here. These two
+	// forward the panel's form; Core holds no copy. See handlers/gateway_dns.go.
+	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayDNSHandler.Get))).Methods("GET")
+	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayDNSHandler.Save))).Methods("PUT")
 	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(hubRedisAdminHandler.GetStatus))).Methods("GET")
 	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Provision))).Methods("POST")
 	api.HandleFunc("/settings/gateway/hub-redis-admin/roll", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Roll))).Methods("POST")

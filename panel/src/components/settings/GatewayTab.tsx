@@ -15,6 +15,7 @@ import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skelet
 import Spinner from '@/components/Spinner';
 import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
+import GatewayDnsCard from '@/components/settings/GatewayDnsCard';
 import { useAppData } from '@/lib/AppDataContext';
 import { useBusy } from '@/lib/useBusy';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
@@ -749,6 +750,8 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 
             {/* DNS & Domains check — verify the records derived from the
                 hoster domains / CNAME target / panel URL configured above. */}
+            <GatewayDnsCard showToast={showToast} />
+
             <DnsCheckCard />
 
             {/* Route Limits */}

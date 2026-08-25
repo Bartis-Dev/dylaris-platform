@@ -3802,6 +3802,26 @@
     },
     {
       "method": "GET",
+      "path": "/api/settings/gateway/dns",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read.",
+      "handler": "GatewayDNSHandler.Get",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/settings/gateway/dns",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write.",
+      "handler": "GatewayDNSHandler.Save",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/settings/gateway/hub-redis-admin",
       "auth": "session",
       "authorization": "settings.read",
@@ -4732,10 +4752,10 @@
     }
   ],
   "counts": {
-    "total": 473,
+    "total": 475,
     "byAuth": {
       "none": 36,
-      "session": 424,
+      "session": 426,
       "user API key": 10,
       "warp key": 3
     },
@@ -4768,7 +4788,7 @@
       "scheduled-tasks": 1,
       "server-roles": 4,
       "servers": 70,
-      "settings": 28,
+      "settings": 30,
       "setup": 2,
       "share": 1,
       "solder": 12,
