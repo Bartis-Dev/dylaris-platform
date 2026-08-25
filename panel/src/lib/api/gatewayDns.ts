@@ -12,6 +12,22 @@ export interface DnsProviderOption {
     label: string;
 }
 
+// One managed name's certificate, as the gateway last saw it. Passed straight
+// through by Core, so the shape belongs to the gateway.
+export interface CertNameStatus {
+    name: string;
+    have: boolean;
+    expires?: string;
+    error?: string;
+}
+
+export interface CertStatus {
+    last_run_at: string;
+    error?: string;
+    note?: string;
+    names?: CertNameStatus[];
+}
+
 export interface GatewayDnsConfig {
     provider: string;
     zones: string[];
@@ -24,6 +40,15 @@ export interface GatewayDnsConfig {
     // never takes effect looks like a bug.
     env_locked: boolean;
     providers: DnsProviderOption[];
+
+    // The certificate half shares the credential above, so it shares this form.
+    acme_enabled: boolean;
+    acme_email: string;
+    acme_directory: string;
+    acme_agreed: boolean;
+    // Why issuance failed, when it did. It is the whole reason the status
+    // travels: everything else about ACME is invisible when it works.
+    cert_status?: CertStatus;
 }
 
 export interface GatewayDnsResponse {
@@ -51,6 +76,10 @@ export interface GatewayDnsSave {
     token: string;
     zones: string[];
     enabled: boolean;
+    acme_enabled: boolean;
+    acme_email: string;
+    acme_directory: string;
+    acme_agreed: boolean;
 }
 
 export async function saveGatewayDns(body: GatewayDnsSave): Promise<GatewayDnsResponse> {

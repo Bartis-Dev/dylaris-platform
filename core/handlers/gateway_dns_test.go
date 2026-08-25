@@ -205,3 +205,67 @@ func TestTokenIsNeverRelayedToTheBrowser(t *testing.T) {
 		t.Errorf("has_token did not survive, so the form cannot say a token is stored: %s", body)
 	}
 }
+
+// The rule this decides: the certificate half of the form reaches the Hub too.
+//
+// It shares the credential, so it shares the card and the payload. A field that
+// silently stopped being forwarded would leave an admin ticking a box that never
+// takes effect, on a screen that shows it ticked after the save.
+func TestSaveForwardsTheCertificateHalf(t *testing.T) {
+	var seen map[string]any
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&seen)
+		_ = json.NewEncoder(w).Encode(map[string]any{"provider": "cloudflare", "acme_enabled": true})
+	}))
+	defer hub.Close()
+
+	h := NewGatewayDNSHandler(&AppState{ClusterSecret: "s", GatewayHubURL: hub.URL})
+	rec := httptest.NewRecorder()
+	h.Save(rec, httptest.NewRequest(http.MethodPut, "/x", strings.NewReader(
+		`{"provider":"cloudflare","zones":["example.com"],"enabled":true,`+
+			`"acme_enabled":true,"acme_email":"  ops@example.com  ","acme_directory":" staging ","acme_agreed":true}`)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	for key, want := range map[string]any{
+		"acme_enabled":   true,
+		"acme_email":     "ops@example.com",
+		"acme_directory": "staging",
+		"acme_agreed":    true,
+	} {
+		if seen[key] != want {
+			t.Errorf("%s = %v, want %v", key, seen[key], want)
+		}
+	}
+}
+
+// The certificate status is relayed as the gateway sent it. Core owns no part of
+// that shape, and re-declaring it here would be a second definition to keep in
+// step for nothing - but it still has to arrive, because it is the only place an
+// admin learns why issuance failed.
+func TestCertStatusIsRelayed(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"provider": "cloudflare",
+			"cert_status": map[string]any{
+				"last_run_at": "2026-08-25T20:00:00Z",
+				"names": []map[string]any{
+					{"name": "beam.example.com", "have": false, "error": "HTTP 400 invalidContact"},
+				},
+			},
+		})
+	}))
+	defer hub.Close()
+
+	h := NewGatewayDNSHandler(&AppState{ClusterSecret: "s", GatewayHubURL: hub.URL})
+	rec := httptest.NewRecorder()
+	h.Get(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
+
+	body := rec.Body.String()
+	for _, want := range []string{"cert_status", "beam.example.com", "HTTP 400 invalidContact"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%q did not survive the hop: %s", want, body)
+		}
+	}
+}

@@ -23,6 +23,10 @@ export default function GatewayDnsCard({ showToast }: { showToast: (msg: string,
     const [token, setToken] = useState('');
     const [zones, setZones] = useState('');
     const [enabled, setEnabled] = useState(false);
+    const [acmeEnabled, setAcmeEnabled] = useState(false);
+    const [acmeEmail, setAcmeEmail] = useState('');
+    const [acmeDirectory, setAcmeDirectory] = useState('');
+    const [acmeAgreed, setAcmeAgreed] = useState(false);
     const [saving, setSaving] = useState(false);
 
     const apply = (c: GatewayDnsConfig) => {
@@ -30,6 +34,10 @@ export default function GatewayDnsCard({ showToast }: { showToast: (msg: string,
         setProvider(c.provider);
         setZones(c.zones.join(', '));
         setEnabled(c.enabled);
+        setAcmeEnabled(c.acme_enabled);
+        setAcmeEmail(c.acme_email);
+        setAcmeDirectory(c.acme_directory);
+        setAcmeAgreed(c.acme_agreed);
         // Never repopulated from the server, because the server never sends it.
         setToken('');
     };
@@ -63,6 +71,10 @@ export default function GatewayDnsCard({ showToast }: { showToast: (msg: string,
             token,
             zones: parseZones(zones),
             enabled,
+            acme_enabled: acmeEnabled,
+            acme_email: acmeEmail,
+            acme_directory: acmeDirectory,
+            acme_agreed: acmeAgreed,
         });
         setSaving(false);
         if (!res.success) {
@@ -74,7 +86,7 @@ export default function GatewayDnsCard({ showToast }: { showToast: (msg: string,
             return;
         }
         if (res.config) apply(res.config);
-        showToast('DNS settings saved', true);
+        showToast('Gateway DNS settings saved', true);
     };
 
     return (
@@ -84,9 +96,10 @@ export default function GatewayDnsCard({ showToast }: { showToast: (msg: string,
                     <Globe size={18} className="text-(--accent-light)" />
                 </div>
                 <div>
-                    <div className="font-medium text-sm text-(--base-09)">Automatic DNS</div>
+                    <div className="font-medium text-sm text-(--base-09)">Automatic DNS &amp; certificates</div>
                     <div className="text-xs text-(--base-06)">
-                        Let the gateway keep the edge and beam records pointed at whatever is online
+                        One provider token: the gateway keeps the edge and beam records pointed at
+                        whatever is online, and gets the beam relay its TLS certificate
                     </div>
                 </div>
             </div>
@@ -178,6 +191,114 @@ export default function GatewayDnsCard({ showToast }: { showToast: (msg: string,
                         />
                         Write records automatically
                     </label>
+
+                    <div className="pt-4 border-t border-(--base-03) space-y-4">
+                        <div>
+                            <h3 className="mono-label">Certificates</h3>
+                            <p className="text-xs text-(--base-06) mt-1.5">
+                                The beam relay&apos;s client port is the one listener that needs a
+                                publicly trusted certificate — the Beam app checks its chain and
+                                hostname. It is obtained with the same token above, over the DNS-01
+                                challenge, and renewed without a restart. Leave this off if you mount
+                                a certificate on the relay yourself; that always wins.
+                            </p>
+                        </div>
+
+                        <div>
+                            <label className="input-label">Contact address</label>
+                            <input
+                                type="email"
+                                value={acmeEmail}
+                                onChange={e => setAcmeEmail(e.target.value)}
+                                placeholder="ops@example.com"
+                                className="input-field text-sm w-full"
+                            />
+                            <p className="text-xs text-(--base-06) mt-1.5">
+                                The CA sends expiry warnings here. It is the last thing that tells you
+                                this stopped working, so use an address someone reads.
+                            </p>
+                        </div>
+
+                        <div>
+                            <label className="input-label">Certificate authority</label>
+                            <select
+                                value={acmeDirectory}
+                                onChange={e => setAcmeDirectory(e.target.value)}
+                                className="input-field text-sm w-full"
+                            >
+                                <option value="">Let&apos;s Encrypt</option>
+                                <option value="staging">Let&apos;s Encrypt (staging)</option>
+                            </select>
+                            <p className="text-xs text-(--base-06) mt-1.5">
+                                Staging issues untrusted certificates against generous rate limits.
+                                Use it to prove the DNS challenge works, then switch.
+                            </p>
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm text-(--base-09) cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={acmeAgreed}
+                                onChange={e => setAcmeAgreed(e.target.checked)}
+                            />
+                            I accept the CA&apos;s subscriber agreement
+                        </label>
+
+                        <label className="flex items-center gap-2 text-sm text-(--base-09) cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={acmeEnabled}
+                                onChange={e => setAcmeEnabled(e.target.checked)}
+                            />
+                            Obtain and renew certificates
+                        </label>
+
+                        {cfg?.cert_status && (
+                            <div className="space-y-2">
+                                {cfg.cert_status.error && (
+                                    <p className="text-xs text-(--error-light)">{cfg.cert_status.error}</p>
+                                )}
+                                {cfg.cert_status.note && (
+                                    <p className="text-xs text-(--base-06)">{cfg.cert_status.note}</p>
+                                )}
+                                {(cfg.cert_status.names ?? []).length > 0 && (
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-xs">
+                                            <thead>
+                                                <tr className="text-(--base-06) text-left">
+                                                    <th className="font-normal py-1 pr-3">Name</th>
+                                                    <th className="font-normal py-1 pr-3">Certificate</th>
+                                                    <th className="font-normal py-1 pr-3">Expires</th>
+                                                    <th className="font-normal py-1">Last error</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {(cfg.cert_status.names ?? []).map(n => (
+                                                    <tr key={n.name} className="border-t border-(--base-03)">
+                                                        <td className="py-1.5 pr-3 font-mono text-(--base-09)">{n.name}</td>
+                                                        <td className="py-1.5 pr-3">
+                                                            {n.have
+                                                                ? <span className="text-(--success-light)">issued</span>
+                                                                : <span className="text-(--base-06)">none yet</span>}
+                                                        </td>
+                                                        <td className="py-1.5 pr-3 text-(--base-07)">
+                                                            {n.have && n.expires ? n.expires.slice(0, 10) : '—'}
+                                                        </td>
+                                                        <td className="py-1.5 text-(--base-06) break-all">{n.error || '—'}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        <p className="text-xs text-(--base-06) mt-2">
+                                            An error next to a certificate that already exists is a
+                                            renewal failing. That is the one worth acting on now: the
+                                            certificate is still valid, and will stop being so.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
 
                     {error && (
                         <div className="flex items-start gap-2 text-xs text-(--error-light) px-3 py-2 rounded-md bg-(--base-02)">

@@ -61,6 +61,18 @@ type dnsConfigPayload struct {
 		Name  string `json:"name"`
 		Label string `json:"label"`
 	} `json:"providers"`
+
+	// The certificate half. It shares the credential above, so it shares the
+	// form: a combined install configures both here and never opens the Hub's
+	// own interface, which is off by default.
+	AcmeEnabled   bool   `json:"acme_enabled"`
+	AcmeEmail     string `json:"acme_email"`
+	AcmeDirectory string `json:"acme_directory"`
+	AcmeAgreed    bool   `json:"acme_agreed"`
+	// CertStatus is passed through as-is. Its shape belongs to the gateway, and
+	// re-declaring it here would be a second definition to keep in step for no
+	// gain - Core only relays it.
+	CertStatus json.RawMessage `json:"cert_status,omitempty"`
 }
 
 // Get GET /api/settings/gateway/dns - PANEL settings.read.
@@ -77,21 +89,29 @@ func (h *GatewayDNSHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *GatewayDNSHandler) Save(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	var req struct {
-		Provider string   `json:"provider"`
-		Token    string   `json:"token"`
-		Zones    []string `json:"zones"`
-		Enabled  bool     `json:"enabled"`
+		Provider      string   `json:"provider"`
+		Token         string   `json:"token"`
+		Zones         []string `json:"zones"`
+		Enabled       bool     `json:"enabled"`
+		AcmeEnabled   bool     `json:"acme_enabled"`
+		AcmeEmail     string   `json:"acme_email"`
+		AcmeDirectory string   `json:"acme_directory"`
+		AcmeAgreed    bool     `json:"acme_agreed"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		dnsError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	h.forward(w, r, map[string]any{
-		"action":   "write",
-		"provider": strings.TrimSpace(req.Provider),
-		"token":    req.Token,
-		"zones":    req.Zones,
-		"enabled":  req.Enabled,
+		"action":         "write",
+		"provider":       strings.TrimSpace(req.Provider),
+		"token":          req.Token,
+		"zones":          req.Zones,
+		"enabled":        req.Enabled,
+		"acme_enabled":   req.AcmeEnabled,
+		"acme_email":     strings.TrimSpace(req.AcmeEmail),
+		"acme_directory": strings.TrimSpace(req.AcmeDirectory),
+		"acme_agreed":    req.AcmeAgreed,
 	})
 }
 
