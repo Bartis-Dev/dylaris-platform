@@ -321,8 +321,6 @@ var requiredCaps = map[string]string{
 	"/api/admin/xdp/config":                           "settings.read",
 	"/api/settings/core-storage":                      "settings.read",
 	"/api/settings/core-storage/test":                 "settings.write",
-	"/api/settings/dns":                               "settings.read",
-	"/api/settings/dns/zones":                         "settings.read",
 	"/api/settings/storage-reach":                     "settings.read",
 	"/api/settings/filemanager":                       "settings.read",
 	"/api/settings/gateway":                           "settings.read",
@@ -479,7 +477,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
 	coreStorageHandler := handlers.NewCoreStorageHandler(appState)
 	storageConnectionHandler := handlers.NewStorageConnectionHandler(appState)
-	dnsSettingsHandler := handlers.NewDNSSettingsHandler(appState)
 
 	// Warp: external/home node WireGuard bridge (multi-hub registry).
 	// NewWarpService needs EnrollPeerTx, which the store.Store interface
@@ -1510,9 +1507,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// DNS updater configuration. The save probes the provider before accepting,
 	// so it is a write even though it stores nothing on a rejected probe; the
 	// zone listing reads through the stored credential and is settings.read.
-	api.HandleFunc("/settings/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(dnsSettingsHandler.Get))).Methods("GET")
-	api.HandleFunc("/settings/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(dnsSettingsHandler.Save))).Methods("POST")
-	api.HandleFunc("/settings/dns/zones", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(dnsSettingsHandler.Zones))).Methods("GET")
 	// Fleet storage health: which Cores are currently failing their shared-
 	// storage self-check.
 	api.HandleFunc("/settings/storage-reach", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.StorageReachStatus))).Methods("GET")

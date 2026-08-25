@@ -63,7 +63,6 @@ const TAB_GROUPS: SettingsGroup[] = [
         group: 'Infrastructure',
         tabs: [
             { slug: 'regions', label: 'Regions', always: true },
-            { slug: 'dns', label: 'DNS', always: true },
             { slug: 'nodes', label: 'Nodes', always: true },
             // Gateway configures the player-traffic data plane: hoster domains,
             // route limits, reserved names. With routing on ip_port nothing reads

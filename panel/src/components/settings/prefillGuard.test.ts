@@ -15,11 +15,11 @@ import { join } from 'node:path';
 //     to submit.
 //
 //   a null-gated snapshot
-//     ServersTab, FileManagerTab, ModpacksTab, DNSTab, BeamTab, FeaturesTab:
+//     ServersTab, FileManagerTab, ModpacksTab, BeamTab, FeaturesTab:
 //     `dirty = snapshotRef.current !== null && ...` and the save bar is driven
-//     by `dirty`, so a failed load never shows one. DNSTab documents exactly
-//     this ("the save bar never appears and these unconfirmed values cannot be
-//     written back. Only the display was lying").
+//     by `dirty`, so a failed load never shows one: the save bar never
+//     appears, so unconfirmed values cannot be written back. Only the display
+//     was ever lying.
 //
 // These three had neither: a non-null default, a plain always-enabled Save
 // button, and a load whose failure branch did not exist at all. They now use

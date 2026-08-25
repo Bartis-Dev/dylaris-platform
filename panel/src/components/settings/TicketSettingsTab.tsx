@@ -26,7 +26,7 @@ export default function TicketSettingsTab() {
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     // Without this a failed load renders defaultSettings as though it were the
     // stored config and Save writes those defaults over the real ones. See
-    // DNSTab for the same reasoning; the tabs that snapshot into a ref get this
+    // BeamTab for the same reasoning; the tabs that snapshot into a ref get this
     // for free because a null snapshot keeps `dirty` false.
     const [loadFailed, setLoadFailed] = useState(false);
 

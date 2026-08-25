@@ -3732,36 +3732,6 @@
     },
     {
       "method": "GET",
-      "path": "/api/settings/dns",
-      "auth": "session",
-      "authorization": "settings.read",
-      "description": "the effective DNS configuration: provider, zones, per-region names, orphan grace and the names Core currently manages.",
-      "handler": "DNSSettingsHandler.Get",
-      "group": "settings",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/settings/dns",
-      "auth": "session",
-      "authorization": "settings.write",
-      "description": "settings.write.",
-      "handler": "DNSSettingsHandler.Save",
-      "group": "settings",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/settings/dns/zones",
-      "auth": "session",
-      "authorization": "settings.read",
-      "description": "lists the zones the credential can see.",
-      "handler": "DNSSettingsHandler.Zones",
-      "group": "settings",
-      "external": false
-    },
-    {
-      "method": "GET",
       "path": "/api/settings/features",
       "auth": "session",
       "authorization": "no capability on this method",
@@ -4762,10 +4732,10 @@
     }
   ],
   "counts": {
-    "total": 476,
+    "total": 473,
     "byAuth": {
       "none": 36,
-      "session": 427,
+      "session": 424,
       "user API key": 10,
       "warp key": 3
     },
@@ -4798,7 +4768,7 @@
       "scheduled-tasks": 1,
       "server-roles": 4,
       "servers": 70,
-      "settings": 31,
+      "settings": 28,
       "setup": 2,
       "share": 1,
       "solder": 12,

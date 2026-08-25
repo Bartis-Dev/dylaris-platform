@@ -369,27 +369,18 @@ func main() {
 	// Start() is deferred until after SetLinkACL below, so the ticker can never run
 	// a suspend before the link teardown dependencies are wired.
 
-	// DNS reconciler — leader-gated. Points each region's edge wildcard A record
-	// at the live edge IPs via the DNS provider. Credentials live only here,
-	// never on edges. It always starts and resolves its configuration per tick:
-	// env wins, the panel is the fallback, and an unconfigured install is a
-	// no-op. That is what lets a panel change take effect without a restart.
-	appState.DNSConfig = services.NewDNSConfigResolver(services.DNSEnvConfig{
-		Enabled:  cfg.DNSUpdaterEnabled,
-		Provider: cfg.DNSProvider,
-		Token:    cfg.DNSAPIToken,
-		// DNS_ZONE (one zone) and DNS_ZONES (several) both feed the same list, so
-		// an existing single-zone deployment keeps working untouched.
-		Zones: append(strings.Split(cfg.DNSZones, ","), cfg.DNSZone),
-	}, pgStore)
-	dnsReconciler := services.NewDNSReconciler(redisClient, appState.DNSConfig)
-	dnsReconciler.SetLeader(coreLeader)
-	// Beam relays get their records from the same loop, so a relay name is never
-	// mistaken for an abandoned edge name and swept.
-	dnsReconciler.SetRelaySource(func(ctx context.Context) []services.RelayAdvert {
-		return handlers.BeamRelayAdverts(ctx, redisClient)
-	})
-	dnsReconciler.Start(bgCtx)
+	// DNS records are written by the gateway HUB, not here. Everything this
+	// subsystem ever managed - the edge wildcards and the beam relay names - is a
+	// gateway name, and a Hub runs in every gateway deployment, so keeping the
+	// writer here left a standalone gateway with nobody to write them. Two writers
+	// would have been worse than none: the reconciler deletes records it does not
+	// plan, and its "an edge name wins over a relay name" guard only holds inside
+	// one plan.
+	//
+	// A DNS_* variable still set here is reported rather than ignored - see
+	// warnDNSMovedToHub - because "it stopped working" and "it moved, here is
+	// where" are a long afternoon apart.
+	warnDNSMovedToHub(&cfg)
 
 	// Auto-delete service — daily ticker scans inactive users,
 	// emails warnings, executes deletions per the auth.* settings. No-op

@@ -96,28 +96,6 @@ func DiscoverBeamRelays(ctx context.Context, rdb *redis.Client) []BeamRelayInfo 
 	return out
 }
 
-// BeamRelayAdverts translates the live relay registry into the narrow view the
-// DNS planner needs. It lives here rather than in services because the registry
-// reader does, and services must not import handlers.
-//
-// A relay is only included when it advertises BOTH a public host and an address:
-// the host is the record name and the IP is its value, so one without the other
-// is nothing DNS can act on. Relays are deliberately not part of the panel's
-// name picker - the name comes from the relay's own BEAM_PUBLIC_HOST.
-func BeamRelayAdverts(ctx context.Context, rdb *redis.Client) []services.RelayAdvert {
-	relays := DiscoverBeamRelays(ctx, rdb)
-	out := make([]services.RelayAdvert, 0, len(relays))
-	for _, r := range relays {
-		host := strings.TrimSpace(r.PublicHost)
-		ip := strings.TrimSpace(r.IP)
-		if host == "" || ip == "" {
-			continue
-		}
-		out = append(out, services.RelayAdvert{Name: host, IP: ip})
-	}
-	return out
-}
-
 // PickBeamRelay returns one live relay, preferring preferredRegion and falling
 // back to any relay when that region has none.
 //

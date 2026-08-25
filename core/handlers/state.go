@@ -71,11 +71,6 @@ type AppState struct {
 	// computes auto cpusets for per-server CPU pinning.
 	CPUPinning *services.CPUPinningService
 
-	// DNSConfig resolves the effective DNS updater configuration (env wins, the
-	// panel is the fallback). Shared with the reconciler so the settings API and
-	// the loop that acts on it can never disagree about what is in effect.
-	DNSConfig *services.DNSConfigResolver
-
 	// StorageGate is the watchdog for the configured host-path core storage.
 	// SyncStorageGate points it at the current path (or stops it when the
 	// backend is s3), and every per-request provider build consults it. Every

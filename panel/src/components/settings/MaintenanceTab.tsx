@@ -31,7 +31,7 @@ export default function MaintenanceTab() {
     // is the one screen where writing that back is destructive: the DB migration
     // deliberately holds block_all for its whole run, and saving the default
     // would lift it and let users write to a database being copied. Same
-    // mechanism DNSTab documents, and the same gate ConfigEditorModal uses.
+    // mechanism BeamTab uses, and the same gate ConfigEditorModal uses.
     const [loadFailed, setLoadFailed] = useState(false);
 
     useEffect(() => {
