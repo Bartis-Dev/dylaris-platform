@@ -665,6 +665,21 @@ input[type="number"] {
   align-self: stretch;
   flex-shrink: 0;
 }
+/* The card is clickable to dismiss early. It is not focusable: the message is
+   already announced through the live region, and a control that appears in the
+   tab order for three seconds and then vanishes moves focus out from under
+   whoever was typing. */
+.toast-dismissable {
+  text-align: left;
+  animation: toast-in 0.16s ease-out;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-dismissable { animation: none; }
+}
 
 /* ── Dropdowns ── */
 .dropdown-menu {
@@ -734,6 +749,213 @@ input[type="number"] {
 }
 .toggle-knob-on {
   transform: translateX(26px);
+}
+/* The switch was a bare track with a hover-less, focus-less, disabled-less
+   look. It is a real control on every settings page, so it carries the same
+   four states as .btn - and the same focus ring, since --focus-ring is the one
+   keyboard indicator in this design. */
+.toggle-track:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.toggle-track:not(:disabled):hover.toggle-track-off {
+  background: var(--base-04);
+}
+.toggle-track:not(:disabled):hover.toggle-track-on {
+  background: var(--success);
+}
+.toggle-track:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Checkbox ──
+   Raw <input type="checkbox"> in 22 files, rendering as OS chrome on a dark
+   panel: a white box with a blue tick, no focus ring of ours, and - the
+   reported one - a default arrow cursor inside a label that is cursor:pointer,
+   so the pointer changed halfway across the row. appearance:none takes the
+   whole control back. */
+.checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1px solid var(--base-05);
+  border-radius: var(--radius-sm);
+  background: var(--base-01);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.checkbox:not(:disabled):hover {
+  border-color: var(--base-06);
+  background: var(--base-02);
+}
+.checkbox:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.checkbox:not(:disabled):checked:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-light);
+}
+/* The tick is two borders of an empty box, rotated. Cheaper than an inline SVG
+   and it inherits the label's color automatically. */
+.checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 4.5px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--base-09);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.checkbox:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.checkbox:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* The label is part of the control: without this the cursor changes between
+   the box and its text, which is exactly what it looked like before. */
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.checkbox-row.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle-track,
+  .toggle-knob,
+  .checkbox {
+    transition: none;
+  }
+}
+
+/* ── Tab bar ──
+   The one sub-navigation. Navigation depth in this panel is capped at the
+   sidebar plus one of these; a second sidebar beside the first is what this
+   replaced. */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid var(--base-03);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tab-bar::-webkit-scrollbar {
+  display: none;
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--base-07);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  cursor: pointer;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.tab:not(.tab-active):not(:disabled):hover {
+  color: var(--base-09);
+  background: var(--base-02);
+}
+.tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.tab-active {
+  color: var(--accent-light);
+  border-bottom-color: var(--accent);
+}
+.tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Help ──
+   The popover is portalled to the body and positioned from the trigger's rect,
+   because every settings page scrolls inside an overflow container that would
+   otherwise clip it. */
+.help-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  color: var(--base-06);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+  vertical-align: middle;
+}
+.help-trigger:hover,
+.help-trigger[aria-expanded='true'] {
+  color: var(--accent-light);
+  background: var(--accent-ghost);
+}
+.help-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.help-pop {
+  position: fixed;
+  z-index: 70;
+  max-width: 320px;
+  background: var(--base-02);
+  border: 1px solid var(--base-04);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--base-08);
+}
+.help-pop code,
+.help-panel code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--base-09);
+  background: var(--base-03);
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  overflow-wrap: anywhere;
+}
+.help-panel {
+  width: 320px;
+  flex-shrink: 0;
+  background: var(--base-02);
+  border: 1px solid var(--base-03);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  overflow: hidden;
+}
+/* Below the modal's own breakpoint the panel would leave no room for the form
+   it explains, so it stacks under it instead of beside it. */
+@media (max-width: 1100px) {
+  .help-panel {
+    width: 100%;
+  }
 }
 
 /* ── Server Row ── */

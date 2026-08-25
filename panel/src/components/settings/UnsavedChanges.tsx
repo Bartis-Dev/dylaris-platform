@@ -2,9 +2,12 @@
 
 import React, {
     createContext,
+    useCallback,
     useContext,
     useState,
     useEffect,
+    useId,
+    useMemo,
     useRef,
 } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -20,14 +23,56 @@ export interface UnsavedChangesRegistration {
     saving: boolean;
 }
 
-// The value stored in the context: either a live registration or null (clean).
+// The value read by the bar and the navigation guards: one aggregate over
+// every registered section, or null when nothing is registered.
 type UnsavedChangesContextValue = UnsavedChangesRegistration | null;
 
-// The setter exposed internally so the layout and hook can both talk to the
-// same piece of state.
 interface UnsavedChangesCtx {
-    registration: UnsavedChangesContextValue;
-    setRegistration: (reg: UnsavedChangesContextValue) => void;
+    registrations: Record<string, UnsavedChangesRegistration>;
+    register: (id: string, reg: UnsavedChangesRegistration) => void;
+    unregister: (id: string) => void;
+}
+
+// ---------------------------------------------------------------------------
+// Aggregation
+// ---------------------------------------------------------------------------
+
+/**
+ * aggregate folds every registered section into the one thing the save bar and
+ * the navigation guards act on.
+ *
+ * It exists because the context used to hold exactly ONE registration, and an
+ * unmount cleared it unconditionally. That was survivable while a settings page
+ * was a single form; it stops being survivable the moment a page is a tab bar
+ * over several independent sections, because the second section to mount would
+ * silently replace the first and the first section's unsaved edits would leave
+ * with no prompt.
+ *
+ * Saves run in SEQUENCE, not in parallel. Two sections of one page routinely
+ * write the same settings table, and two concurrent writes of it produce a
+ * last-writer-wins result that depends on network timing.
+ *
+ * Exported for its own test: this is the part that decides whether unsaved work
+ * can be lost, and it is pure.
+ */
+export function aggregate(
+    regs: UnsavedChangesRegistration[],
+): UnsavedChangesRegistration | null {
+    if (regs.length === 0) return null;
+    return {
+        dirty: regs.some(r => r.dirty),
+        saving: regs.some(r => r.saving),
+        save: async () => {
+            // Only the dirty ones: a clean section's save handler is free to
+            // assume it has something to write.
+            for (const r of regs) {
+                if (r.dirty) await r.save();
+            }
+        },
+        discard: () => {
+            for (const r of regs) r.discard();
+        },
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -35,8 +80,9 @@ interface UnsavedChangesCtx {
 // ---------------------------------------------------------------------------
 
 const UnsavedChangesContext = createContext<UnsavedChangesCtx>({
-    registration: null,
-    setRegistration: () => {},
+    registrations: {},
+    register: () => {},
+    unregister: () => {},
 });
 
 // ---------------------------------------------------------------------------
@@ -44,14 +90,27 @@ const UnsavedChangesContext = createContext<UnsavedChangesCtx>({
 // ---------------------------------------------------------------------------
 
 export function UnsavedChangesProvider({ children }: { children: React.ReactNode }) {
-    const [registration, setRegistration] = useState<UnsavedChangesContextValue>(null);
+    const [registrations, setRegistrations] = useState<Record<string, UnsavedChangesRegistration>>({});
+
+    const register = useCallback((id: string, reg: UnsavedChangesRegistration) => {
+        setRegistrations(prev => ({ ...prev, [id]: reg }));
+    }, []);
+
+    const unregister = useCallback((id: string) => {
+        setRegistrations(prev => {
+            if (!(id in prev)) return prev;
+            const next = { ...prev };
+            delete next[id];
+            return next;
+        });
+    }, []);
 
     // beforeunload — warn the user when they refresh / close the tab / type
     // a new URL while a form on the page is dirty. The custom Save/Discard
     // dialog only fires for in-app navigation (handled by GuardedLink); this
     // catches the cases the SPA can't intercept itself.
     const dirtyRef = useRef(false);
-    dirtyRef.current = registration?.dirty ?? false;
+    dirtyRef.current = Object.values(registrations).some(r => r.dirty);
     useEffect(() => {
         const handler = (e: BeforeUnloadEvent) => {
             if (!dirtyRef.current) return;
@@ -64,23 +123,28 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
         return () => window.removeEventListener('beforeunload', handler);
     }, []);
 
+    const value = useMemo(
+        () => ({ registrations, register, unregister }),
+        [registrations, register, unregister],
+    );
+
     return (
-        <UnsavedChangesContext.Provider value={{ registration, setRegistration }}>
+        <UnsavedChangesContext.Provider value={value}>
             {children}
         </UnsavedChangesContext.Provider>
     );
 }
 
 // ---------------------------------------------------------------------------
-// Hook — used by each settings tab to register itself
+// Hook — used by each settings section to register itself
 // ---------------------------------------------------------------------------
 
 /**
- * Call this hook inside a settings tab component to register its dirty state,
- * save handler, and discard handler with the shared bar.
+ * Call this hook inside a settings section to register its dirty state, save
+ * handler and discard handler with the shared bar.
  *
- * The registration is updated whenever dirty/saving change, and is
- * automatically cleared on unmount so stale state never leaks to the next tab.
+ * Several sections on one page may each call it; they are keyed independently
+ * and unregister only themselves on unmount.
  */
 export function useUnsavedChanges(reg: {
     dirty: boolean;
@@ -88,7 +152,8 @@ export function useUnsavedChanges(reg: {
     discard: () => void;
     saving?: boolean;
 }) {
-    const { setRegistration } = useContext(UnsavedChangesContext);
+    const { register, unregister } = useContext(UnsavedChangesContext);
+    const id = useId();
 
     // Keep stable refs to the latest callbacks so the effect deps stay minimal.
     const saveRef = useRef(reg.save);
@@ -99,35 +164,31 @@ export function useUnsavedChanges(reg: {
     const { dirty, saving = false } = reg;
 
     useEffect(() => {
-        // Register (or update) with the latest values.
-        setRegistration({
+        register(id, {
             dirty,
             save: () => saveRef.current(),
             discard: () => discardRef.current(),
             saving,
         });
-
-        // Cleanup: unregister when the tab unmounts.
-        return () => {
-            setRegistration(null);
-        };
+        return () => unregister(id);
         // Re-run whenever dirty or saving changes; callbacks use refs so they
         // don't need to be in deps.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [dirty, saving]);
+    }, [id, dirty, saving]);
 }
 
 // ---------------------------------------------------------------------------
-// Consumer hook — used by the layout to read current state
+// Consumer hook — used by the layout and the nav guards to read current state
 // ---------------------------------------------------------------------------
 
 export function useUnsavedChangesState(): UnsavedChangesContextValue {
-    return useContext(UnsavedChangesContext).registration;
+    const { registrations } = useContext(UnsavedChangesContext);
+    return useMemo(() => aggregate(Object.values(registrations)), [registrations]);
 }
 
 // ---------------------------------------------------------------------------
 // Shared confirm dialog — shown when navigating away with unsaved changes
-// (used both by the settings tab bar and the Gateway tab's internal sub-nav)
+// (used both by the settings tab bar and a page's internal tab bar)
 // ---------------------------------------------------------------------------
 
 export function UnsavedDialog({
@@ -152,7 +213,7 @@ export function UnsavedDialog({
                 </div>
                 <div className="modal-body">
                     <p className="text-sm text-(--base-07)">
-                        You have unsaved changes on this tab. What would you like to do?
+                        You have unsaved changes on this page. What would you like to do?
                     </p>
                 </div>
                 <div className="modal-footer">
