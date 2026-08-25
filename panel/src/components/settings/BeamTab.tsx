@@ -1,18 +1,35 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useAppData } from '@/lib/AppDataContext';
-import { AlertTriangle, CircleCheck, CircleAlert, Info } from 'lucide-react';
+import { AlertTriangle, Info } from 'lucide-react';
 import { API_URL } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
-import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import { useSettingsForm } from '@/lib/useSettingsForm';
+import { SwitchRow } from '@/components/ui/Switch';
+import HelpTip from '@/components/ui/HelpTip';
 
 // ─────────────────────────────────────────────
 // Beam settings
 // ─────────────────────────────────────────────
 
+interface BeamRelayInfo {
+    id?: string;
+    publicHost?: string;
+    clientPort?: number;
+    region?: string;
+}
+
 interface BeamSettings {
+    // relayAddress is the EFFECTIVE relay: the override if one is set, otherwise
+    // whatever discovery found. Read-only here. It used to be the field this
+    // screen edited, which is how saving anything on this page pinned a
+    // discovered relay as a permanent override and silently ended failover.
     relayAddress: string;
+    // manualOverride is the setting. Empty means "use discovery".
+    manualOverride: string;
+    publicHost?: string;
+    discoveredRelays?: BeamRelayInfo[];
     bwLimit: number;
     enabled: boolean;
     downloadLink: string;
@@ -20,9 +37,9 @@ interface BeamSettings {
     // There is no force-update floor here: it comes from the signed release
     // manifest, which Core verifies before enforcing it. See effectiveMinVersion.
 
-    // Per-direction throttle splits (bytes/sec, 0 = unlimited). Stored
-    // alongside bwLimit; Core folds the internal pair into bwLimit until
-    // the per-direction enforcement ships.
+    // Per-direction throttle splits (bytes/sec, 0 = unlimited). The internal
+    // pair is enforced by the NODE, the external pair by the RELAY; bwLimit is
+    // the legacy single value Core still derives for older nodes.
     bwUpInternal?: number;
     bwDownInternal?: number;
     bwUpExternal?: number;
@@ -36,36 +53,56 @@ interface BeamSettings {
     refUpExternal?: number;
     refDownExternal?: number;
 
-    // Upload limits (bytes, 0 = unlimited), enforced node-side on the beam
-    // upload path. maxUploadBytes is an absolute per-upload cap; dailyUploadBytes
-    // is a per-user daily total.
+    // Upload limits (bytes, 0 = unlimited), enforced on the beam upload path.
+    // maxUploadBytes is an absolute per-upload cap; dailyUploadBytes is a
+    // per-user daily total.
     maxUploadBytes?: number;
     dailyUploadBytes?: number;
 }
 
-async function getBeamSettings(): Promise<{ success: boolean; settings?: BeamSettings }> {
+function authHeader(): Record<string, string> {
+    const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+    return { Authorization: `Bearer ${token}` };
+}
+
+async function getBeamSettings(): Promise<BeamSettings | null> {
     try {
-        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-        const res = await fetch(`${API_URL}/settings/beam`, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
-        return await res.json();
+        const res = await fetch(`${API_URL}/settings/beam`, { headers: authHeader() });
+        const body = await res.json();
+        if (!body?.success || !body.settings) return null;
+        // Normalise the optional numerics up front so the dirty compare is
+        // against a stable shape rather than against undefined-vs-0.
+        const s = body.settings as BeamSettings;
+        return {
+            ...s,
+            manualOverride: s.manualOverride ?? '',
+            bwUpInternal: s.bwUpInternal ?? 0,
+            bwDownInternal: s.bwDownInternal ?? 0,
+            bwUpExternal: s.bwUpExternal ?? 0,
+            bwDownExternal: s.bwDownExternal ?? 0,
+            refUpInternal: s.refUpInternal ?? 0,
+            refDownInternal: s.refDownInternal ?? 0,
+            refUpExternal: s.refUpExternal ?? 0,
+            refDownExternal: s.refDownExternal ?? 0,
+            maxUploadBytes: s.maxUploadBytes ?? 0,
+            dailyUploadBytes: s.dailyUploadBytes ?? 0,
+        };
     } catch {
-        return { success: false };
+        return null;
     }
 }
 
-async function saveBeamSettings(settings: BeamSettings): Promise<{ success: boolean; message?: string }> {
+async function saveBeamSettings(settings: BeamSettings): Promise<{ ok: boolean; message?: string }> {
     try {
-        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
         const res = await fetch(`${API_URL}/settings/beam`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            headers: { 'Content-Type': 'application/json', ...authHeader() },
             body: JSON.stringify(settings),
         });
-        return await res.json();
+        const body = await res.json();
+        return { ok: !!body?.success, message: body?.message };
     } catch {
-        return { success: false, message: 'Network error' };
+        return { ok: false, message: 'Network error' };
     }
 }
 
@@ -164,143 +201,77 @@ function RefField({
     );
 }
 
-// Snapshot of every field a dirty-check should follow. Everything is
-// numeric in bytes/sec for the bw/ref fields so the JSON.stringify
-// equality check is exact.
-interface BeamEditableSnapshot {
-    relayAddress: string;
-    downloadLink: string;
-    enabled: boolean;
-    bwUpInternal: number;
-    bwDownInternal: number;
-    bwUpExternal: number;
-    bwDownExternal: number;
-    refUpInternal: number;
-    refDownInternal: number;
-    refUpExternal: number;
-    refDownExternal: number;
-    maxUploadBytes: number;
-    dailyUploadBytes: number;
-}
-
-function beamSnapshot(s: BeamSettings): BeamEditableSnapshot {
-    return {
-        relayAddress: s.relayAddress,
-        downloadLink: s.downloadLink,
-        enabled: s.enabled,
-        bwUpInternal: s.bwUpInternal ?? 0,
-        bwDownInternal: s.bwDownInternal ?? 0,
-        bwUpExternal: s.bwUpExternal ?? 0,
-        bwDownExternal: s.bwDownExternal ?? 0,
-        refUpInternal: s.refUpInternal ?? 0,
-        refDownInternal: s.refDownInternal ?? 0,
-        refUpExternal: s.refUpExternal ?? 0,
-        refDownExternal: s.refDownExternal ?? 0,
-        maxUploadBytes: s.maxUploadBytes ?? 0,
-        dailyUploadBytes: s.dailyUploadBytes ?? 0,
-    };
-}
-
 // ─────────────────────────────────────────────
 // Beam panel
 // ─────────────────────────────────────────────
 
-function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+export default function BeamTab() {
     const { gatewayEnabled } = useAppData();
-    const [settings, setSettings] = useState<BeamSettings>({
-        relayAddress: '',
-        bwLimit: 0,
-        enabled: true,
-        downloadLink: '',
-    });
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
     // The download-link field stays read-only until the admin acknowledges what a
     // custom link costs. Session-scoped on purpose: it guards the decision at the
     // moment it is made, so there is nothing worth persisting.
     const [downloadLinkUnlocked, setDownloadLinkUnlocked] = useState(false);
     const [showDownloadLinkWarning, setShowDownloadLinkWarning] = useState(false);
 
-    // Snapshot of last-saved editable fields for dirty detection.
-    const snapshotRef = useRef<BeamEditableSnapshot | null>(null);
+    const form = useSettingsForm<BeamSettings>({
+        load: getBeamSettings,
+        save: saveBeamSettings,
+        successMessage: 'Beam settings saved',
+        // Pinning a relay by hand is the setting on this page that can quietly
+        // take remote access away: every client is told to dial that one host,
+        // and discovery stops choosing a live one.
+        confirmBeforeSave: (next, prev) =>
+            next.manualOverride.trim() && next.manualOverride !== prev.manualOverride
+                ? {
+                      title: 'Pin the relay by hand?',
+                      message:
+                          'Every Beam client will be told to use this address and nothing else. ' +
+                          'Discovery and failover to another relay stop while it is set. Leave it ' +
+                          'empty to go back to picking whichever relay is online.',
+                      confirmLabel: 'Pin it',
+                      destructive: false,
+                  }
+                : null,
+    });
 
-    useEffect(() => {
-        getBeamSettings().then(res => {
-            if (res.success && res.settings) {
-                setSettings(res.settings);
-                snapshotRef.current = beamSnapshot(res.settings);
-            } else {
-                // snapshotRef stays null, so `dirty` stays false and the save
-                // bar never appears - the seed values cannot be written back.
-                // Say the load failed rather than presenting them as stored.
-                showToast('Failed to load Beam settings - shown values are unconfirmed', false);
-            }
-            setLoading(false);
-        });
-    }, []);
+    const settings = form.value;
 
-    const handleSave = async () => {
-        setSaving(true);
-        // bwLimit stays in the payload for back-compat — Core will overwrite
-        // it from min(bwUpInternal, bwDownInternal) when those are non-zero,
-        // so we just pass through whatever the API loaded.
-        const res = await saveBeamSettings(settings);
-        showToast(res.success ? 'Beam settings saved.' : (res.message || 'Save failed.'), res.success);
-        if (res.success) {
-            snapshotRef.current = beamSnapshot(settings);
-        }
-        setSaving(false);
-    };
-
-    const handleDiscard = () => {
-        const snap = snapshotRef.current;
-        if (!snap) return;
-        setSettings(s => ({
-            ...s,
-            relayAddress: snap.relayAddress,
-            downloadLink: snap.downloadLink,
-            enabled: snap.enabled,
-            bwUpInternal: snap.bwUpInternal,
-            bwDownInternal: snap.bwDownInternal,
-            bwUpExternal: snap.bwUpExternal,
-            bwDownExternal: snap.bwDownExternal,
-            refUpInternal: snap.refUpInternal,
-            refDownInternal: snap.refDownInternal,
-            refUpExternal: snap.refUpExternal,
-            refDownExternal: snap.refDownExternal,
-            maxUploadBytes: snap.maxUploadBytes,
-            dailyUploadBytes: snap.dailyUploadBytes,
-        }));
-    };
-
-    const dirty =
-        snapshotRef.current !== null &&
-        JSON.stringify(beamSnapshot(settings)) !== JSON.stringify(snapshotRef.current);
-
-    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
-
-    // ─── Per-direction bandwidth input ──────────────────────────────
-    // Renders a labelled Mbit/s input with the operator's reference
-    // value as an info caption below ("Host says: 1000 Mbit/s") so
-    // limits get sized against real hardware, not guesses.
     type BwKey = 'bwUpInternal' | 'bwDownInternal' | 'bwUpExternal' | 'bwDownExternal';
     type RefKey = 'refUpInternal' | 'refDownInternal' | 'refUpExternal' | 'refDownExternal';
-    const setBwField = (k: BwKey, mbit: number) =>
-        setSettings(s => ({ ...s, [k]: mbitToBps(mbit) }));
-    const setRefField = (k: RefKey, mbit: number) =>
-        setSettings(s => ({ ...s, [k]: mbitToBps(mbit) }));
-
+    const setBwField = (k: BwKey, mbit: number) => form.patch({ [k]: mbitToBps(mbit) } as Partial<BeamSettings>);
+    const setRefField = (k: RefKey, mbit: number) => form.patch({ [k]: mbitToBps(mbit) } as Partial<BeamSettings>);
     const setUploadLimit = (k: 'maxUploadBytes' | 'dailyUploadBytes', gib: number) =>
-        setSettings(s => ({ ...s, [k]: giBToBytes(gib) }));
+        form.patch({ [k]: giBToBytes(gib) } as Partial<BeamSettings>);
 
-    if (loading) return (
+    if (form.loading) return (
         <div className="space-y-6">
             <SkeletonHeader />
             <SkeletonCard height="h-72" />
             <SkeletonCard height="h-64" />
             <SkeletonCard height="h-64" />
+            <SkeletonCard height="h-64" />
         </div>
     );
+
+    if (!settings) {
+        return (
+            <div className="card p-5 flex items-start gap-2">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-(--error-light)" />
+                <div>
+                    <p className="text-sm text-(--base-09)">Could not read the Beam settings.</p>
+                    <p className="text-xs text-(--base-06) mt-1">
+                        Nothing is shown rather than showing defaults: an empty form saved over a
+                        real configuration is worse than no form.
+                    </p>
+                    <button onClick={() => void form.reload()} className="btn btn-secondary btn-sm mt-3">
+                        Try again
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    const discovered = settings.discoveredRelays ?? [];
 
     return (
         <>
@@ -319,47 +290,73 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
 
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-2">General</h3>
-                <div className="flex items-center justify-between">
-                    <div className="pr-4">
-                        <label className="input-label">Offer Beam to users</label>
-                        <p className="text-xs text-(--base-06) mt-0.5">
-                            Advisory only. Shows or hides the Download Beam button and reports availability to the desktop
-                            app. It does not disable Beam itself - Core still mints connection tickets and the node still
-                            authenticates, so clients that already have Beam keep working either way.
-                        </p>
-                    </div>
-                    <button
-                        onClick={() => setSettings(s => ({ ...s, enabled: !s.enabled }))}
-                        className={`toggle-track ${settings.enabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                        role="switch"
-                        aria-checked={settings.enabled}
-                    >
-                        <span className={`toggle-knob ${settings.enabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
+
+                <SwitchRow
+                    label="Offer Beam to users"
+                    description="Advisory only. Shows or hides the Download Beam button and reports availability to the desktop app. It does not disable Beam itself - Core still mints connection tickets and the node still authenticates, so clients that already have Beam keep working either way."
+                    checked={settings.enabled}
+                    onChange={v => form.patch({ enabled: v })}
+                />
+
                 <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Relay Address</label>
-                    <p className="text-xs text-(--base-06) mb-1">
-                        Public address of the Beam relay (e.g. <span className="font-mono">beam.example.com:25550</span>).
-                        Only used for remote access in gateway routing mode - the desktop app fetches it on login. LAN and
-                        direct connections work without it.
-                    </p>
+                    <label className="input-label flex items-center gap-1.5">
+                        Relay address
+                        <HelpTip label="About the relay address">
+                            <p className="mb-2">
+                                The Beam app asks Core where the relay is when it logs in. Left empty,
+                                Core answers with whichever relay is registered and online, which is
+                                what makes failover and multi-region work.
+                            </p>
+                            <p className="mb-2">
+                                Setting a value here overrides that for every client, permanently,
+                                including when that host is down. Use it when the relay sits behind a
+                                name Core cannot discover - a load balancer, or your own DNS in front
+                                of several relays.
+                            </p>
+                            <p>
+                                Only used for REMOTE access through the gateway. LAN and direct
+                                connections never touch it.
+                            </p>
+                        </HelpTip>
+                    </label>
+
+                    {/* What discovery currently answers, stated separately from
+                        the override. These used to be one field, so the screen
+                        offered a discovered value for editing and stored the edit
+                        as an override - saving anything on this page pinned it. */}
+                    <div className="rounded-md bg-(--base-02) px-3 py-2 mb-1">
+                        <div className="mono-label text-[10px] mb-1">In use right now</div>
+                        <div className="font-mono text-xs text-(--base-09) break-all">
+                            {settings.relayAddress?.trim() || 'none - no relay is registered'}
+                        </div>
+                        <div className="text-[11px] text-(--base-06) mt-1">
+                            {settings.manualOverride?.trim()
+                                ? 'Pinned by the override below.'
+                                : discovered.length > 0
+                                    ? `Chosen automatically from ${discovered.length} registered relay${discovered.length === 1 ? '' : 's'}.`
+                                    : 'Nothing discovered yet.'}
+                        </div>
+                    </div>
+
+                    <label className="input-label">Override (optional)</label>
                     <input
                         type="text"
-                        value={settings.relayAddress}
-                        onChange={e => setSettings(s => ({ ...s, relayAddress: e.target.value }))}
-                        placeholder="beam.example.com:25550"
-                        className="input-field"
+                        value={settings.manualOverride}
+                        onChange={e => form.patch({ manualOverride: e.target.value })}
+                        placeholder="empty - pick whichever relay is online"
+                        className="input-field input-mono"
                     />
+                    <p className="text-xs text-(--base-06) mt-0.5">
+                        Host and port, e.g. <span className="font-mono">beam.example.com:25550</span>.
+                        Leave it empty unless discovery cannot see your relay.
+                    </p>
                     {/* A relay only exists inside the gateway subsystem, so with
-                        routing on ip_port there is nothing missing - the field
-                        stays editable (an admin may set it up before switching
-                        routing on) but warning about it would be noise. */}
+                        routing on ip_port there is nothing missing. */}
                     {!settings.relayAddress?.trim() && (
                         gatewayEnabled ? (
                             <p className="flex items-start gap-1.5 text-xs text-(--base-06) mt-1">
                                 <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
-                                <span>No relay address set. Remote access via the gateway is unavailable until you add one; LAN and direct connections are unaffected.</span>
+                                <span>No relay is available. Remote access through the gateway is unavailable until one registers or you set an override; LAN and direct connections are unaffected.</span>
                             </p>
                         ) : (
                             <p className="text-xs text-(--base-06) mt-1">
@@ -368,8 +365,9 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                         )
                     )}
                 </div>
+
                 <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Beam Download Link</label>
+                    <label className="input-label">Beam download link</label>
                     <p className="text-xs text-(--base-06) mb-1">
                         Where the Files tab sends users to install Beam Desktop. Leave it EMPTY unless you build
                         your own Beam: empty means users get the official signed build, which this Core verifies
@@ -385,7 +383,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                         readOnly={!downloadLinkUnlocked}
                         onFocus={() => { if (!downloadLinkUnlocked) setShowDownloadLinkWarning(true); }}
                         onClick={() => { if (!downloadLinkUnlocked) setShowDownloadLinkWarning(true); }}
-                        onChange={e => setSettings(s => ({ ...s, downloadLink: e.target.value }))}
+                        onChange={e => form.patch({ downloadLink: e.target.value })}
                         placeholder="Empty — users get the official build"
                         aria-describedby="beam-download-link-help"
                         className={`input-field ${downloadLinkUnlocked ? '' : 'cursor-pointer'}`}
@@ -414,27 +412,53 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
             {/* ─── Throttle (enforced) ─── */}
             <div className="card p-5 space-y-4">
                 <div>
-                    <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1">Bandwidth Throttle</h3>
+                    <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1 flex items-center gap-1.5">
+                        Bandwidth throttle
+                        <HelpTip label="About the bandwidth throttle">
+                            <p className="mb-2">
+                                A ceiling on how fast Beam moves data. <strong>0 means unlimited</strong>,
+                                which is the default for all four.
+                            </p>
+                            <p className="mb-2">
+                                <strong>Internal</strong> is the hop between the node and the relay,
+                                and the <strong>node</strong> enforces it.
+                                <strong> External</strong> is the hop between the relay and the Beam
+                                app on someone&apos;s desktop, and the <strong>relay</strong> enforces
+                                it. A transfer crosses both, so the slower of the two decides.
+                            </p>
+                            <p className="mb-2">
+                                The cap is per direction and <em>shared</em>: ten concurrent transfers
+                                divide one limit between them rather than getting it each. Nobody is
+                                singled out - a big transfer simply slows down while others run.
+                            </p>
+                            <p className="mb-2">
+                                <code>1 Mbit/s = 125,000 bytes/s</code>, the decimal Mbit hosters
+                                advertise. A 1 Gbit uplink is 1000 here.
+                            </p>
+                            <p>
+                                Nodes and relays re-read these every 10 seconds, so a change takes
+                                effect on its own. Nothing needs restarting.
+                            </p>
+                        </HelpTip>
+                    </h3>
                     <p className="text-xs text-(--base-06)">
-                        Caps applied across all Beam transfers. Values in <span className="font-mono">Mbit/s</span> — <strong>0 = unlimited</strong>.
-                        Fair sharing is automatic within each cap (max-min via rate.Limiter).
-                    </p>
-                    <p className="text-[11px] text-(--base-05) mt-1.5">
-                        Note: until the per-direction limiter ships in node + relay, the lower of <em>Up Internal</em> and <em>Down Internal</em> is folded into the legacy single throttle and applied symmetrically on the Node. The external pair is stored for the upcoming relay-side throttle.
+                        Values in <span className="font-mono">Mbit/s</span> — <strong>0 = unlimited</strong>.
+                        Each cap is shared across all transfers in that direction, so concurrent transfers
+                        divide it rather than each getting it.
                     </p>
                 </div>
 
                 <div>
-                    <h4 className="mono-label mb-2">Internal (Node ↔ Relay over the overlay)</h4>
+                    <h4 className="mono-label mb-2">Internal — node to relay, enforced by the node</h4>
                     <div className="grid grid-cols-2 gap-3">
                         <BwField
-                            label="Up"
+                            label="Up (into the node)"
                             value={bpsToMbit(settings.bwUpInternal)}
                             refValue={settings.refUpInternal}
                             onChange={v => setBwField('bwUpInternal', v)}
                         />
                         <BwField
-                            label="Down"
+                            label="Down (out of the node)"
                             value={bpsToMbit(settings.bwDownInternal)}
                             refValue={settings.refDownInternal}
                             onChange={v => setBwField('bwDownInternal', v)}
@@ -443,16 +467,16 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                 </div>
 
                 <div>
-                    <h4 className="mono-label mb-2">External (Relay ↔ Beam.exe over the internet)</h4>
+                    <h4 className="mono-label mb-2">External — relay to the Beam app, enforced by the relay</h4>
                     <div className="grid grid-cols-2 gap-3">
                         <BwField
-                            label="Up"
+                            label="Up (from the user)"
                             value={bpsToMbit(settings.bwUpExternal)}
                             refValue={settings.refUpExternal}
                             onChange={v => setBwField('bwUpExternal', v)}
                         />
                         <BwField
-                            label="Down"
+                            label="Down (to the user)"
                             value={bpsToMbit(settings.bwDownExternal)}
                             refValue={settings.refDownExternal}
                             onChange={v => setBwField('bwDownExternal', v)}
@@ -461,12 +485,38 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                 </div>
             </div>
 
-            {/* ─── Upload limits (enforced node-side) ─── */}
+            {/* ─── Upload limits (enforced) ─── */}
             <div className="card p-5 space-y-4">
                 <div>
-                    <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1">Upload Limits</h3>
+                    <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1 flex items-center gap-1.5">
+                        Upload limits
+                        <HelpTip label="About upload limits">
+                            <p className="mb-2">
+                                Two different questions. <strong>Max per upload</strong> refuses one
+                                file that is too big, before it starts. <strong>Daily per user</strong>{' '}
+                                is a running total per account, counted from midnight UTC.
+                            </p>
+                            <p className="mb-2">
+                                Both apply to every way a file reaches a node: the Beam app, SFTP, and
+                                the browser file manager. Downloads are never counted.
+                            </p>
+                            <p className="mb-2">
+                                The daily total is added up when an upload finishes, so several
+                                uploads running at once can overshoot the limit slightly rather than
+                                queueing behind each other. That is deliberate: this is a fair-use
+                                brake, not a quota to the byte.
+                            </p>
+                            <p>
+                                Both <strong>fail open</strong>. If the counter is unreachable the
+                                upload is allowed - a storage outage should not also stop people
+                                working.
+                            </p>
+                        </HelpTip>
+                    </h3>
                     <p className="text-xs text-(--base-06)">
-                        Caps on files pushed to a node over Beam (server import, file browser). Values in <span className="font-mono">GiB</span> — <strong>0 = unlimited</strong>. Enforced on the node, which Core&apos;s HTTP body-size cap never sees. Downloads are not counted.
+                        Caps on files pushed to a node over Beam, SFTP and the file manager.
+                        Values in <span className="font-mono">GiB</span> — <strong>0 = unlimited</strong>.
+                        Downloads are not counted.
                     </p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -479,7 +529,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                             placeholder="0"
                             className="input-field input-mono"
                         />
-                        <p className="text-xs text-(--base-06)">Rejects any single upload larger than this.</p>
+                        <p className="text-xs text-(--base-06)">Refuses any single file larger than this, before the transfer starts.</p>
                     </div>
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label">Daily per user</label>
@@ -490,7 +540,7 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                             placeholder="0"
                             className="input-field input-mono"
                         />
-                        <p className="text-xs text-(--base-06)">Total a user may upload per calendar day (UTC).</p>
+                        <p className="text-xs text-(--base-06)">Running total per account, reset at midnight UTC.</p>
                     </div>
                 </div>
             </div>
@@ -498,9 +548,29 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
             {/* ─── Reference (host hardware — informational only) ─── */}
             <div className="card p-5 space-y-4">
                 <div>
-                    <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1">Host Hardware Reference</h3>
+                    <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1 flex items-center gap-1.5">
+                        Host hardware reference
+                        <HelpTip label="About the hardware reference">
+                            <p className="mb-2">
+                                <strong>These enforce nothing.</strong> Nothing in the node, the relay
+                                or Core reads them. They are a note to yourself.
+                            </p>
+                            <p className="mb-2">
+                                What you type here appears as{' '}
+                                <span className="font-mono">host: N Mbit/s</span> under the matching
+                                throttle field above, so a cap can be chosen against what the link
+                                really does instead of guessed.
+                            </p>
+                            <p>
+                                Worth saying plainly, because a number on a settings page normally
+                                does something. Leave them at 0 if you do not know.
+                            </p>
+                        </HelpTip>
+                    </h3>
                     <p className="text-xs text-(--base-06)">
-                        Record what the host actually provides. Pure informational — never enforced. Helps you size the throttle values above against what the link can really do. Values in <span className="font-mono">Mbit/s</span>, leave at 0 if unknown.
+                        What the host actually provides. <strong>Never enforced</strong> — the only thing
+                        these do is caption the throttle fields above so you can size a cap against real
+                        capacity. Values in <span className="font-mono">Mbit/s</span>, leave at 0 if unknown.
                     </p>
                 </div>
 
@@ -573,35 +643,6 @@ function BeamPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => vo
                 </div>
             </div>
         )}
-        </>
-    );
-}
-
-// ─────────────────────────────────────────────
-// Main export: standalone Beam settings tab
-// ─────────────────────────────────────────────
-
-export default function BeamTab() {
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-
-    const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    };
-
-    return (
-        <>
-            <BeamPanel showToast={showToast} />
-
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </>
     );
 }

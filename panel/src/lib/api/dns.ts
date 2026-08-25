@@ -7,7 +7,7 @@
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
 
 // Record category — drives the plain-language explanation shown per row.
-export type DnsRecordCategory = 'player' | 'wildcard' | 'cname' | 'panel';
+export type DnsRecordCategory = 'player' | 'wildcard' | 'cname' | 'panel' | 'api' | 'beam';
 
 export type DnsRecordType = 'A' | 'CNAME';
 

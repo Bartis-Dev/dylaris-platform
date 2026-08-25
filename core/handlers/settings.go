@@ -708,8 +708,22 @@ func (h *SettingsHandler) LoadServerSettings() ServerSettings {
 // ─── Beam Settings ───────────────────────────────────────────────────
 
 type BeamSettings struct {
-	RelayAddress     string          `json:"relayAddress"`     // Effective relay (discovered or manual override)
-	ManualOverride   string          `json:"manualOverride"`   // Admin-configured override (empty = use auto-discovery)
+	RelayAddress string `json:"relayAddress"` // Effective relay (discovered or manual override)
+	// ManualOverride is the admin-configured override; empty means use
+	// auto-discovery.
+	//
+	// A POINTER, and that is the whole fix for a defect that cost an operator
+	// their relay failover without telling them: the read returns the EFFECTIVE
+	// relay in RelayAddress, the write used to store whatever arrived there into
+	// beam.relay_address - which IS the override. So loading this page and
+	// saving any unrelated field on it pinned the currently discovered relay as
+	// a permanent manual override, after which discovery, failover and
+	// multi-region selection silently stopped.
+	//
+	// Absent (nil) keeps the legacy behaviour for a client that does not know
+	// this field; present is authoritative, including an explicit "" meaning
+	// "go back to discovery".
+	ManualOverride *string `json:"manualOverride"`
 	PublicHost       string          `json:"publicHost"`       // Externally reachable hostname for discovered relays (e.g. beam.dylaris.com)
 	DiscoveredRelays []BeamRelayInfo `json:"discoveredRelays"` // Currently registered relays (read-only)
 	// BwLimit is the legacy single-value Node throttle (bytes/sec, 0 =
@@ -763,6 +777,25 @@ func (h *SettingsHandler) GetBeamSettings(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// beamManualOverride decides what gets written to beam.relay_address, which is
+// the MANUAL OVERRIDE and not the effective relay.
+//
+// The read returns the resolved relay in RelayAddress - discovered when no
+// override is set - so echoing that field back on save pinned a discovered relay
+// as a permanent override. It looked like nothing had happened; what had
+// happened was that failover stopped.
+//
+// A client that sends the field is authoritative, including an explicit empty
+// string meaning "back to discovery". A client that does not send it at all is
+// an older panel, and gets the old behaviour rather than having its override
+// silently cleared by a build that never knew about it.
+func beamManualOverride(req BeamSettings) string {
+	if req.ManualOverride != nil {
+		return strings.TrimSpace(*req.ManualOverride)
+	}
+	return strings.TrimSpace(req.RelayAddress)
+}
+
 // SaveBeamSettings POST /api/settings/beam - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Request) {
 	var req BeamSettings
@@ -802,7 +835,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 	}
 
 	pairs := []struct{ k, v string }{
-		{"beam.relay_address", req.RelayAddress},
+		{"beam.relay_address", beamManualOverride(req)},
 		{"beam.public_host", strings.TrimSpace(req.PublicHost)},
 		{"beam.bw_limit", fmt.Sprintf("%d", effectiveBw)},
 		{"beam.enabled", enabledStr},
@@ -866,7 +899,7 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 
 	settings := BeamSettings{
 		RelayAddress:   effective,
-		ManualOverride: manualOverride,
+		ManualOverride: &manualOverride,
 		PublicHost:     publicHost,
 		DownloadLink:   getSetting("beam.download_link"),
 		Enabled:        true,

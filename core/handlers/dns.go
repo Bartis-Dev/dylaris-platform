@@ -80,5 +80,53 @@ func (h *DNSHandler) buildDNSCheckConfig() services.DNSCheckConfig {
 		cfg.CNAMETarget, _ = h.state.Store.GetSetting("gateway_cname_target")
 	}
 
+	// API host from core_public_url. The panel's browser calls this for every
+	// request, and until now the check had no notion of it: an operator whose
+	// api. record was missing got a clean DNS report and a panel that loaded and
+	// then did nothing.
+	if raw, _ := h.state.Store.GetSetting("core_public_url"); raw != "" {
+		if host, dial := hostAndDialTarget(raw); host != "" {
+			cfg.APIHost, cfg.APIDialTarget = host, dial
+		}
+	}
+
+	// Beam relay. Resolved the same way the desktop client resolves it - the
+	// override if set, otherwise whatever registered - because the name worth
+	// checking is the one clients are actually handed.
+	override, _ := h.state.Store.GetSetting("beam.relay_address")
+	publicHost, _ := h.state.Store.GetSetting("beam.public_host")
+	if effective, _ := resolveRelay(context.Background(), h.state.Redis, override, publicHost, ""); effective != "" {
+		if host, port, splitErr := net.SplitHostPort(effective); splitErr == nil && host != "" {
+			cfg.BeamHost = host
+			cfg.BeamDialTarget = net.JoinHostPort(host, port)
+		} else {
+			// A bare hostname with no port is still worth resolving; there is
+			// just nothing specific to dial.
+			cfg.BeamHost = strings.TrimSpace(effective)
+		}
+	}
+
 	return cfg
+}
+
+// hostAndDialTarget splits an operator-set URL into the hostname to resolve and
+// a host:port to dial, defaulting the port from the scheme.
+func hostAndDialTarget(raw string) (host, dial string) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return "", ""
+	}
+	host = u.Hostname()
+	if host == "" {
+		return "", ""
+	}
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return host, net.JoinHostPort(host, port)
 }

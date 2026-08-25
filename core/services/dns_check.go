@@ -56,6 +56,21 @@ type DNSCheckConfig struct {
 	HosterDomains   []string // player base domains, e.g. "play.example.com"
 	CustomDomainsOn bool     // gateway_custom_domains_enabled == "true"
 	CNAMETarget     string   // gateway_cname_target (only when CustomDomainsOn)
+
+	// APIHost is the hostname the panel's browser calls, from core_public_url.
+	// It was missing entirely: the check knew FRONTEND_URL and nothing else, so
+	// the api. record - which every single request in the panel depends on - was
+	// the one name it never looked at.
+	APIHost       string
+	APIDialTarget string
+
+	// BeamHost is the relay the desktop client dials for REMOTE access, from the
+	// override or discovery. Also missing, and for a different reason: relay
+	// records are planned by the gateway Hub, not by Core, so nothing here had a
+	// reason to know the name. It is still the name a user hits when Beam cannot
+	// reach their server from outside.
+	BeamHost       string
+	BeamDialTarget string
 }
 
 // publicResolver builds a net.Resolver that dials the public DNS servers
@@ -99,22 +114,59 @@ func RunDNSCheck(ctx context.Context, rdb *redis.Client, cfg DNSCheckConfig) DNS
 		CheckedAt:    time.Now().Format(time.RFC3339),
 	}
 
-	// --- Panel record: A <panelHost> -> operator origin (any IP counts). ---
-	if cfg.PanelHost != "" {
+	// --- Operator-origin records. No fixed expected IP: these point at whatever
+	// the operator runs, so the only answerable question is whether they resolve
+	// at all. All three sit in front of something a user notices immediately when
+	// it is missing. ---
+	for _, origin := range []struct{ category, host, missingHint, okHint string }{
+		{
+			"panel", cfg.PanelHost,
+			"Panel domain does not resolve. Create an A record pointing it at your panel server's public IP.",
+			"Panel domain resolves.",
+		},
+		{
+			"api", cfg.APIHost,
+			"API domain does not resolve. The panel calls it for every request, so the panel loads and then does nothing. Create an A record pointing it at the same server as the panel.",
+			"API domain resolves.",
+		},
+		{
+			"beam", cfg.BeamHost,
+			"Beam relay hostname does not resolve. Remote Beam connections fail; LAN and direct connections are unaffected. Point it at the relay's public IP.",
+			"Beam relay hostname resolves.",
+		},
+	} {
+		host := strings.ToLower(strings.TrimSpace(origin.host))
+		if host == "" {
+			// An unset API host is worth a row rather than a silent omission.
+			// Not knowing the name is exactly why this record went unchecked for
+			// as long as it did, and a report that lists three things and stays
+			// quiet about the fourth reads as "all four are fine".
+			if origin.category == "api" {
+				result.Records = append(result.Records, DNSRecordCheck{
+					Category: "api",
+					Type:     "A",
+					Name:     "(not configured)",
+					Expected: []string{},
+					Actual:   []string{},
+					Status:   "info",
+					Hint:     "No API address is set, so it cannot be checked. Set it under Settings -> Modpacks as \"Core public URL\" (it is the address the panel calls, e.g. https://api.example.com).",
+				})
+			}
+			continue
+		}
 		rec := DNSRecordCheck{
-			Category: "panel",
+			Category: origin.category,
 			Type:     "A",
-			Name:     cfg.PanelHost,
+			Name:     host,
 			Expected: []string{}, // operator-specific origin, no fixed expected IP
 		}
-		actual := lookupIPs(ctx, resolver, cfg.PanelHost)
-		rec.Actual = actual
-		if len(actual) == 0 {
+		rec.Actual = lookupIPs(ctx, resolver, host)
+		if len(rec.Actual) == 0 {
 			rec.Status = "unresolved"
-			rec.Hint = "Panel domain does not resolve. Create an A record pointing it at your panel server's public IP."
+			rec.Hint = origin.missingHint
 		} else {
 			rec.Status = "ok"
-			rec.Hint = "Panel domain resolves."
+			rec.Hint = origin.okHint
 		}
 		result.Records = append(result.Records, rec)
 	}
@@ -175,10 +227,20 @@ func RunDNSCheck(ctx context.Context, rdb *redis.Client, cfg DNSCheckConfig) DNS
 			Hint:   hint,
 		})
 	}
-	if cfg.PanelDialTarget != "" {
-		ok, hint := dialTCP(cfg.PanelDialTarget)
+	for _, probe := range []struct{ label, target string }{
+		{"panel", cfg.PanelDialTarget},
+		{"api", cfg.APIDialTarget},
+		// The relay's client port is what a Beam app outside the network
+		// actually opens. Resolving the name and reaching the port are different
+		// failures with different fixes, and only one of them is a DNS problem.
+		{"beam relay", cfg.BeamDialTarget},
+	} {
+		if probe.target == "" {
+			continue
+		}
+		ok, hint := dialTCP(probe.target)
 		result.Reachability = append(result.Reachability, DNSReachabilityCheck{
-			Target: "panel " + cfg.PanelDialTarget,
+			Target: probe.label + " " + probe.target,
 			OK:     ok,
 			Hint:   hint,
 		})

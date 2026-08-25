@@ -57,6 +57,8 @@ const DNS_CATEGORY_BLURB: Record<DnsRecordCategory, string> = {
     wildcard: 'Wildcard so every server subdomain resolves automatically — you never touch DNS per customer.',
     cname: 'Custom-domain target — where customers point a CNAME for their own domain.',
     panel: 'Panel domain — where this admin/web interface is served.',
+    api: 'API domain — what the panel in the browser calls for every request. The panel loads without it and then does nothing.',
+    beam: 'Beam relay — the hostname the desktop client dials for REMOTE access. LAN and direct connections do not use it.',
 };
 
 const DNS_CATEGORY_LABEL: Record<DnsRecordCategory, string> = {
@@ -64,6 +66,8 @@ const DNS_CATEGORY_LABEL: Record<DnsRecordCategory, string> = {
     wildcard: 'Wildcard',
     cname: 'Custom CNAME',
     panel: 'Panel',
+    api: 'API',
+    beam: 'Beam relay',
 };
 
 // Map the check verdict onto the shared .badge-* utilities + a label.
