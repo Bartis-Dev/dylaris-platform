@@ -9,6 +9,14 @@ type SystemFeaturesHandler struct {
 	state *AppState
 }
 
+// modpackStorageConfigured reports whether modpack storage resolves to a real
+// provider. A nil provider with no error is the unconfigured state the factory
+// returns, and every caller turns it into an HTTP 424.
+func (h *SystemFeaturesHandler) modpackStorageConfigured() bool {
+	prov, err := h.state.buildModpackStorageProvider()
+	return err == nil && prov != nil
+}
+
 func NewSystemFeaturesHandler(state *AppState) *SystemFeaturesHandler {
 	return &SystemFeaturesHandler{state: state}
 }
@@ -42,6 +50,12 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// STORE_SHARED_KEY are set. Gates the connect-store button and the
 			// demo account/server UI; off => clean open-core build.
 			"store": h.state.StoreEnabled,
+			// Whether modpack archives have anywhere to go. It is the same call
+			// every write path makes before answering 424, exposed so the panel
+			// can say so before an author builds a pack rather than at the
+			// upload that ends it. Not sensitive: it says a backend exists, not
+			// what or where it is.
+			"modpackStorage": h.modpackStorageConfigured(),
 		},
 	})
 }

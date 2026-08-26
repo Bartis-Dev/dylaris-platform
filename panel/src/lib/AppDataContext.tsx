@@ -93,7 +93,11 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     // modpackAuthoring defaults to FALSE for the same reason, and because
     // guessing the wider of two audiences would flash user-facing authoring
     // controls at someone who is not allowed to use them.
-    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, modpackAuthoring: false, tickets: false, autoMove: false, byon: false, store: false, shareLinks: false });
+    // modpackStorage defaults TRUE so the create button is not disabled during
+    // the first paint of a working install; the flag arrives a moment later and
+    // corrects it. Guessing the other way would flash a blocked button at
+    // everyone on every load.
+    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, modpackAuthoring: false, tickets: false, autoMove: false, byon: false, store: false, shareLinks: false, modpackStorage: true });
     const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
     const [ready, setReady] = useState(false);
     const [apiUnreachable, setApiUnreachable] = useState(false);

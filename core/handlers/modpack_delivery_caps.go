@@ -19,6 +19,11 @@ type deliveryCapabilities struct {
 	// panel warns that public delivery would expose their files in the bucket.
 	PrivatePackCount int               `json:"privatePackCount"`
 	Notes            map[string]string `json:"notes"`
+	// StorageConfigured is whether modpack storage resolves to a real provider
+	// at all. It is the same predicate every write path uses before returning
+	// 424, surfaced so the panel can say so BEFORE someone builds a pack and
+	// discovers it at upload time.
+	StorageConfigured bool `json:"storageConfigured"`
 }
 
 // classifyReachable maps a SafeHead result to the publicReachable tri-state.
@@ -54,7 +59,7 @@ func classifyReachable(status int, err error, probedObject bool) *bool {
 
 // buildDeliveryCapabilities is the pure assembler (canPresign from a provider
 // probe, mirrorURL from settings, reach from SafeHead) into the panel payload.
-func buildDeliveryCapabilities(canPresign bool, mirrorURL string, reach *bool, privatePackCount int) deliveryCapabilities {
+func buildDeliveryCapabilities(canPresign bool, mirrorURL string, reach *bool, privatePackCount int, storageConfigured bool) deliveryCapabilities {
 	mirrorURL = strings.TrimSpace(mirrorURL)
 	publicConfigured := mirrorURL != "" && validatePublicBaseURL("solder mirror URL", mirrorURL) == nil
 	notes := map[string]string{}
@@ -70,12 +75,16 @@ func buildDeliveryCapabilities(canPresign bool, mirrorURL string, reach *bool, p
 		// unsigned request, not the 401/403 this note used to promise.
 		notes["public"] = "The configured mirror URL did not serve a pack file publicly. Anonymous readers would not be able to download from it."
 	}
+	if !storageConfigured {
+		notes["storage"] = "Modpack storage is not configured, so nothing can be uploaded. Pick local paths or a storage connection under Settings -> Modpacks."
+	}
 	return deliveryCapabilities{
-		CanPresign:       canPresign,
-		PublicConfigured: publicConfigured,
-		PublicReachable:  reach,
-		PrivatePackCount: privatePackCount,
-		Notes:            notes,
+		CanPresign:        canPresign,
+		PublicConfigured:  publicConfigured,
+		PublicReachable:   reach,
+		PrivatePackCount:  privatePackCount,
+		Notes:             notes,
+		StorageConfigured: storageConfigured,
 	}
 }
 
@@ -86,7 +95,11 @@ func (h *ModpackSettingsHandler) DeliveryCapabilities(w http.ResponseWriter, r *
 	get := func(k string) string { v, _ := h.state.Store.GetSetting(k); return v }
 
 	canPresign := false
+	// Same call every write path makes, and a nil provider with no error is
+	// exactly what it turns into an HTTP 424 later on.
+	storageConfigured := false
 	if prov, err := h.state.buildModpackStorageProvider(); err == nil && prov != nil {
+		storageConfigured = true
 		if u, e := prov.DownloadURL(r.Context(), "solder/__presign_probe__", time.Minute); e == nil && u != "" {
 			canPresign = true
 		}
@@ -109,6 +122,6 @@ func (h *ModpackSettingsHandler) DeliveryCapabilities(w http.ResponseWriter, r *
 	}
 
 	privatePacks, _ := h.state.Store.CountPrivateSolderPacks()
-	caps := buildDeliveryCapabilities(canPresign, mirrorURL, reach, privatePacks)
+	caps := buildDeliveryCapabilities(canPresign, mirrorURL, reach, privatePacks, storageConfigured)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "capabilities": caps})
 }

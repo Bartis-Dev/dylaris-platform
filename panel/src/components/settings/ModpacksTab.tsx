@@ -59,7 +59,10 @@ const DELIVERY_OPTIONS = [
 
 const DEFAULTS: ModpackSettings = {
     featureEnabled: true,
-    provider: 'local',
+    // Nothing preselected. "Local paths" looked like a working default while
+    // the path list was empty, which is not a backend at all - the first upload
+    // answered 424 and the screen had said nothing.
+    provider: '',
     paths: [],
     s3Endpoint: '',
     s3Bucket: '',
@@ -98,7 +101,16 @@ export default function ModpacksTab() {
     useEffect(() => {
         getModpackSettings().then(res => {
             if (res.success && res.settings) {
-                const loaded: ModpackSettings = { ...res.settings, s3SecretKey: '' };
+                const stored = res.settings;
+                // A stored "local" with no paths is what an install that never
+                // configured this looks like. Show it as unchosen so the operator
+                // makes the decision rather than inheriting it.
+                const unconfigured = stored.provider === 'local' && (stored.paths?.length ?? 0) === 0;
+                const loaded: ModpackSettings = {
+                    ...stored,
+                    provider: unconfigured ? '' : stored.provider,
+                    s3SecretKey: '',
+                };
                 setSettings(loaded);
                 snapshotRef.current = loaded;
             }
@@ -119,6 +131,10 @@ export default function ModpacksTab() {
     const detectedUrl = (settings.detectedCorePublicUrl ?? '').trim();
 
     const handleSave = async () => {
+        if (!settings.provider) {
+            flash('Pick where modpack archives are stored first.', false);
+            return;
+        }
         setSaving(true);
         const res = await setModpackSettings(settings);
         if (res.success) {
@@ -237,6 +253,15 @@ export default function ModpacksTab() {
             <div className="card p-5 space-y-5">
                 <div>
                     <div className="font-medium text-sm text-(--base-09) mb-2">Storage provider</div>
+                    {!settings.provider && (
+                        <p className="alert alert-warning text-xs mb-2">
+                            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                            <span>
+                                Not configured. Modpacks cannot be created until archives have
+                                somewhere to go - pick one below.
+                            </span>
+                        </p>
+                    )}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {PROVIDER_OPTIONS.map(opt => {
                             const active = settings.provider === opt.value;

@@ -17,7 +17,7 @@ import type { DeliveryCapabilities } from '@/lib/api/modpackSettings';
 // with a source-structure assertion instead of a live render.
 
 const disabled = (over: Partial<DeliveryCapabilities>): DeliveryCapabilities => ({
-    canPresign: true, publicConfigured: true, publicReachable: true, privatePackCount: 0, notes: {}, ...over,
+    storageConfigured: true, canPresign: true, publicConfigured: true, publicReachable: true, privatePackCount: 0, notes: {}, ...over,
 });
 
 describe('isDeliveryModeDisabled', () => {

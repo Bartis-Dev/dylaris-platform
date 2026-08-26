@@ -213,3 +213,5 @@
 {"date": "2026-08-26", "service": "panel", "type": "change", "summary": "User settings is now five tabs instead of seven cards stacked down one page, and everything on it saves through the same bar at the bottom."}
 {"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Changing a sign-in rule and later an auto-delete rule no longer silently reverts the first: both edit one shared copy of the account policy now."}
 {"date": "2026-08-26", "service": "panel", "type": "change", "summary": "The Gateway and Nodes settings pages now use a tab bar instead of a second sidebar next to the settings sidebar."}
+{"date": "2026-08-26", "service": "panel", "type": "feature", "summary": "A storage connection can now be tested from inside the dialog, before it is saved, and the dialog has a help panel with the right values for Cloudflare R2, Hetzner and AWS."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "Modpack storage no longer starts on a preselected provider that was not actually configured; creating a modpack is blocked with a pointer to the setting until storage is chosen."}

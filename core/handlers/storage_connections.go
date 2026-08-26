@@ -276,6 +276,88 @@ func (h *StorageConnectionsHandler) TestConnection(w http.ResponseWriter, r *htt
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": ok, "message": message})
 }
 
+// errStorageConnectionTestNeedsSecret is returned when an unsaved test has no
+// credential to run with and no saved one it is allowed to borrow.
+var errStorageConnectionTestNeedsSecret = errors.New(
+	"enter the secret access key to test this connection")
+
+// TestDraftConnection POST /api/storage-connections/test. Runs the same probe
+// against a connection that has NOT been saved.
+//
+// It exists because the only way to find out whether an endpoint, a bucket and a
+// pair of keys actually work was to save them first, and a saved-but-wrong
+// connection is a thing other screens can already select. Testing before
+// committing is the order everyone tries anyway.
+//
+// The interesting part is which credential it is allowed to use. `settings.write`
+// is delegatable and no read path ever returns a stored secret, so a bodied test
+// that happily borrowed the saved secret for an operator-supplied endpoint would
+// be a credential-rebinding oracle: point it at a host you control and receive
+// validly signed requests. So the stored secret is borrowed only when the
+// endpoint, bucket and access key are all unchanged - the same trio and the same
+// rule storageConnectionSecretRebound applies to a save.
+func (h *StorageConnectionsHandler) TestDraftConnection(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		storageConnectionRequest
+		// ID names the saved connection whose secret may be borrowed. Zero for
+		// a brand new one, which then has to carry its own.
+		ID int `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if !validStorageConnectionProvider(req.Provider) {
+		sendJSONError(w, "Unsupported provider", http.StatusBadRequest)
+		return
+	}
+	// The submitted endpoint reaches a dialer, so it gets the same fail-closed
+	// check a save gets, at the point where the operator can still read the
+	// error.
+	if err := validateStorageConnectionEndpoint(req.Config); err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	conn := &models.StorageConnection{
+		Provider:        req.Provider,
+		Config:          req.Config,
+		AccessKey:       req.AccessKey,
+		SecretAccessKey: req.SecretAccessKey,
+	}
+
+	if conn.SecretAccessKey == "" {
+		if req.ID == 0 {
+			sendJSONError(w, errStorageConnectionTestNeedsSecret.Error(), http.StatusBadRequest)
+			return
+		}
+		existing, err := h.state.Store.GetStorageConnection(req.ID)
+		if err != nil {
+			sendJSONError(w, "Connection not found", http.StatusNotFound)
+			return
+		}
+		if storageConnectionSecretRebound(req.storageConnectionRequest, existing) {
+			sendJSONError(w, errStorageConnectionSecretRequired.Error(), http.StatusBadRequest)
+			return
+		}
+		if !existing.SecretSet {
+			sendJSONError(w, errStorageConnectionTestNeedsSecret.Error(), http.StatusBadRequest)
+			return
+		}
+		conn.SecretAccessKey = existing.SecretAccessKey
+	}
+
+	prov, err := storageConnectionProvider(conn)
+	if err != nil {
+		// 200 with a verdict, like the saved-connection probe: the request
+		// worked, the configuration did not.
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": false, "message": err.Error()})
+		return
+	}
+	ok, message := probeStorageProvider(r.Context(), prov)
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": ok, "message": message})
+}
+
 // storageConnectionProvider builds a storage.StorageProvider from a resolved
 // connection (its secret already decrypted into SecretAccessKey). The access key
 // and secret come from their own columns; the rest from the config JSONB.

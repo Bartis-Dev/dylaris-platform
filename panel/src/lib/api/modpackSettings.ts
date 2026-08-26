@@ -6,7 +6,11 @@ import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/c
 
 export interface ModpackSettings {
     featureEnabled: boolean;
-    provider: 'local' | 's3';
+    // '' means nothing has been chosen yet, which is a real state: an install
+    // that never configured modpack storage has no provider and no paths, and
+    // preselecting "local paths" made an unconfigured backend look configured
+    // right up until the first upload returned 424.
+    provider: '' | 'local' | 's3';
     paths: string[];
     s3Endpoint: string;
     s3Bucket: string;
@@ -37,13 +41,16 @@ export interface ModpackSettings {
 // grey out delivery modes the current storage config can't satisfy instead of
 // letting the admin pick one that 500s at download time.
 export interface DeliveryCapabilities {
+    // Whether modpack storage resolves to a real provider at all. The same
+    // predicate every write path checks before answering 424.
+    storageConfigured: boolean;
     canPresign: boolean;
     publicConfigured: boolean;
     publicReachable: boolean | null;
     // How many Solder-capable packs are private/hidden; public mode would place
     // their files in a publicly readable bucket, so the panel warns.
     privatePackCount: number;
-    notes: { presigned?: string; public?: string };
+    notes: { presigned?: string; public?: string; storage?: string };
 }
 
 export interface GetModpackSettingsResponse {

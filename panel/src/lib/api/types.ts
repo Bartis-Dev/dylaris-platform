@@ -552,6 +552,18 @@ export const deleteStorageConnection = (id: number): Promise<{ success: boolean;
 export const testStorageConnection = (id: number): Promise<{ success: boolean; ok?: boolean; message?: string }> =>
     fetchAPI(`/storage-connections/${id}/test`, { method: 'POST' });
 
+// Test a connection that has NOT been saved, from inside the dialog.
+//
+// `id` names the saved connection whose stored secret may be borrowed when the
+// form leaves the secret field blank. The server only allows that when the
+// endpoint, bucket and access key are unchanged - otherwise it would be a way to
+// point somebody else's credential at a host of your choosing. Pass 0 for a new
+// connection, which then has to carry its own secret.
+export const testDraftStorageConnection = (
+    c: StorageConnectionInput & { id: number },
+): Promise<{ success: boolean; ok?: boolean; message?: string }> =>
+    fetchAPI('/storage-connections/test', { method: 'POST', body: JSON.stringify(c) });
+
 export const listBackupJobs = (serverId: number): Promise<{ success: boolean; jobs?: BackupJob[] }> =>
     fetchAPI(`/servers/${serverId}/backup-jobs`);
 export const createBackupJob = (serverId: number, j: Partial<BackupJob>): Promise<{ success: boolean; id?: number }> =>

@@ -67,7 +67,9 @@ func TestBuildDeliveryCapabilities(t *testing.T) {
 	}
 	for _, c := range tt {
 		t.Run(c.name, func(t *testing.T) {
-			caps := buildDeliveryCapabilities(c.canPresign, c.mirror, c.reach, c.privatePacks)
+			// storageConfigured is exercised by its own test below; these cases
+			// are about the mirror and presign notes.
+			caps := buildDeliveryCapabilities(c.canPresign, c.mirror, c.reach, c.privatePacks, true)
 			if caps.PublicConfigured != c.wantPubConfig {
 				t.Errorf("publicConfigured = %v, want %v", caps.PublicConfigured, c.wantPubConfig)
 			}
@@ -91,3 +93,27 @@ type errString string
 func (e errString) Error() string { return string(e) }
 
 func boolp(b bool) *bool { return &b }
+
+// The rule this decides: an operator learns that modpack storage is unconfigured
+// from the settings screen, not from a 424 at the end of building a pack.
+//
+// Every write path already calls buildModpackStorageProvider and turns a nil
+// provider into an HTTP 424. Nothing surfaced that beforehand, so the failure
+// arrived after the work rather than instead of it.
+func TestDeliveryCapabilitiesReportUnconfiguredStorage(t *testing.T) {
+	caps := buildDeliveryCapabilities(false, "", nil, 0, false)
+	if caps.StorageConfigured {
+		t.Error("storageConfigured = true with no provider")
+	}
+	if _, ok := caps.Notes["storage"]; !ok {
+		t.Error("no note said what to do about it")
+	}
+
+	caps = buildDeliveryCapabilities(true, "", nil, 0, true)
+	if !caps.StorageConfigured {
+		t.Error("storageConfigured = false with a working provider")
+	}
+	if _, ok := caps.Notes["storage"]; ok {
+		t.Error("a configured backend still carried the unconfigured note")
+	}
+}

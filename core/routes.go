@@ -163,9 +163,12 @@ var requiredCaps = map[string]string{
 	"/api/storage-connections":                  "settings.read",
 	"/api/storage-connections/{id:[0-9]+}":      "settings.write",
 	"/api/storage-connections/{id:[0-9]+}/test": "settings.write",
-	"/api/servers/{id:[0-9]+}/backup-jobs":      "backups.read",
-	"/api/servers/{id:[0-9]+}/backup-restores":  "backups.read",
-	"/api/servers/{id:[0-9]+}/backup-usage":     "backups.read",
+	// Same capability as the saved-connection probe: it runs the same write,
+	// read-back and delete against an operator-supplied endpoint.
+	"/api/storage-connections/test":            "settings.write",
+	"/api/servers/{id:[0-9]+}/backup-jobs":     "backups.read",
+	"/api/servers/{id:[0-9]+}/backup-restores": "backups.read",
+	"/api/servers/{id:[0-9]+}/backup-usage":    "backups.read",
 
 	// Phase 4 Task 11: per-server network (gateway) routes. GET+POST /routes
 	// share one template -> network.read representative; the fine
@@ -1616,6 +1619,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/storage-connections/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageConnectionsHandler.UpdateConnection))).Methods("PATCH")
 	api.HandleFunc("/storage-connections/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageConnectionsHandler.DeleteConnection))).Methods("DELETE")
 	api.HandleFunc("/storage-connections/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageConnectionsHandler.TestConnection))).Methods("POST")
+	// Registered BEFORE nothing in particular, but note the {id} route above is
+	// numeric-constrained, so "test" cannot be swallowed by it.
+	api.HandleFunc("/storage-connections/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageConnectionsHandler.TestDraftConnection))).Methods("POST")
 
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.ListJobs))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.create")(backupHandler.CreateJob))).Methods("POST")

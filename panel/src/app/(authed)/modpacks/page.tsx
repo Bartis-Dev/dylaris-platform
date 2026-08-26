@@ -20,8 +20,13 @@ import { useBusy } from '@/lib/useBusy';
 // delete + jump-to-detail.
 
 export default function PacksListPage() {
-    const { featureFlags } = useAppData();
+    const { featureFlags, user } = useAppData();
     const modpacksDisabled = !featureFlags.modpacks;
+    // A pack with nowhere to store its archives can be created and then does
+    // nothing: every upload answers 424. That failure used to arrive after the
+    // work rather than instead of it.
+    const noStorage = featureFlags.modpacks && !featureFlags.modpackStorage;
+    const cannotAuthor = modpacksDisabled || noStorage;
     const [packs, setPacks] = useState<Pack[]>([]);
     const [loading, setLoading] = useState(true);
     const [creatingPack, runCreate] = useBusy();
@@ -93,8 +98,8 @@ export default function PacksListPage() {
                     <button
                         onClick={() => setImportOpen(true)}
                         className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled={modpacksDisabled}
-                        title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Import a modpack from a Solder instance'}
+                        disabled={cannotAuthor}
+                        title={modpacksDisabled ? 'Modpack authoring is disabled' : noStorage ? 'Modpack storage is not configured' : 'Import a modpack from a Solder instance'}
                     >
                         <DownloadCloud size={13} />
                         Import
@@ -102,14 +107,32 @@ export default function PacksListPage() {
                     <button
                         onClick={() => setCreating({ internalName: '', solderDisplayName: '', slug: '', summary: '' })}
                         className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled={modpacksDisabled}
-                        title={modpacksDisabled ? 'Modpack authoring is disabled' : undefined}
+                        disabled={cannotAuthor}
+                        title={modpacksDisabled ? 'Modpack authoring is disabled' : noStorage ? 'Modpack storage is not configured' : undefined}
                     >
                         <Plus size={13} />
                         New Pack
                     </button>
                 </div>
             </header>
+
+            {noStorage && (
+                <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
+                    <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
+                    <div className="text-xs text-(--base-09)">
+                        Modpack storage is not configured, so archives have nowhere to go and nothing
+                        can be created yet.
+                        {user?.isAdmin ? (
+                            <>
+                                {' '}Pick local paths or a storage connection under{' '}
+                                <Link href="/settings/modpacks" className="text-(--accent-light)">Settings, Modpacks</Link>.
+                            </>
+                        ) : (
+                            ' Ask an administrator to configure it.'
+                        )}
+                    </div>
+                </div>
+            )}
 
             {modpacksDisabled && (
                 <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
