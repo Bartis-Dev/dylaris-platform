@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState , useRef} from 'react';
-import { Wrench, Loader2, CircleCheck, CircleAlert } from 'lucide-react';
+import { Wrench, Loader2 } from 'lucide-react';
 import { getMaintenance, saveMaintenance, MaintenanceState } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { toLocalInput, fromLocalInput } from '@/lib/localDateTime';
@@ -108,7 +108,7 @@ export default function MaintenanceTab() {
                         type="checkbox"
                         checked={state.active}
                         onChange={e => setState({ ...state, active: e.target.checked })}
-                        className="w-4 h-4 accent-(--accent) shrink-0 mt-1"
+                        className="checkbox shrink-0 mt-1"
                     />
                 </label>
 

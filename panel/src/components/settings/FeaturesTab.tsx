@@ -362,7 +362,7 @@ export default function FeaturesTab() {
                             checked={applyToManual}
                             disabled={!platformFlags.modpacks}
                             onChange={e => setApplyToManual(e.target.checked)}
-                            className="mt-0.5 shrink-0"
+                            className="checkbox mt-0.5 shrink-0"
                         />
                         <span>
                             Also apply to users I set by hand. Off keeps every per-user override; on resets them to follow this switch from now on.
@@ -536,6 +536,7 @@ export default function FeaturesTab() {
                                                         <label key={c.id} className="flex items-center gap-2 text-xs text-(--base-08) cursor-pointer">
                                                             <input
                                                                 type="checkbox"
+                            className="checkbox"
                                                                 checked={allowedKeyCaps.has(c.id)}
                                                                 
                                                                 onChange={() => toggleKeyCap(c.id)}

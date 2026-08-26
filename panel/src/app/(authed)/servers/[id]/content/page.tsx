@@ -653,7 +653,7 @@ export default function ServerContentPage() {
                                                 checked={on}
                                                 disabled={!advanced}
                                                 onChange={() => setFilterLoaders(prev => on ? prev.filter(x => x !== l) : [...prev, l])}
-                                                className="accent-(--accent)"
+                                                className="checkbox"
                                             />
                                             {l}
                                         </label>

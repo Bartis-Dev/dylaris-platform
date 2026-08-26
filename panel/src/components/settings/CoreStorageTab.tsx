@@ -274,7 +274,7 @@ export default function CoreStorageTab() {
               type="checkbox"
               checked={settings.pathConfirmed}
               onChange={e => set('pathConfirmed', e.target.checked)}
-              className="mt-0.5 accent-(--accent)"
+              className="checkbox mt-0.5"
             />
             <span className="text-xs text-(--base-08) group-hover:text-(--base-09)">
               I confirm this path is shared across all Cores, or I run a single Core.

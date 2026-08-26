@@ -507,7 +507,8 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
                 {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy all codes</>}
               </button>
               <label className="flex items-start gap-2 text-xs text-(--base-07) cursor-pointer pt-1">
-                <input type="checkbox" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} className="mt-0.5" />
+                <input type="checkbox"
+                            className="checkbox mt-0.5" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} />
                 <span>I have saved these codes in a secure location.</span>
               </label>
               <button
@@ -777,7 +778,8 @@ function RegenerateBackupCodesWizard({ onClose, onComplete }: {
                 {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy all codes</>}
               </button>
               <label className="flex items-start gap-2 text-xs text-(--base-07) cursor-pointer pt-1">
-                <input type="checkbox" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} className="mt-0.5" />
+                <input type="checkbox"
+                            className="checkbox mt-0.5" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} />
                 <span>I have saved these codes in a secure location.</span>
               </label>
               <button

@@ -269,6 +269,7 @@ export default function ApiKeysPage() {
                                                                     <label key={c.id} className="flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer hover:bg-(--base-03)">
                                                                         <input
                                                                             type="checkbox"
+                            className="checkbox"
                                                                             checked={checked}
                                                                             onChange={() => setForm({
                                                                                 ...form,
@@ -313,6 +314,7 @@ export default function ApiKeysPage() {
                                                 <label key={s.uuid} className="flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer hover:bg-(--base-03)">
                                                     <input
                                                         type="checkbox"
+                            className="checkbox"
                                                         checked={checked}
                                                         onChange={() => setForm({
                                                             ...form,

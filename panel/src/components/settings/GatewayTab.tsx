@@ -923,7 +923,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                     type="checkbox"
                                     checked={removeCascade}
                                     onChange={e => setRemoveCascade(e.target.checked)}
-                                    className="mt-0.5"
+                                    className="checkbox mt-0.5"
                                 />
                                 <span className="text-sm text-(--base-08)">
                                     Also delete all related routes ending in <code className="font-mono">.{removeTarget.domain}</code>

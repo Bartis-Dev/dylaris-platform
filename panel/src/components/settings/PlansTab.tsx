@@ -150,7 +150,8 @@ function PlanEditor({ data, isNew, saving, onChange, onSave, onCancel }: {
             <p className="text-xs text-(--base-05)">0 = unlimited on every field.</p>
             <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2 text-sm text-(--base-08)">
-                    <input type="checkbox" checked={data.isDefault} onChange={e => onChange({ ...data, isDefault: e.target.checked })} />
+                    <input type="checkbox"
+                            className="checkbox" checked={data.isDefault} onChange={e => onChange({ ...data, isDefault: e.target.checked })} />
                     Default plan for new tenants
                 </label>
                 <div className="flex items-center gap-2">

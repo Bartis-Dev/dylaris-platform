@@ -251,7 +251,7 @@ export default function TicketCategoriesTab() {
                                     type="checkbox"
                                     checked={form.requiresServer}
                                     onChange={e => setForm({ ...form, requiresServer: e.target.checked })}
-                                    className="accent-(--accent)"
+                                    className="checkbox"
                                 />
                                 <span>Require server attachment</span>
                             </label>
@@ -310,9 +310,9 @@ export default function TicketCategoriesTab() {
                             <label className="flex items-center gap-2 text-sm cursor-pointer pt-1">
                                 <input
                                     type="checkbox"
+                            className="checkbox"
                                     checked={form.enabled}
                                     onChange={e => setForm({ ...form, enabled: e.target.checked })}
-                                    className="accent-(--accent)"
                                 />
                                 <span>Enabled (visible to users)</span>
                             </label>

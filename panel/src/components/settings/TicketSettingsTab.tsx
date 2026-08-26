@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState , useRef} from 'react';
 import Link from 'next/link';
-import { LifeBuoy, Loader2, CircleCheck, CircleAlert, Trash2, ArrowRight } from 'lucide-react';
+import { LifeBuoy, Loader2, Trash2, ArrowRight } from 'lucide-react';
 import { getTicketSettings, saveTicketSettings, TicketSettings } from '@/lib/api/tickets';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
@@ -226,7 +226,7 @@ function Toggle({ label, description, value, onChange }: { label: string; descri
                 type="checkbox"
                 checked={value}
                 onChange={e => onChange(e.target.checked)}
-                className="w-4 h-4 accent-(--accent) shrink-0 mt-1"
+                className="checkbox shrink-0 mt-1"
             />
         </label>
     );

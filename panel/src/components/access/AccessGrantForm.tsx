@@ -139,6 +139,7 @@ export default function AccessGrantForm({ mode, ownedServers, catalog, roles, pr
                     <label className="flex items-center gap-2 text-sm text-(--base-08) cursor-pointer">
                         <input
                             type="checkbox"
+                            className="checkbox"
                             checked={inherit}
                             onChange={e => setInherit(e.target.checked)}
                         />

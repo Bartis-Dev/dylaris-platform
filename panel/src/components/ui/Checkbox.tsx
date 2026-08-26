@@ -5,7 +5,7 @@ import React from 'react';
 /**
  * The panel's checkbox.
  *
- * Before this there were 22 files with a raw <input type="checkbox"> and no
+ * Before this there were 22 files with a raw, unstyled checkbox input and no
  * styling at all, so they rendered as OS chrome on a dark panel and the cursor
  * changed halfway across the row. The look lives in globals.css (.checkbox);
  * this component exists so the label, the disabled treatment and the

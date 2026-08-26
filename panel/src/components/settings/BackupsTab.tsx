@@ -182,7 +182,7 @@ function NodeLocalQuotaPanel({
                             ...config,
                             quotaPerServerGb: e.target.checked ? 0 : Math.max(1, config.quotaPerServerGb || 10),
                         })}
-                        className="accent-(--accent)"
+                        className="checkbox"
                     />
                     unlimited
                 </label>
@@ -193,7 +193,7 @@ function NodeLocalQuotaPanel({
                     type="checkbox"
                     checked={config.shareQuotaWithServer}
                     onChange={(e) => onChange({ ...config, shareQuotaWithServer: e.target.checked })}
-                    className="accent-(--accent) mt-0.5"
+                    className="checkbox mt-0.5"
                 />
                 <span>
                     <span className="block">Share quota with server container storage</span>

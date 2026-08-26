@@ -156,7 +156,7 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
                                     type="checkbox"
                                     checked
                                     readOnly
-                                    className="accent-(--accent)"
+                                    className="checkbox"
                                 />
                                 <span className="text-sm">Modrinth</span>
                             </label>

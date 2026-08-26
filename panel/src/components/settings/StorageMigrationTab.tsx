@@ -493,7 +493,7 @@ export default function StorageMigrationTab() {
                                         <label className={`flex items-start gap-2 text-xs ${deleteSourceAllowed(form.verifyMode) ? 'text-(--base-07)' : 'text-(--base-05) cursor-not-allowed'}`}>
                                             <input
                                                 type="checkbox"
-                                                className="mt-0.5"
+                                                className="checkbox mt-0.5"
                                                 checked={form.deleteSource}
                                                 disabled={!deleteSourceAllowed(form.verifyMode)}
                                                 onChange={e => setForm(f => ({ ...f, deleteSource: e.target.checked }))}
@@ -877,7 +877,8 @@ function TargetConfigFields({
                     <Field label="Secret key" value={cfg.s3SecretKey} onChange={v => onChange({ s3SecretKey: v })} type="password" autoComplete="new-password" />
                     <Field label="Prefix (optional)" value={cfg.s3Prefix} onChange={v => onChange({ s3Prefix: v })} placeholder="prod" />
                     <label className="flex items-center gap-2 text-xs text-(--base-07)">
-                        <input type="checkbox" checked={cfg.s3PathStyle} onChange={e => onChange({ s3PathStyle: e.target.checked })} />
+                        <input type="checkbox"
+                            className="checkbox" checked={cfg.s3PathStyle} onChange={e => onChange({ s3PathStyle: e.target.checked })} />
                         <span>Use path-style addressing (required by MinIO and some S3-compatible providers)</span>
                     </label>
                     </>
@@ -889,7 +890,7 @@ function TargetConfigFields({
                 <div className="space-y-2">
                     <Field label="Absolute path" value={cfg.path} onChange={v => onChange({ path: v })} placeholder="/mnt/new-storage" />
                     <label className="flex items-start gap-2 text-xs text-(--base-07)">
-                        <input type="checkbox" className="mt-0.5" checked={cfg.pathConfirmed} onChange={e => onChange({ pathConfirmed: e.target.checked })} />
+                        <input type="checkbox" className="checkbox mt-0.5" checked={cfg.pathConfirmed} onChange={e => onChange({ pathConfirmed: e.target.checked })} />
                         <span>
                             I confirm this path is reachable from every Core instance and is not the same directory
                             as the current one. The server checks that too, by device and inode rather than by name,

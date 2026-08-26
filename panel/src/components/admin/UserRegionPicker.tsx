@@ -83,7 +83,7 @@ export default function UserRegionPicker({
                     checked={allRegions}
                     onChange={toggleAll}
                     disabled={disabled}
-                    className="accent-(--accent)"
+                    className="checkbox"
                 />
                 <InfinityIcon size={14} />
                 <span className="text-sm font-medium">All regions (current &amp; future)</span>

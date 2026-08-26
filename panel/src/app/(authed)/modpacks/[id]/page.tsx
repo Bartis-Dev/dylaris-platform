@@ -614,7 +614,7 @@ export default function PackDetailPage() {
                                     type="checkbox"
                                     checked={configForm.private}
                                     onChange={e => setConfigForm({ ...configForm, private: e.target.checked })}
-                                    className="accent-(--accent)"
+                                    className="checkbox"
                                 />
                                 <span className="text-sm text-(--base-09)">Private (require client whitelist)</span>
                             </label>

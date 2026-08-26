@@ -257,7 +257,7 @@ export default function RegionsTab() {
                                     type="checkbox"
                                     checked={form.enabled}
                                     onChange={e => setForm({ ...form, enabled: e.target.checked })}
-                                    className="accent-(--accent)"
+                                    className="checkbox"
                                 />
                                 <span className="text-sm">Enabled</span>
                             </label>

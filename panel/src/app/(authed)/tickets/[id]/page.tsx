@@ -524,7 +524,7 @@ export default function TicketDetailPage() {
                                         type="checkbox"
                                         checked={replyIsInternal}
                                         onChange={e => setReplyIsInternal(e.target.checked)}
-                                        className="accent-(--accent)"
+                                        className="checkbox"
                                     />
                                     <Lock size={11} /> Internal note
                                 </label>

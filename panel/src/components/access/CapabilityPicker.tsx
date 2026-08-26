@@ -52,7 +52,7 @@ export default function CapabilityPicker({ catalog, scopes, selected, onChange, 
                                                 checked={checked}
                                                 disabled={disabled}
                                                 onChange={e => handleToggle(cap.id, e.target.checked)}
-                                                className="w-4 h-4 rounded accent-(--accent)"
+                                                className="checkbox"
                                             />
                                             <span className="text-sm text-(--base-09)">{cap.label}</span>
                                         </label>

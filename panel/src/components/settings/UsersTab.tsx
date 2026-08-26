@@ -487,7 +487,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                     <input required type="password" value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} className="input-field w-full" />
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    <input type="checkbox" checked={userForm.isAdmin} onChange={e => setUserForm({...userForm, isAdmin: e.target.checked})} className="w-4 h-4 accent-(--accent) rounded" />
+                                    <input type="checkbox"
+                            className="checkbox" checked={userForm.isAdmin} onChange={e => setUserForm({...userForm, isAdmin: e.target.checked})} />
                                     <label className="text-sm font-medium text-(--base-08)">Administrator Rights</label>
                                 </div>
                                 <UserRegionPicker
@@ -637,7 +638,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                     type="checkbox"
                                                     checked={editCanDeleteServers}
                                                     onChange={e => setEditCanDeleteServers(e.target.checked)}
-                                                    className="mt-0.5 accent-(--accent)"
+                                                    className="checkbox mt-0.5"
                                                     disabled={editRolePermsSaving || editRole === 'admin'}
                                                 />
                                                 <span>
@@ -650,7 +651,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                     type="checkbox"
                                                     checked={editCanChangeResources}
                                                     onChange={e => setEditCanChangeResources(e.target.checked)}
-                                                    className="mt-0.5 accent-(--accent)"
+                                                    className="checkbox mt-0.5"
                                                     disabled={editRolePermsSaving || editRole === 'admin'}
                                                 />
                                                 <span>
