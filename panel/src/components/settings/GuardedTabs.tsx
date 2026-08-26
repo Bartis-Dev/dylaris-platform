@@ -56,11 +56,19 @@ export default function GuardedTabs<Id extends string>({
                     onCancel={close}
                     onSave={async () => {
                         setSaving(true);
+                        let ok = false;
                         try {
-                            await registration.save();
+                            ok = await registration.save();
+                        } catch {
+                            ok = false;
                         } finally {
                             setSaving(false);
                         }
+                        // Only leave the tab if the work is actually stored.
+                        // Switching after a refused save unmounts the section
+                        // and takes the edits with it - which is the thing this
+                        // component exists to prevent.
+                        if (!ok) return;
                         const next = pending;
                         close();
                         onChange(next);

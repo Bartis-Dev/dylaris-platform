@@ -186,6 +186,11 @@ type AppState struct {
 	// gateway routing is enabled). An empty gateway URL keeps the gateway feed off.
 	UpdatesFeedURLPlatform string
 	UpdatesFeedURLGateway  string
+
+	// modpackStorage caches "does modpack storage resolve to a provider", which
+	// GET /api/system/features reports to every user at boot. See
+	// modpack_storage_state.go for why that call must not run per request.
+	modpackStorage modpackStorageState
 }
 
 // AdminSecretConfigured reports whether the break-glass ADMIN_SECRET is set.

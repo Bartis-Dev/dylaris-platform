@@ -65,7 +65,8 @@ export interface SettingsForm<T> {
     loadFailed: boolean;
     dirty: boolean;
     saving: boolean;
-    save: () => Promise<void>;
+    /** Resolves TRUE only when the value was actually written. */
+    save: () => Promise<boolean>;
     discard: () => void;
     reload: () => Promise<void>;
     /** Last save error, kept for inline display; a toast has already faded. */
@@ -91,6 +92,10 @@ export function useSettingsForm<T>(opts: SettingsFormOptions<T>): SettingsForm<T
     // re-render would leave the save bar showing a state that is no longer true.
     const [snapshot, setSnapshot] = useState<T | null>(null);
 
+    // Identifies the newest in-flight load, so a slower earlier one cannot
+    // overwrite it when it finally arrives.
+    const loadTicket = useRef(0);
+
     // The callers are inline arrow functions at every call site, so holding
     // them in refs keeps the effects below from re-running every render.
     const loadRef = useRef(opts.load);
@@ -103,18 +108,32 @@ export function useSettingsForm<T>(opts: SettingsFormOptions<T>): SettingsForm<T
     successRef.current = opts.successMessage;
 
     const reload = useCallback(async () => {
+        // Two overlapping reloads used to resolve in arrival order, last writer
+        // wins - and the nastiest interleaving was a LATE null landing on top of
+        // an earlier success: snapshot back to null over a populated value,
+        // which makes `dirty` permanently false. The form then shows editable
+        // data that can never be saved and never says why.
+        const ticket = ++loadTicket.current;
         setLoading(true);
         setError(null);
-        const loaded = await loadRef.current();
-        setLoading(false);
-        if (loaded === null) {
+        try {
+            const loaded = await loadRef.current();
+            if (ticket !== loadTicket.current) return;
+            if (loaded === null) {
+                setLoadFailed(true);
+                setSnapshot(null);
+                return;
+            }
+            setLoadFailed(false);
+            setSnapshot(loaded);
+            setValue(loaded);
+        } catch {
+            if (ticket !== loadTicket.current) return;
             setLoadFailed(true);
             setSnapshot(null);
-            return;
+        } finally {
+            if (ticket === loadTicket.current) setLoading(false);
         }
-        setLoadFailed(false);
-        setSnapshot(loaded);
-        setValue(loaded);
     }, []);
 
     useEffect(() => {
@@ -131,32 +150,47 @@ export function useSettingsForm<T>(opts: SettingsFormOptions<T>): SettingsForm<T
 
     const dirty = snapshot !== null && value !== null && !same(value, snapshot);
 
-    const save = useCallback(async () => {
+    const save = useCallback(async (): Promise<boolean> => {
         const current = value;
         const previous = snapshot;
-        if (current === null || previous === null) return;
+        if (current === null || previous === null) return false;
 
         const ask = confirmRef.current?.(current, previous) ?? null;
-        if (ask && !(await confirmDialog(ask))) return;
+        // Answering "no" is a refusal to save, not a save. Reporting it as
+        // success is how a guard used to navigate away from the very screen the
+        // operator had just declined to commit.
+        if (ask && !(await confirmDialog(ask))) return false;
 
         setSaving(true);
         setError(null);
-        const res = await saveRef.current(current);
-        setSaving(false);
-
-        if (!res.ok) {
-            const msg = res.message || 'Could not save.';
+        try {
+            const res = await saveRef.current(current);
+            if (!res.ok) {
+                const msg = res.message || 'Could not save.';
+                setError(msg);
+                toast(msg, false);
+                return false;
+            }
+            // The server may have normalised what it stored. Taking its answer
+            // as the new snapshot is what keeps the form from reading dirty
+            // straight after a successful save.
+            const stored = res.value ?? current;
+            setSnapshot(stored);
+            setValue(stored);
+            if (successRef.current) toast(successRef.current, true);
+            return true;
+        } catch (err) {
+            // A save that THREW leaves the form dirty and the operator on the
+            // page. Without the finally below, `saving` stayed true forever and
+            // the bar disabled both of its buttons - dirty edits, no way to save
+            // them, no way to discard them.
+            const msg = err instanceof Error ? err.message : 'Could not save.';
             setError(msg);
             toast(msg, false);
-            return;
+            return false;
+        } finally {
+            setSaving(false);
         }
-        // The server may have normalised what it stored. Taking its answer as
-        // the new snapshot is what keeps the form from reading dirty straight
-        // after a successful save.
-        const stored = res.value ?? current;
-        setSnapshot(stored);
-        setValue(stored);
-        if (successRef.current) toast(successRef.current, true);
     }, [value, snapshot]);
 
     const discard = useCallback(() => {

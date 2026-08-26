@@ -62,15 +62,18 @@ export default function GuardedLink({ children, ...props }: GuardedLinkProps) {
     const handleSave = async () => {
         if (!registration || pending === null) return;
         setSaving(true);
+        let ok = false;
         try {
-            await registration.save();
+            ok = await registration.save();
         } catch {
-            // Save failed: stay on the page so the user keeps their edits
-            // instead of navigating away and losing them.
-            setSaving(false);
-            return;
+            ok = false;
         }
         setSaving(false);
+        // Stay on the page unless the work is actually stored. The catch alone
+        // was not enough: a refused save - a server error, or the operator
+        // answering "no" to a confirmation - resolves normally, so this used to
+        // navigate away from exactly the edits it was protecting.
+        if (!ok) return;
         const href = pending;
         close();
         navigate(href);

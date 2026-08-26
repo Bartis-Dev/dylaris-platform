@@ -854,12 +854,16 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
         });
     }, []);
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<boolean> => {
         setSaving(true);
-        const res = await savePlacementSettings(settings);
-        setSaving(false);
-        if (res.success) snapshotRef.current = settings;
-        showToast(res.success ? 'Placement settings saved.' : (res.message || 'Save failed.'), res.success);
+        try {
+            const res = await savePlacementSettings(settings);
+            if (res.success) snapshotRef.current = settings;
+            showToast(res.success ? 'Placement settings saved.' : (res.message || 'Save failed.'), res.success);
+            return !!res.success;
+        } finally {
+            setSaving(false);
+        }
     };
 
     const dirty =

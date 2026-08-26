@@ -26,7 +26,9 @@ export interface AuthPolicy {
 export type MailProvider = 'smtp' | 'resend';
 
 export interface SMTPConfig {
-    /** Which transport actually sends. Empty from an older Core means smtp. */
+    /** Which transport actually sends. Always present on a GET; on a PUT,
+     *  omitting it means "leave the stored provider alone" - Core reads it as a
+     *  pointer for exactly that reason. */
     provider: MailProvider;
     host: string;
     port: number;

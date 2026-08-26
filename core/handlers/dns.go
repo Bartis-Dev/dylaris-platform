@@ -95,8 +95,16 @@ func (h *DNSHandler) buildDNSCheckConfig() services.DNSCheckConfig {
 	// checking is the one clients are actually handed.
 	override, _ := h.state.Store.GetSetting("beam.relay_address")
 	publicHost, _ := h.state.Store.GetSetting("beam.public_host")
-	if effective, _ := resolveRelay(context.Background(), h.state.Redis, override, publicHost, ""); effective != "" {
-		if host, port, splitErr := net.SplitHostPort(effective); splitErr == nil && host != "" {
+	// TrimSpace: resolveRelay tests the override trimmed but RETURNS it as
+	// stored, and rows written before beamManualOverride existed were never
+	// trimmed. net.SplitHostPort splits on the last colon without validating, so
+	// " host :25550 " parses without error and then fails to dial - a red row
+	// against a relay that is up.
+	if effective, _ := resolveRelay(context.Background(), h.state.Redis, override, publicHost, ""); strings.TrimSpace(effective) != "" {
+		effective = strings.TrimSpace(effective)
+		if host, port, splitErr := net.SplitHostPort(effective); splitErr == nil && strings.TrimSpace(host) != "" {
+			host = strings.TrimSpace(host)
+			port = strings.TrimSpace(port)
 			cfg.BeamHost = host
 			cfg.BeamDialTarget = net.JoinHostPort(host, port)
 		} else {

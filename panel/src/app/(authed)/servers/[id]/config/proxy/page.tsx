@@ -75,22 +75,25 @@ export default function ServerConfigProxyPage() {
 
     useEffect(() => { reload(); }, [reload]);
 
-    const save = useCallback(async () => {
-        if (!serverUuid || !filePath) return;
+    const save = useCallback(async (): Promise<boolean> => {
+        if (!serverUuid || !filePath) return false;
         setSaving(true);
         try {
             const res = await saveFile(filePath, text, serverUuid);
             if (res?.success === false) {
                 showToast(res.message || 'Save failed.', false);
-            } else {
-                setDirty(false);
-                setNotFound(false);
-                showToast(`Saved ${filename}`);
+                return false;
             }
+            setDirty(false);
+            setNotFound(false);
+            showToast(`Saved ${filename}`);
+            return true;
         } catch {
             showToast('Network error', false);
+            return false;
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     }, [serverUuid, filePath, text, filename, showToast]);
 
     // Editing a raw config file is the same kind of change as everything else

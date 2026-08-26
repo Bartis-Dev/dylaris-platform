@@ -233,6 +233,9 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 			return
 		}
 	}
+	// A modpack setting can point at this connection, and the cached "is modpack
+	// storage configured" answer is what the panel gates the create button on.
+	h.state.InvalidateModpackStorage()
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -248,6 +251,9 @@ func (h *StorageConnectionsHandler) DeleteConnection(w http.ResponseWriter, r *h
 		sendJSONError(w, err.Error(), 500)
 		return
 	}
+	// A modpack setting can point at this connection, and the cached "is modpack
+	// storage configured" answer is what the panel gates the create button on.
+	h.state.InvalidateModpackStorage()
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

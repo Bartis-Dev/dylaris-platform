@@ -413,12 +413,16 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         setSavingRouting(false);
     };
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<boolean> => {
         setSaving(true);
-        const res = await saveGatewaySettings(settings);
-        showToast(res.success ? 'Gateway settings saved.' : (res.message || 'Save failed.'), res.success);
-        if (res.success) snapshotRef.current = settings;
-        setSaving(false);
+        try {
+            const res = await saveGatewaySettings(settings);
+            showToast(res.success ? 'Gateway settings saved.' : (res.message || 'Save failed.'), res.success);
+            if (res.success) snapshotRef.current = settings;
+            return !!res.success;
+        } finally {
+            setSaving(false);
+        }
     };
 
     const handleDiscard = () => {
@@ -1101,15 +1105,19 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
     const set = <K extends keyof XDPConfig>(key: K, value: XDPConfig[K]) =>
         setCfg(s => ({ ...s, [key]: value }));
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<boolean> => {
         setSaving(true);
-        const res = await saveXDPConfig(cfg);
-        showToast(res.success ? 'XDP config saved — Edges reconcile within 30s.' : (res.message || 'Save failed.'), res.success);
-        if (res.success) {
-            setPresent(true);
-            snapshotRef.current = cfg;
+        try {
+            const res = await saveXDPConfig(cfg);
+            showToast(res.success ? 'XDP config saved — Edges reconcile within 30s.' : (res.message || 'Save failed.'), res.success);
+            if (res.success) {
+                setPresent(true);
+                snapshotRef.current = cfg;
+            }
+            return !!res.success;
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     const handleDiscard = () => {

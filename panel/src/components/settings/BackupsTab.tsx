@@ -312,16 +312,20 @@ export default function BackupsTab() {
         if (savedConfig) setConfig(savedConfig);
     };
 
-    const handleConfigSave = async () => {
-        if (!config) return;
+    const handleConfigSave = async (): Promise<boolean> => {
+        if (!config) return false;
         setSaving(true);
-        const res = await saveBackupConfig(config);
-        setSaving(false);
-        if (res.success) {
-            setSavedConfig(config);
-            showToast('Storage mode saved.');
-        } else {
+        try {
+            const res = await saveBackupConfig(config);
+            if (res.success) {
+                setSavedConfig(config);
+                showToast('Storage mode saved.');
+                return true;
+            }
             showToast(res.message || 'Save failed.', false);
+            return false;
+        } finally {
+            setSaving(false);
         }
     };
 

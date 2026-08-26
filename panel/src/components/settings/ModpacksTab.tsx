@@ -127,12 +127,13 @@ export default function ModpacksTab() {
     const usingConnection = settings.provider === 's3' && (settings.connectionId ?? 0) > 0;
     const detectedUrl = (settings.detectedCorePublicUrl ?? '').trim();
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<boolean> => {
         if (!settings.provider) {
             flash('Pick where modpack archives are stored first.', false);
-            return;
+            return false;
         }
         setSaving(true);
+        try {
         const res = await setModpackSettings(settings);
         if (res.success) {
             flash('Saved.');
@@ -141,10 +142,13 @@ export default function ModpacksTab() {
             const after: ModpackSettings = { ...settings, s3SecretKey: '' };
             snapshotRef.current = after;
             setSettings(after);
-        } else {
-            flash(res.message || 'Save failed.', false);
+            return true;
         }
-        setSaving(false);
+        flash(res.message || 'Save failed.', false);
+        return false;
+        } finally {
+            setSaving(false);
+        }
     };
 
     const handleDiscard = () => {

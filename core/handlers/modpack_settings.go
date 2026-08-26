@@ -364,6 +364,9 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// Only modpack_settings.changed: features.changed belonged to the flag write
 	// that moved to Settings -> Features, and publishing it from here would tell
 	// every panel to re-render its gating over a value that did not change.
+	// The cached "is storage configured" answer is now stale; the panel reads it
+	// from /api/system/features and refreshes on exactly this event.
+	h.state.InvalidateModpackStorage()
 	h.state.Events.Publish(r.Context(), "modpack_settings.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

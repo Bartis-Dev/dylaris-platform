@@ -65,9 +65,11 @@ export function ToastRoot() {
         };
     }, []);
 
-    if (items.length === 0) return null;
-
     return (
+        // Always mounted, even when empty: a live region has to exist in the DOM
+        // BEFORE the mutation for assistive tech to announce it reliably. It
+        // renders nothing and is pointer-events:none while empty.
+        //
         // polite, not assertive: these announce a completed action, and
         // interrupting a screen reader mid-sentence for "Saved" is worse than
         // waiting for the pause.
@@ -95,10 +97,10 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
             type="button"
             onClick={onDismiss}
             className="toast toast-dismissable"
-            // The whole card dismisses, so it is a button - but it is not the
-            // way to learn what it says, and a reader that lists it as an
-            // actionable control alongside the live region reads it twice.
-            aria-hidden="true"
+            // Out of the tab order, but NOT aria-hidden. It used to be both,
+            // and the message lives inside it - so the live region wrapping it
+            // had no accessible content and announced nothing at all, while the
+            // comment claimed the text was covered by exactly that region.
             tabIndex={-1}
         >
             <div className={`toast-bar ${item.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />

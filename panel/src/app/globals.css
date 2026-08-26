@@ -648,6 +648,12 @@ input[type="number"] {
   flex-direction: column;
   gap: 8px;
   z-index: 60;
+  /* The container is always mounted so the live region exists before its first
+     child arrives; empty, it must not sit over anything. */
+  pointer-events: none;
+}
+.toast-container > * {
+  pointer-events: auto;
 }
 .toast {
   display: flex;
@@ -813,10 +819,13 @@ body:has(.unsaved-bar) .toast-container {
 .checkbox:checked::after {
   content: '';
   position: absolute;
-  left: 4.5px;
-  top: 1px;
-  width: 4px;
-  height: 8px;
+  /* Centred by measurement, not by arithmetic: rendered at 6x against a
+     crosshair on the box centre, the obvious 4.5/1 put the tick's tip into the
+     top-right corner radius and left the bottom third empty. */
+  left: 5px;
+  top: 2.5px;
+  width: 4.5px;
+  height: 7.5px;
   border: solid var(--base-09);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
@@ -839,6 +848,12 @@ body:has(.unsaved-bar) .toast-container {
 }
 .checkbox-row.is-disabled {
   cursor: not-allowed;
+}
+/* Dim the TEXT only. Opacity composites, so fading the row as well as the box
+   put a disabled checked box at 0.55 x 0.45 = 0.25 - violet on near-black,
+   indistinguishable from a disabled unchecked one. The state of a control you
+   are being told you may not change still has to be readable. */
+.checkbox-row.is-disabled > span {
   opacity: 0.55;
 }
 

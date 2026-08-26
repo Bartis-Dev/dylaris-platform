@@ -50,13 +50,17 @@ export default function LinkUpdatesPanel({ showToast }: Props) {
         return () => clearInterval(t);
     }, [loadStates]);
 
-    const save = async () => {
-        if (!settings) return;
+    const save = async (): Promise<boolean> => {
+        if (!settings) return false;
         setSaving(true);
-        const res = await saveLinkUpdateSettings(settings);
-        setSaving(false);
-        if (res) snapshotRef.current = settings;
-        showToast(res ? 'Link update policy saved' : 'Could not save the Link update policy', !!res);
+        try {
+            const res = await saveLinkUpdateSettings(settings);
+            if (res) snapshotRef.current = settings;
+            showToast(res ? 'Link update policy saved' : 'Could not save the Link update policy', !!res);
+            return !!res;
+        } finally {
+            setSaving(false);
+        }
     };
 
     const dirty =

@@ -18,7 +18,17 @@ import { Loader2 } from 'lucide-react';
 
 export interface UnsavedChangesRegistration {
     dirty: boolean;
-    save: () => Promise<void> | void;
+    /**
+     * Commit. Resolves TRUE only when everything was actually written.
+     *
+     * The boolean is the whole contract. It used to resolve void, so a guard
+     * could not tell a successful save from a refused one - and both guards
+     * navigated away afterwards, unmounting the section and dropping the edits.
+     * A server error did it, and so did the operator answering "no" to a
+     * confirmation: they said no and were moved off the screen showing what
+     * they said no to.
+     */
+    save: () => Promise<boolean>;
     discard: () => void;
     saving: boolean;
 }
@@ -65,9 +75,15 @@ export function aggregate(
         save: async () => {
             // Only the dirty ones: a clean section's save handler is free to
             // assume it has something to write.
+            //
+            // STOPS at the first refusal, and reports it. Carrying on would
+            // write half a page and then tell the caller it was fine, which is
+            // how a guard ends up navigating away from unsaved work.
             for (const r of regs) {
-                if (r.dirty) await r.save();
+                if (!r.dirty) continue;
+                if (!(await r.save())) return false;
             }
+            return true;
         },
         discard: () => {
             for (const r of regs) r.discard();
@@ -148,7 +164,8 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
  */
 export function useUnsavedChanges(reg: {
     dirty: boolean;
-    save: () => Promise<void> | void;
+    /** Resolve false when nothing was written; see the registration type. */
+    save: () => Promise<boolean>;
     discard: () => void;
     saving?: boolean;
 }) {
@@ -166,7 +183,7 @@ export function useUnsavedChanges(reg: {
     useEffect(() => {
         register(id, {
             dirty,
-            save: () => saveRef.current(),
+            save: () => Promise.resolve(saveRef.current()),
             discard: () => discardRef.current(),
             saving,
         });

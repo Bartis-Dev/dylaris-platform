@@ -48,7 +48,13 @@ export default function ServerConfigProfilingPage() {
 
     const esRef = useRef<EventSource | null>(null);
 
-    const showToast = (msg: string, ok = true) => toast(msg, ok);
+    // useCallback is load-bearing here, not tidiness: this is in the dependency
+    // array of the effect that opens the console SSE stream, and a 1s ticker
+    // re-renders this component for the whole run. A new identity per render
+    // tore the stream down and re-opened it every second, so the single line
+    // carrying the spark URL could land in a reconnect gap and the run would
+    // hang until the watchdog gave up.
+    const showToast = useCallback((msg: string, ok = true) => toast(msg, ok), []);
 
     // ----- Spark install detection (via P10 installed_mods) -----
     useEffect(() => {

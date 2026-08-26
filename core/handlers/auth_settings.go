@@ -266,14 +266,21 @@ type SMTPConfigDTO struct {
 	// identity below is shared by both, because it is a property of the mail
 	// configuration rather than of the wire protocol - switching provider should
 	// not ask an operator to retype their own address.
-	Provider   string `json:"provider"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Username   string `json:"username"`
-	Password   string `json:"password,omitempty"` // write-only
-	FromEmail  string `json:"fromEmail"`
-	FromName   string `json:"fromName"`
-	Encryption string `json:"encryption"`
+	//
+	// A POINTER, for the same reason BeamSettings.ManualOverride is one: absent
+	// and empty are different instructions. Treating an omitted field as "smtp"
+	// meant any client that predated this field - a tab opened before the deploy,
+	// a script, an IaC caller - silently flipped a working Resend setup back to
+	// an SMTP profile nobody had configured, and every verification mail, reset
+	// and dunning notice stopped with a success response on screen.
+	Provider   *string `json:"provider"`
+	Host       string  `json:"host"`
+	Port       int     `json:"port"`
+	Username   string  `json:"username"`
+	Password   string  `json:"password,omitempty"` // write-only
+	FromEmail  string  `json:"fromEmail"`
+	FromName   string  `json:"fromName"`
+	Encryption string  `json:"encryption"`
 	// PasswordSet is set by the GET handler so the UI can show
 	// "(saved — leave blank to keep)" placeholder.
 	PasswordSet bool `json:"passwordSet,omitempty"`
@@ -311,7 +318,7 @@ func loadSMTPConfigForUI(state *AppState, purpose string) SMTPConfigDTO {
 	}
 	resendKey, _ := state.Store.GetSetting(mailer.SettingKeyResendAPIKey)
 	return SMTPConfigDTO{
-		Provider:        provider,
+		Provider:        &provider,
 		Host:            get("host"),
 		Port:            port,
 		Username:        get("username"),
@@ -335,25 +342,31 @@ func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Requ
 		enc = "starttls"
 	}
 
-	// An unknown provider is coerced rather than rejected: the only way to send
-	// one is a client out of step with this build, and silently keeping mail on
-	// SMTP is better than a 400 an operator cannot act on.
-	provider := strings.ToLower(strings.TrimSpace(dto.Provider))
-	if provider != mailer.ProviderResend {
-		provider = mailer.ProviderSMTP
+	// Absent means "leave it alone"; an unknown VALUE is coerced to SMTP, since
+	// the only way to send one is a client out of step with this build and a 400
+	// there is not something an operator can act on.
+	provider := ""
+	if dto.Provider != nil {
+		provider = strings.ToLower(strings.TrimSpace(*dto.Provider))
+		if provider != mailer.ProviderResend {
+			provider = mailer.ProviderSMTP
+		}
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
 	purpose := "default"
-	pairs := []struct{ k, v string }{
-		{mailer.SettingKeyProvider, provider},
+	pairs := []struct{ k, v string }{}
+	if provider != "" {
+		pairs = append(pairs, struct{ k, v string }{mailer.SettingKeyProvider, provider})
+	}
+	pairs = append(pairs, []struct{ k, v string }{
 		{"smtp." + purpose + ".host", strings.TrimSpace(dto.Host)},
 		{"smtp." + purpose + ".port", fmt.Sprintf("%d", dto.Port)},
 		{"smtp." + purpose + ".username", strings.TrimSpace(dto.Username)},
 		{"smtp." + purpose + ".from_email", strings.TrimSpace(dto.FromEmail)},
 		{"smtp." + purpose + ".from_name", strings.TrimSpace(dto.FromName)},
 		{"smtp." + purpose + ".encryption", enc},
-	}
+	}...)
 	for _, kv := range pairs {
 		if err := h.state.Store.SetSettingBy(kv.k, kv.v, actorID); err != nil {
 			sendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)

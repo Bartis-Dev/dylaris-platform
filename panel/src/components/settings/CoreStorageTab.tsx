@@ -94,14 +94,14 @@ export default function CoreStorageTab() {
   // the placeholder so the snippet is still valid before anything is typed.
   const exampleStoragePath = settings.path.trim() || '/mnt/dylaris-shared';
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     if (!canSave) {
       const reason =
         settings.backend !== 'path'
           ? 'Fill in the bucket, access key and secret before saving.'
           : 'Enter an absolute path and tick the confirmation checkbox before saving.';
       showToast(reason, false);
-      return;
+      return false;
     }
     const generation = ++saveGenerationRef.current;
     setSaving(true);
@@ -116,7 +116,9 @@ export default function CoreStorageTab() {
     // A newer Retry can have started (and even finished) while this request
     // was in flight; a stale result must not touch state that belongs to
     // that newer, still-active round. See saveGenerationRef above.
-    if (saveGenerationRef.current !== generation) return;
+    // A newer round owns the UI now; this attempt did not store anything,
+    // so it must not report success to a navigation guard either.
+    if (saveGenerationRef.current !== generation) return false;
     if (res.success) {
       dispatchReach({
         type: 'progress',
@@ -126,6 +128,8 @@ export default function CoreStorageTab() {
       const saved: CoreStorageConfig = { ...settings, s3SecretKey: '', s3SecretSet: settings.s3SecretSet || settings.s3SecretKey !== '' };
       setSettings(saved);
       snapshotRef.current = saved;
+      setSaving(false);
+      return true;
     } else {
       dispatchReach({
         type: 'failure',
@@ -139,6 +143,7 @@ export default function CoreStorageTab() {
       if (!res.round) showToast(res.message || 'Save failed.', false);
     }
     setSaving(false);
+    return false;
   };
 
   // Live X/N counter. The save request stays open for the length of the

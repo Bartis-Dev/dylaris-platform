@@ -135,9 +135,9 @@ export default function FeaturesTab() {
         platformSnapshot.current !== null &&
         JSON.stringify(platformFlags) !== JSON.stringify(platformSnapshot.current);
 
-    const savePlatform = async () => {
+    const savePlatform = async (): Promise<boolean> => {
         const prev = platformSnapshot.current;
-        if (!prev) return;
+        if (!prev) return false;
         // applyAuthoringToManual rides along only when the toggle it describes
         // actually moved; sending it otherwise would be a standing instruction
         // the admin never gave.
@@ -146,17 +146,21 @@ export default function FeaturesTab() {
                 ? { ...platformFlags, applyAuthoringToManual: applyToManual }
                 : platformFlags;
         setPlatformSaving(true);
-        const res = await updateSystemFeatures(payload);
-        if (!res.success) {
-            showToast(res.message || 'Save failed.', false);
-        } else {
+        try {
+            const res = await updateSystemFeatures(payload);
+            if (!res.success) {
+                showToast(res.message || 'Save failed.', false);
+                return false;
+            }
             const stored = res.features ?? platformFlags;
             setPlatformFlags(stored);
             platformSnapshot.current = stored;
             if (typeof res.usersChanged === 'number') setLastBulk(res.usersChanged);
             showToast('Feature switches saved.');
+            return true;
+        } finally {
+            setPlatformSaving(false);
         }
-        setPlatformSaving(false);
     };
 
     const discardPlatform = () => {
@@ -170,18 +174,22 @@ export default function FeaturesTab() {
         tabProxySnapshot.current !== null &&
         JSON.stringify(tabProxy) !== JSON.stringify(tabProxySnapshot.current);
 
-    const saveTabProxy = async () => {
+    const saveTabProxy = async (): Promise<boolean> => {
         setTabProxySaving(true);
-        const res = await setTabProxySettings(tabProxy);
-        if (!res.success) {
-            showToast(res.message || 'Save failed.', false);
-        } else {
+        try {
+            const res = await setTabProxySettings(tabProxy);
+            if (!res.success) {
+                showToast(res.message || 'Save failed.', false);
+                return false;
+            }
             const stored = res.settings ?? tabProxy;
             setTabProxy(stored);
             tabProxySnapshot.current = stored;
             showToast('Tab proxy settings saved.');
+            return true;
+        } finally {
+            setTabProxySaving(false);
         }
-        setTabProxySaving(false);
     };
 
     const discardTabProxy = () => {
@@ -190,16 +198,20 @@ export default function FeaturesTab() {
 
     useUnsavedChanges({ dirty: tabProxyDirty, save: saveTabProxy, discard: discardTabProxy, saving: tabProxySaving });
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<boolean> => {
         setSaving(true);
-        const res = await saveFeatureSettings(settings);
-        if (res.success) {
-            showToast('Feature settings saved.');
-            snapshotRef.current = settings;
-        } else {
+        try {
+            const res = await saveFeatureSettings(settings);
+            if (res.success) {
+                showToast('Feature settings saved.');
+                snapshotRef.current = settings;
+                return true;
+            }
             showToast(res.message || 'Save failed.', false);
+            return false;
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     const handleDiscard = () => {

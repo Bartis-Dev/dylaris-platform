@@ -71,13 +71,13 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
 
     useEffect(() => { refresh(); }, [refresh]);
 
-    const handleSave = useCallback(async (opts: { regenerate?: boolean } = {}) => {
+    const handleSave = useCallback(async (opts: { regenerate?: boolean } = {}): Promise<boolean> => {
         setSaving(true);
         const res = await setRconConfig(serverId, { enabled, port, regenerate: opts.regenerate });
         setSaving(false);
         if (!res.success) {
             showToast(res.message || 'Save failed', false);
-            return;
+            return false;
         }
         setEnabled(res.enabled);
         setPort(res.port);
@@ -99,6 +99,7 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
             setNeedsRestart(false);
             onEnabledChange?.(res.enabled);
         }
+        return true;
     }, [serverId, enabled, port, showToast, onEnabledChange]);
 
     // The port and the enable switch go through the shared bar, like every

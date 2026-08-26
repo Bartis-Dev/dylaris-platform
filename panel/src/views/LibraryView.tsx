@@ -40,8 +40,11 @@ export default function LibraryView() {
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const showToast = (msg: string) => {
-        toast(msg);
+    // The old local toast had no ok/fail concept - one neutral bar, no icon - so
+    // every call site passed just a message. Delegating with the shared
+    // default (ok = true) rendered "Delete failed" with a green tick.
+    const showToast = (msg: string, ok = true) => {
+        toast(msg, ok);
     };
 
     const fetchFiles = async (path: string) => {
@@ -88,7 +91,7 @@ export default function LibraryView() {
             setShowCreateDir(false);
             fetchFiles(currentPath);
         } else {
-            showToast(res.message || 'Failed to create folder');
+            showToast(res.message || 'Failed to create folder', false);
         }
     };
 
@@ -100,7 +103,7 @@ export default function LibraryView() {
             setDeleteTarget(null);
             fetchFiles(currentPath);
         } else {
-            showToast(res.message || 'Delete failed');
+            showToast(res.message || 'Delete failed', false);
         }
     };
 
@@ -114,7 +117,7 @@ export default function LibraryView() {
         if (!res.success) {
             // Revert
             setFiles(curr => curr.map(f => f.name === entry.name ? { ...f, enabled: !next } : f));
-            showToast(res.message || 'Failed to toggle');
+            showToast(res.message || 'Failed to toggle', false);
         }
     };
 
@@ -127,7 +130,7 @@ export default function LibraryView() {
             fetchFiles(currentPath);
             showToast('Upload complete');
         } else {
-            showToast(res.message || 'Upload failed');
+            showToast(res.message || 'Upload failed', false);
         }
         e.target.value = '';
     };

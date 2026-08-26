@@ -100,16 +100,20 @@ export default function FileManagerTab() {
         });
     }, []);
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<boolean> => {
         setSaving(true);
+        try {
         const res = await saveFileManagerSettings(settings);
         if (res.success) {
             showToast('File manager settings saved.');
             snapshotRef.current = settings;
-        } else {
-            showToast(res.message || 'Save failed.', false);
+            return true;
         }
-        setSaving(false);
+        showToast(res.message || 'Save failed.', false);
+        return false;
+        } finally {
+            setSaving(false);
+        }
     };
 
     const handleDiscard = () => {

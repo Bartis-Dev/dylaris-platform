@@ -228,3 +228,9 @@
 {"date": "2026-08-26", "service": "panel", "type": "feature", "summary": "Settings that are easy to misread now carry a help button that explains what the value actually does, starting with routing mode, file access, storage backend and API-key capabilities."}
 {"date": "2026-08-26", "service": "panel", "type": "change", "summary": "The fleet placement defaults and the Link update policy now warn before you leave with unsaved changes instead of dropping them."}
 {"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Switching tabs inside a settings page with unsaved changes now asks what to do instead of discarding them."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "A save that fails or that you cancel no longer navigates away afterwards, which used to discard the very edits the prompt was protecting."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Billing defaults stayed marked as unsaved forever after a successful save; the bar and the navigation prompt would not go away."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "A stalled save no longer leaves you unable to save or discard, and toast messages are now announced to screen readers."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Searching the settings while you have unsaved changes now asks first instead of navigating away."}
+{"date": "2026-08-26", "service": "core", "type": "fix", "summary": "Saving the email settings without naming a provider no longer silently switches a Resend setup back to SMTP."}
+{"date": "2026-08-26", "service": "core", "type": "fix", "summary": "The feature-flag endpoint no longer resolves modpack storage on every request, which could make login wait on the shared storage limiter."}

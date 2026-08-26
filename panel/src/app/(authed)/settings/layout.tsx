@@ -158,11 +158,17 @@ function SettingsLayoutInner({
     const handleDialogSave = async () => {
         if (!registration || !pendingNav) return;
         setDialogSaving(true);
+        let ok = false;
         try {
-            await registration.save();
+            ok = await registration.save();
+        } catch {
+            ok = false;
         } finally {
             setDialogSaving(false);
         }
+        // Same rule as the other two guards: a refused save keeps the operator
+        // where their edits are.
+        if (!ok) return;
         const href = pendingNav.href;
         closeDialog();
         router.replace(href);

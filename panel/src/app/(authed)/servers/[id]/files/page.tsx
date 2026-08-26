@@ -52,7 +52,9 @@ export default function ServerFilesPage() {
     const showSftp = (fileAccessMode === 'sftp' || fileAccessMode === 'both') && server.nodeAddress;
     const hasInfoBar = showSftp || beamEnabled;
 
-    const showToast = (msg: string, ok: boolean) => toast(msg, ok);
+    // Errors stay up longer than successes: the failures here are the long
+    // relay/platform explanations, and 3.5s is not enough to read one.
+    const showToast = (msg: string, ok: boolean) => toast(msg, ok, { durationMs: ok ? 3500 : 6000 });
 
     // Fetch the binary through Core (which proxies to the relay) instead of
     // opening the URL in a new tab. The old <a href> approach made an error

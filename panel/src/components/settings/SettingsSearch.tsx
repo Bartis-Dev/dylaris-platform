@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, X } from 'lucide-react';
 import { searchSettings, hrefFor, type SettingsHit } from '@/lib/settingsIndex';
+import { useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
 
 /**
  * Search over individual settings, above the settings navigation.
@@ -18,6 +19,14 @@ export default function SettingsSearch({ onNavigate }: { onNavigate?: () => void
     const [q, setQ] = useState('');
     const [active, setActive] = useState(0);
     const boxRef = useRef<HTMLDivElement>(null);
+    // Every other navigation in the panel goes through GuardedLink. This one
+    // called router.replace directly, so searching while a form was dirty left
+    // the page, unmounted the section and dropped the edits without asking -
+    // the same failure the rest of this work exists to remove, reintroduced by
+    // the component that was meant to help.
+    const registration = useUnsavedChangesState();
+    const [pending, setPending] = useState<SettingsHit | null>(null);
+    const [saving, setSaving] = useState(false);
 
     const hits = searchSettings(q);
 
@@ -31,12 +40,20 @@ export default function SettingsSearch({ onNavigate }: { onNavigate?: () => void
         return () => document.removeEventListener('mousedown', onDown);
     }, []);
 
-    const go = (hit: SettingsHit) => {
+    const navigate = (hit: SettingsHit) => {
         setQ('');
         onNavigate?.();
         // replace, matching how the settings nav itself navigates: the sidebar
         // is not a place anyone wants twenty back-button entries from.
         router.replace(hrefFor(hit));
+    };
+
+    const go = (hit: SettingsHit) => {
+        if (registration?.dirty) {
+            setPending(hit);
+            return;
+        }
+        navigate(hit);
     };
 
     const onKeyDown = (e: React.KeyboardEvent) => {
@@ -93,6 +110,34 @@ export default function SettingsSearch({ onNavigate }: { onNavigate?: () => void
                         ))
                     )}
                 </div>
+            )}
+
+            {pending && registration && (
+                <UnsavedDialog
+                    saving={saving}
+                    onCancel={() => { setPending(null); setSaving(false); }}
+                    onSave={async () => {
+                        setSaving(true);
+                        let ok = false;
+                        try {
+                            ok = await registration.save();
+                        } catch {
+                            ok = false;
+                        } finally {
+                            setSaving(false);
+                        }
+                        if (!ok) return;
+                        const hit = pending;
+                        setPending(null);
+                        navigate(hit);
+                    }}
+                    onDiscard={() => {
+                        registration.discard();
+                        const hit = pending;
+                        setPending(null);
+                        navigate(hit);
+                    }}
+                />
             )}
         </div>
     );

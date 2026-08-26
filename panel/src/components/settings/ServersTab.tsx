@@ -27,16 +27,20 @@ export default function ServersTab() {
         });
     }, []);
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<boolean> => {
         setSaving(true);
+        try {
         const res = await saveServerSettings(settings);
         if (res.success) {
             showToast('Server settings saved.');
             snapshotRef.current = settings;
-        } else {
-            showToast(res.message || 'Save failed.', false);
+            return true;
         }
-        setSaving(false);
+        showToast(res.message || 'Save failed.', false);
+        return false;
+        } finally {
+            setSaving(false);
+        }
     };
 
     const handleDiscard = () => {

@@ -47,12 +47,24 @@ export default function BillingTab() {
 
     const specsValid = SPEC_RE.test(settings.gracePeriod) && SPEC_RE.test(settings.r2Retention) && SPEC_RE.test(settings.nodeRetention);
 
-    const save = async () => {
-        if (!specsValid) { showToast('Retention values must look like 3d, 2w or 3m.', false); return; }
+    const save = async (): Promise<boolean> => {
+        if (!specsValid) { showToast('Retention values must look like 3d, 2w or 3m.', false); return false; }
         setSaving(true);
-        const res = await setBillingSettings(settings);
-        setSaving(false);
-        showToast(res.success ? 'Saved.' : (res.message || 'Save failed.'), res.success);
+        try {
+            const res = await setBillingSettings(settings);
+            if (res.success) {
+                // The snapshot was never stamped here, so the form stayed dirty
+                // FOREVER after a successful save: the bar never went away, a
+                // refresh prompted, and every navigation raised the dialog.
+                snapshotRef.current = settings;
+                showToast('Billing settings saved.');
+                return true;
+            }
+            showToast(res.message || 'Save failed.', false);
+            return false;
+        } finally {
+            setSaving(false);
+        }
     };
 
     const dirty =

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { aggregate, type UnsavedChangesRegistration } from './UnsavedChanges';
 
 function reg(over: Partial<UnsavedChangesRegistration> = {}): UnsavedChangesRegistration {
-    return { dirty: false, saving: false, save: () => {}, discard: () => {}, ...over };
+    return { dirty: false, saving: false, save: async () => true, discard: () => {}, ...over };
 }
 
 describe('aggregate', () => {
@@ -40,12 +40,14 @@ describe('aggregate', () => {
                 order.push('a:start');
                 await new Promise(r => setTimeout(r, 10));
                 order.push('a:end');
+                return true;
             },
         });
         const fast = reg({
             dirty: true,
-            save: () => {
+            save: async () => {
                 order.push('b');
+                return true;
             },
         });
 
@@ -57,7 +59,7 @@ describe('aggregate', () => {
     // A clean section's save handler is entitled to assume it has something to
     // write, so it must not be called.
     it('skips clean sections when saving', async () => {
-        const clean = vi.fn();
+        const clean = vi.fn(async () => true);
         await aggregate([reg({ save: clean }), reg({ dirty: true })])!.save();
         expect(clean).not.toHaveBeenCalled();
     });
@@ -71,5 +73,41 @@ describe('aggregate', () => {
         aggregate([reg({ dirty: true, discard: a }), reg({ discard: b })])!.discard();
         expect(a).toHaveBeenCalledOnce();
         expect(b).toHaveBeenCalledOnce();
+    });
+
+    // The rule these two decide: a refused save is reported as a refusal, and
+    // stops the rest.
+    //
+    // This is what makes the navigation guards mean anything. `save` used to
+    // resolve void, so a guard could not tell a written page from a refused
+    // one - and every guard navigated away afterwards, unmounting the section
+    // and taking the edits with it. A server error did that, and so did the
+    // operator answering "no" to a confirmation.
+    it('reports a refusal instead of swallowing it', async () => {
+        const agg = aggregate([reg({ dirty: true, save: async () => false })])!;
+        expect(await agg.save()).toBe(false);
+    });
+
+    it('stops at the first refusal', async () => {
+        const later = vi.fn(async () => true);
+        const agg = aggregate([
+            reg({ dirty: true, save: async () => false }),
+            reg({ dirty: true, save: later }),
+        ])!;
+
+        expect(await agg.save()).toBe(false);
+        expect(
+            later,
+            'a later section was written after an earlier one refused, so half the page is saved and the caller was told it all worked',
+        ).not.toHaveBeenCalled();
+    });
+
+    it('reports success only when every dirty section was written', async () => {
+        const agg = aggregate([
+            reg({ dirty: true, save: async () => true }),
+            reg({ save: async () => false }), // clean, so never called
+            reg({ dirty: true, save: async () => true }),
+        ])!;
+        expect(await agg.save()).toBe(true);
     });
 });

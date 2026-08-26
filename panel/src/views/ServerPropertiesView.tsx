@@ -282,6 +282,11 @@ export default function ServerPropertiesView() {
         setAdvancedDirty(false);
         lastLoadedTextRef.current = text;
         setExternalChange(null);
+        // "Reload = take theirs" has to include the edits that have not been
+        // written yet. Without this the rows kept showing them, still marked as
+        // edited, and the next save re-applied them on top of the file that had
+        // just been reloaded to get rid of them.
+        setPending({});
         showToast('Reloaded from disk');
     }, [externalChange, showToast]);
 
@@ -309,11 +314,11 @@ export default function ServerPropertiesView() {
 
     const simpleDirty = Object.keys(pending).length > 0;
 
-    const saveSimple = useCallback(async () => {
+    const saveSimple = useCallback(async (): Promise<boolean> => {
         const cur = docRef.current;
-        if (!cur || !serverUuid) return;
+        if (!cur || !serverUuid) return false;
         const edits = pendingRef.current;
-        if (Object.keys(edits).length === 0) return;
+        if (Object.keys(edits).length === 0) return true;
 
         setSavingSimple(true);
         const fileText = serializeProperties(cur, edits);
@@ -322,7 +327,7 @@ export default function ServerPropertiesView() {
             if (res?.success === false) {
                 showToast(res.message || 'Save failed.', false);
                 setSavingSimple(false);
-                return;
+                return false;
             }
             // Re-parse so rawLines / lineIndex stay accurate for the next save.
             setDoc(parseProperties(fileText));
@@ -335,16 +340,19 @@ export default function ServerPropertiesView() {
             }
             setPending({});
             showToast('Saved server.properties');
+            setSavingSimple(false);
+            return true;
         } catch {
             showToast('Network error', false);
         }
         setSavingSimple(false);
+        return false;
     }, [serverUuid, filePath, showToast]);
 
     const discardSimple = useCallback(() => setPending({}), []);
 
-    const saveAdvanced = useCallback(async () => {
-        if (!serverUuid) return;
+    const saveAdvanced = useCallback(async (): Promise<boolean> => {
+        if (!serverUuid) return false;
         setSavingAdvanced(true);
         try {
             const res = await saveFile(filePath, advancedText, serverUuid);
@@ -357,11 +365,14 @@ export default function ServerPropertiesView() {
                 lastLoadedTextRef.current = advancedText;
                 setRestartPending(true);
                 showToast('Saved server.properties');
+                setSavingAdvanced(false);
+                return true;
             }
         } catch {
             showToast('Network error', false);
         }
         setSavingAdvanced(false);
+        return false;
     }, [serverUuid, filePath, advancedText, showToast]);
 
     const discardAdvanced = useCallback(() => {

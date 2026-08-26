@@ -95,8 +95,8 @@ func (h *ModpackSettingsHandler) DeliveryCapabilities(w http.ResponseWriter, r *
 	get := func(k string) string { v, _ := h.state.Store.GetSetting(k); return v }
 
 	canPresign := false
-	// Same call every write path makes, and a nil provider with no error is
-	// exactly what it turns into an HTTP 424 later on.
+	// This screen is admin-only and rare, so it builds the provider directly -
+	// it needs the object itself for the presign probe, not just the verdict.
 	storageConfigured := false
 	if prov, err := h.state.buildModpackStorageProvider(); err == nil && prov != nil {
 		storageConfigured = true

@@ -29,11 +29,15 @@ export default function UnsavedBar() {
         >
             <span className="mono-label text-[11px]">Unsaved changes</span>
             <div className="flex items-center gap-2">
+                {/* Deliberately NOT disabled while saving. The save already
+                    captured the value it is writing, so discarding cannot
+                    corrupt it - and a request that hangs used to leave the
+                    operator with dirty edits, no way to save them and no way to
+                    throw them away, with beforeunload blocking the reload. */}
                 <button
                     type="button"
                     onClick={() => discard()}
                     className="btn btn-secondary text-xs py-1.5 px-4"
-                    disabled={saving}
                 >
                     Discard
                 </button>

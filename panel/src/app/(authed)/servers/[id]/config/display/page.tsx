@@ -122,37 +122,45 @@ export default function ServerConfigDisplayPage() {
 
     const edgeMotdDirty = edgeMotdMode !== edgeMotdInitial.mode || edgeMotdText !== edgeMotdInitial.text;
 
-    const handleSaveEdgeMotd = useCallback(async () => {
+    const handleSaveEdgeMotd = useCallback(async (): Promise<boolean> => {
         setSavingEdgeMotd(true);
         // Only persist custom text in custom mode; auto/off ignore it.
         const text = edgeMotdMode === 'custom' ? edgeMotdText : '';
-        const res: any = await setEdgeMotd(serverId, edgeMotdMode, text);
-        if (res && res.success !== false && !res.error) {
-            setEdgeMotdInitial({ mode: edgeMotdMode, text });
-            setEdgeMotdText(text);
-            showToast('Edge MOTD saved.', true);
-        } else {
+        try {
+            const res: any = await setEdgeMotd(serverId, edgeMotdMode, text);
+            if (res && res.success !== false && !res.error) {
+                setEdgeMotdInitial({ mode: edgeMotdMode, text });
+                setEdgeMotdText(text);
+                showToast('Edge MOTD saved.', true);
+                return true;
+            }
             showToast(res?.error || res?.message || 'Failed to save edge MOTD', false);
+            return false;
+        } finally {
+            setSavingEdgeMotd(false);
         }
-        setSavingEdgeMotd(false);
     }, [serverId, edgeMotdMode, edgeMotdText, showToast]);
 
-    const handleSaveMotd = useCallback(async () => {
-        if (!propertiesPath || !serverUuid) return;
+    const handleSaveMotd = useCallback(async (): Promise<boolean> => {
+        if (!propertiesPath || !serverUuid) return false;
         setSavingMotd(true);
         // Surgically rewrite only the motd line — preserves blank lines,
         // comments, key order. The codec re-escapes \n in the value.
         const parsed = parseProperties(propertiesText || '');
         const next = serializeProperties(parsed, { motd });
-        const res = await saveFile(propertiesPath, next, serverUuid);
-        if (res.success) {
-            setPropertiesText(next);
-            setMotdInitial(motd);
-            showToast('MOTD saved. Restart the server to apply.', true);
-        } else {
+        try {
+            const res = await saveFile(propertiesPath, next, serverUuid);
+            if (res.success) {
+                setPropertiesText(next);
+                setMotdInitial(motd);
+                showToast('MOTD saved. Restart the server to apply.', true);
+                return true;
+            }
             showToast(res.message || 'Failed to save MOTD', false);
+            return false;
+        } finally {
+            setSavingMotd(false);
         }
-        setSavingMotd(false);
     }, [propertiesPath, serverUuid, propertiesText, motd, showToast]);
 
     // Two Revert/Save pairs used to sit on this one page. They are separate

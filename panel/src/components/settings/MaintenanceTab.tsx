@@ -50,17 +50,21 @@ export default function MaintenanceTab() {
 
     const flash = (msg: string, ok = true) => toast(msg, ok);
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<boolean> => {
         setSaving(true);
-        const res = await saveMaintenance(state);
-        setSaving(false);
-        if (res.success) {
-            const stored = res.state ?? state;
-            setState(stored);
-            snapshotRef.current = stored;
-            flash('Saved.');
-        } else {
+        try {
+            const res = await saveMaintenance(state);
+            if (res.success) {
+                const stored = res.state ?? state;
+                setState(stored);
+                snapshotRef.current = stored;
+                flash('Saved.');
+                return true;
+            }
             flash(res.message || 'Save failed.', false);
+            return false;
+        } finally {
+            setSaving(false);
         }
     };
 
