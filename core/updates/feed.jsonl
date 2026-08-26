@@ -218,3 +218,4 @@
 {"date": "2026-08-26", "service": "panel", "type": "feature", "summary": "The DNS settings can now test the provider token and list the zones it can see, and zones are switched on and off individually instead of typed as one comma-separated line."}
 {"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "A Warp key set to Fixed no longer stores a connection limit it does not use, and the help text no longer promises a pinned overlay address the form never sent or an eviction by idleness it does not do."}
 {"date": "2026-08-26", "service": "panel", "type": "change", "summary": "The Gateway settings tab formerly called Hub Admin is now Hub Redis access, which is what it actually issues."}
+{"date": "2026-08-26", "service": "panel", "type": "feature", "summary": "Settings has a search box: type what a setting does, not which page it is on, and it takes you straight to the right page and tab."}

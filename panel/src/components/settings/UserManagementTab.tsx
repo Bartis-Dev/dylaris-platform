@@ -15,6 +15,7 @@ import { getAuditPolicy, saveAuditPolicy, AuditPolicy } from '@/lib/api/serverAu
 import { Skeleton, SkeletonText, SkeletonFormRow } from '@/components/Skeleton';
 import { useAppData } from '@/lib/AppDataContext';
 import { useSettingsForm, type SettingsForm } from '@/lib/useSettingsForm';
+import { useTabParam } from '@/lib/useTabParam';
 import Tabs, { type TabItem } from '@/components/ui/Tabs';
 import Switch from '@/components/ui/Switch';
 import HelpTip from '@/components/ui/HelpTip';
@@ -29,13 +30,17 @@ const ENCRYPTION_OPTIONS = [
 
 type UserTab = 'signin' | 'email' | 'accounts' | 'retention' | 'questions';
 
+// Kept beside the type so the settings-index test can prove every tab the
+// search points at actually exists here.
+export const USER_TABS: readonly UserTab[] = ['signin', 'email', 'accounts', 'retention', 'questions'];
+
 // Six unrelated cards used to sit stacked down one scroll, each with its own
 // Save button and its own idea of what feedback looks like. Tabs are the panel's
 // one sub-navigation, and this page is the clearest case for them: nobody
 // arrives here wanting to look at registration policy AND audit retention.
 export default function UserManagementTab() {
     const { featureFlags } = useAppData();
-    const [tab, setTab] = useState<UserTab>('signin');
+    const [tab, setTab] = useTabParam<UserTab>(USER_TABS, 'signin');
 
     // ONE AuthPolicy form, shared by the two tabs that edit it.
     //

@@ -15,6 +15,7 @@ import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skelet
 import Spinner from '@/components/Spinner';
 import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
 import Tabs from '@/components/ui/Tabs';
+import { useTabParam } from '@/lib/useTabParam';
 import { toast } from '@/components/ui/Toast';
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
 import GatewayDnsCard from '@/components/settings/GatewayDnsCard';
@@ -29,6 +30,10 @@ import { cnameTargetsFor } from '@/lib/cnameTargets';
 type LimitKey = 'global' | 'userDefault' | 'perServer' | 'portMc';
 type ModeOption<T extends string> = { value: T; label: string; desc: string };
 type SubTab = 'gateway' | 'xdp' | 'hub';
+
+// Exported so the settings-index test can prove every tab the search points at
+// actually exists here.
+export const GATEWAY_TABS: readonly SubTab[] = ['gateway', 'xdp', 'hub'];
 
 const ROUTING_OPTIONS: ModeOption<RoutingMode>[] = [
     { value: 'ip_port', label: 'IP : Port', desc: 'Direct host port binding — players connect via Node IP + port' },
@@ -1482,23 +1487,13 @@ function HubAdminPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =
 // ─────────────────────────────────────────────
 
 export default function GatewayTab() {
-    const [subTab, setSubTab] = useState<SubTab>('gateway');
+    const [subTab, setSubTab] = useTabParam<SubTab>(GATEWAY_TABS, 'gateway');
 
     // Sub-tab switch guard — the active panel registers its unsaved state with
     // the shared bar; we intercept sub-nav clicks when it's dirty.
     const registration = useUnsavedChangesState();
     const [pendingSubTab, setPendingSubTab] = useState<SubTab | null>(null);
     const [dialogSaving, setDialogSaving] = useState(false);
-
-    // Deep-link via URL hash, e.g. `/settings/gateway#xdp` — used to jump
-    // straight to the right sub-tab.
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        const hash = window.location.hash.replace(/^#/, '');
-        if (hash === 'gateway' || hash === 'xdp' || hash === 'hub') {
-            setSubTab(hash as SubTab);
-        }
-    }, []);
 
     const showToast = toast;
 

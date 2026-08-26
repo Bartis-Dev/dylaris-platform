@@ -9,6 +9,7 @@ import {
     useUnsavedChangesState,
     UnsavedDialog,
 } from '@/components/settings/UnsavedChanges';
+import SettingsSearch from '@/components/settings/SettingsSearch';
 
 interface SettingsTab {
     slug: string;
@@ -182,6 +183,10 @@ function SettingsLayoutInner({
             <div className="flex-1 flex gap-6 min-h-0 overflow-hidden">
                 {/* Left vertical grouped settings sidebar */}
                 <nav className="w-52 shrink-0 overflow-y-auto border-r border-(--base-03) pr-3 flex flex-col gap-7 pt-1">
+                    {/* Over the page list rather than in it: what people look
+                        for are individual settings, and the page name is the
+                        one thing they do not know. */}
+                    <SettingsSearch />
                     {groups.map(group => (
                         <div key={group.group} className="flex flex-col gap-1">
                             <span className="mono-label px-3">{group.group}</span>

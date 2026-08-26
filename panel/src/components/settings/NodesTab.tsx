@@ -19,6 +19,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import StoragePlacement from '@/components/StoragePlacement';
 import LinkUpdatesPanel from '@/components/settings/LinkUpdatesPanel';
 import Tabs from '@/components/ui/Tabs';
+import { useTabParam } from '@/lib/useTabParam';
 import { toast } from '@/components/ui/Toast';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
@@ -39,6 +40,8 @@ interface DeployBundle {
 
 type SubTab = 'nodes' | 'placement' | 'enrollment';
 
+export const NODE_TABS: readonly SubTab[] = ['nodes', 'placement', 'enrollment'];
+
 const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
     { id: 'nodes', label: 'Nodes', icon: Server },
     { id: 'placement', label: 'Placement', icon: SettingsIcon },
@@ -54,7 +57,7 @@ const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
 // confused one, and it put this page's depth at three levels. A tab bar is the
 // only sub-navigation in the panel now, and it is the last level there is.
 export default function NodesTab() {
-    const [subTab, setSubTab] = useState<SubTab>('nodes');
+    const [subTab, setSubTab] = useTabParam<SubTab>(NODE_TABS, 'nodes');
 
     return (
         <div className="flex flex-col h-full min-h-0">
