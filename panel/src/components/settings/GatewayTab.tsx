@@ -22,6 +22,7 @@ import GatewayDnsCard from '@/components/settings/GatewayDnsCard';
 import { useAppData } from '@/lib/AppDataContext';
 import { useBusy } from '@/lib/useBusy';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
+import HelpTip from '@/components/ui/HelpTip';
 
 // ─────────────────────────────────────────────
 // Gateway settings
@@ -556,7 +557,30 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
 
                 <div>
-                    <h3 className="mono-label mb-3">Game Traffic</h3>
+                    <h3 className="mono-label mb-3 flex items-center gap-1.5">
+                        Game Traffic
+                        <HelpTip label="About the routing mode">
+                            <p className="mb-2">
+                                Where players connect. This is the highest-consequence setting on
+                                this page: applying it <strong>redeploys every server</strong>, because
+                                each container has to be recreated with different networking.
+                            </p>
+                            <p className="mb-2">
+                                <strong>IP:Port</strong> - players connect straight to the node&apos;s
+                                public address. Works with no gateway at all, and exposes the machine.
+                                <br />
+                                <strong>Gateway</strong> - players connect to a domain on 25565 and
+                                the edge forwards it. The node&apos;s address is never given out.
+                                <br />
+                                <strong>Both</strong> - either route works. Useful while migrating;
+                                the node address stays exposed while it is on.
+                            </p>
+                            <p>
+                                The node IP is only fully hidden with Gateway <em>and</em> File
+                                Access on Beam - SFTP would otherwise hand out the same address.
+                            </p>
+                        </HelpTip>
+                    </h3>
                     <div className="grid grid-cols-3 gap-2">
                         {ROUTING_OPTIONS.map(opt => (
                             <button key={opt.value} type="button" onClick={() => setRoutingMode(opt.value)}
@@ -569,7 +593,27 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
 
                 <div>
-                    <h3 className="mono-label mb-3">File Access</h3>
+                    <h3 className="mono-label mb-3 flex items-center gap-1.5">
+                        File Access
+                        <HelpTip label="About file access">
+                            <p className="mb-2">
+                                How people reach their files.
+                            </p>
+                            <p className="mb-2">
+                                <strong>SFTP</strong> is the familiar one and works with any client -
+                                but the client connects to the node directly, so it learns the
+                                machine&apos;s address.
+                                <br />
+                                <strong>Beam</strong> is the desktop app. It works over the local
+                                network without a gateway, and remotely through the relay, which is
+                                what keeps the node address private.
+                            </p>
+                            <p>
+                                Switching to Beam does not remove existing SFTP credentials; it stops
+                                offering the SFTP route in the panel.
+                            </p>
+                        </HelpTip>
+                    </h3>
                     <div className="grid grid-cols-3 gap-2">
                         {FILE_OPTIONS.map(opt => (
                             <button key={opt.value} type="button" onClick={() => setFileMode(opt.value)}

@@ -12,6 +12,7 @@ import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { useAppData } from '@/lib/AppDataContext';
 import { toast } from '@/components/ui/Toast';
+import HelpTip from '@/components/ui/HelpTip';
 
 export default function FeaturesTab() {
     // Auto-move is gateway-only — gate its toggle on the live routing mode.
@@ -501,6 +502,22 @@ export default function FeaturesTab() {
                                 ? <ChevronDown size={14} className="text-(--base-06)" />
                                 : <ChevronRight size={14} className="text-(--base-06)" />}
                             <span className="text-sm font-medium text-(--base-09) group-hover:text-(--accent-light) transition-colors">Allowed capabilities</span>
+                            <HelpTip label="About allowed capabilities">
+                                <p className="mb-2">
+                                    <strong>Selecting none is not &quot;none allowed&quot;.</strong> An empty
+                                    list means no EXTRA restriction: a user may put any capability on
+                                    a key that they already hold themselves.
+                                </p>
+                                <p className="mb-2">
+                                    Selecting some narrows that further - a key may then carry only
+                                    what is ticked here, and still only what its creator holds. It can
+                                    never exceed the person who made it either way.
+                                </p>
+                                <p>
+                                    Enforced when a key is minted AND every time one is used, so
+                                    tightening this stops keys that already exist.
+                                </p>
+                            </HelpTip>
                             <span className="ml-auto text-xs text-(--base-06)">
                                 {allowedKeyCaps.size === 0 ? 'No restriction' : `${allowedKeyCaps.size} selected`}
                             </span>

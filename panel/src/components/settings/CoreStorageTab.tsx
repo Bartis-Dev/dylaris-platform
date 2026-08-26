@@ -12,6 +12,7 @@ import { systemEvents } from '@/lib/systemEvents';
 import { reachReducer, initialReachState, statusLabel, statusRemedy, parseStorageReachEvent } from '@/lib/storageReach';
 import StorageHealthCard from '@/components/settings/StorageHealthCard';
 import { toast } from '@/components/ui/Toast';
+import HelpTip from '@/components/ui/HelpTip';
 
 const BACKENDS = [
   { id: 'path', label: 'Filesystem Path', description: 'A local disk or an OS-level mount (NFS/SMB/WebDAV). Must be reachable by every Core.', icon: HardDrive },
@@ -193,7 +194,25 @@ export default function CoreStorageTab() {
 
       {/* Backend selector */}
       <div>
-        <label className="input-label mb-2 block">Backend</label>
+        <label className="input-label mb-2 flex items-center gap-1.5">
+          Backend
+          <HelpTip label="About the storage backend">
+            <p className="mb-2">
+              <strong>Local</strong> writes to the disk inside the Core container. It is fine
+              for one Core and nothing else: a second replica cannot see the first one&apos;s
+              files, so uploads land on whichever container answered and disappear from the
+              other.
+            </p>
+            <p className="mb-2">
+              <strong>S3</strong> is what makes Core stateless. Any number of replicas share
+              the same bucket, and the container can be replaced without losing anything.
+            </p>
+            <p>
+              Switching backends does not move what is already stored. Use Settings, Storage
+              Migration for that.
+            </p>
+          </HelpTip>
+        </label>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {BACKENDS.map(b => {
             const Icon = b.icon;

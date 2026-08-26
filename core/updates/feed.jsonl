@@ -225,3 +225,4 @@
 {"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Maintenance mode, ticket settings and billing defaults no longer discard your edits without a word when you leave the page."}
 {"date": "2026-08-26", "service": "panel", "type": "change", "summary": "Checkboxes and switches are styled to match the panel and have proper hover, focus and disabled states; the cursor no longer changes halfway across a checkbox row."}
 {"date": "2026-08-26", "service": "panel", "type": "change", "summary": "The server display, proxy config and RCON pages now use the same save bar as everything else, and warn before you leave with unsaved edits."}
+{"date": "2026-08-26", "service": "panel", "type": "feature", "summary": "Settings that are easy to misread now carry a help button that explains what the value actually does, starting with routing mode, file access, storage backend and API-key capabilities."}
