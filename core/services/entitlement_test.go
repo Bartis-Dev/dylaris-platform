@@ -148,7 +148,7 @@ func TestEffectiveEntitlement_Hosted(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := EffectiveEntitlement(tt.fake, "u1", entNow, true)
+			got, err := EffectiveEntitlement(tt.fake, "u1", entNow, true, false)
 			if err != nil {
 				t.Fatalf("EffectiveEntitlement: %v", err)
 			}
@@ -181,7 +181,7 @@ func TestEffectiveEntitlement_SelfHostIsUnlimited(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := EffectiveEntitlement(tc.fake, "u1", entNow, false)
+			got, err := EffectiveEntitlement(tc.fake, "u1", entNow, false, false)
 			if err != nil {
 				t.Fatalf("EffectiveEntitlement: %v", err)
 			}
@@ -199,7 +199,7 @@ func TestEffectiveEntitlement_SelfHostIsUnlimited(t *testing.T) {
 // account on a self-host install means it.
 func TestEffectiveEntitlement_SelfHostStillHonoursSuspension(t *testing.T) {
 	fake := &entFakeStore{billing: &store.UserBilling{Status: "suspended"}}
-	got, err := EffectiveEntitlement(fake, "u1", entNow, false)
+	got, err := EffectiveEntitlement(fake, "u1", entNow, false, false)
 	if err != nil {
 		t.Fatalf("EffectiveEntitlement: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestEffectiveEntitlement_ExpiredGrantIsNotReported(t *testing.T) {
 			ManualEntitlementExpiresAt: ptrTime(entNow.Add(-24 * time.Hour)),
 		},
 	}
-	got, err := EffectiveEntitlement(fake, "u1", entNow, true)
+	got, err := EffectiveEntitlement(fake, "u1", entNow, true, false)
 	if err != nil {
 		t.Fatalf("EffectiveEntitlement: %v", err)
 	}
@@ -242,10 +242,46 @@ func TestEffectiveEntitlement_GrantBoundary(t *testing.T) {
 			},
 		}
 	}
-	if got, _ := EffectiveEntitlement(mk(entNow), "u1", entNow, true); got.Byon {
+	if got, _ := EffectiveEntitlement(mk(entNow), "u1", entNow, true, false); got.Byon {
 		t.Error("a grant expiring exactly now still granted")
 	}
-	if got, _ := EffectiveEntitlement(mk(entNow.Add(time.Nanosecond)), "u1", entNow, true); !got.Byon {
+	if got, _ := EffectiveEntitlement(mk(entNow.Add(time.Nanosecond)), "u1", entNow, true, false); !got.Byon {
 		t.Error("a grant expiring a moment from now did not grant")
+	}
+}
+
+// An administrator is not a customer of the platform they run.
+//
+// Every other admin gate in this codebase reads it that way (canManageNode
+// starts with it), and this one did not: on a hosted install with the store
+// live, the owner could not mint an enroll token or a warp key for their own
+// machine without first selling themselves a subscription. The over-limit sweep
+// consults the same function, so without this it would eventually stop anything
+// they had enrolled under their own account.
+func TestEffectiveEntitlement_AdminIsNotACustomer(t *testing.T) {
+	// The hardest case for the rule: the store is live, the account holds
+	// nothing at all, and it is even marked suspended. None of that describes
+	// an operator.
+	fake := &entFakeStore{billing: &store.UserBilling{Status: "suspended"}}
+
+	got, err := EffectiveEntitlement(fake, "u1", entNow, true, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.Byon || !got.RouteOnly {
+		t.Fatalf("an administrator was refused: %+v", got)
+	}
+	if got.Source != EntitlementSourceUnlimited {
+		t.Errorf("source = %q, want %q", got.Source, EntitlementSourceUnlimited)
+	}
+
+	// And the mirror: the same row for an ordinary account is still refused, so
+	// the rule is about who is asking and not a way to widen the gate.
+	got, err = EffectiveEntitlement(fake, "u1", entNow, true, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Byon || got.RouteOnly {
+		t.Fatalf("a suspended customer was granted: %+v", got)
 	}
 }

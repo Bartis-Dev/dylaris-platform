@@ -79,6 +79,11 @@ type BillingLifecycleService struct {
 	frontendURL string
 	leader      leader.Election
 	interval    time.Duration
+	// storeEnabled mirrors config.StoreEnabled and reaches the over-limit sweep,
+	// which has to tell "no billing plane exists" from "this tenant holds no
+	// entitlement". Zero value false means self-host, where the sweep grants
+	// everything - the safe direction if this is ever left unwired.
+	storeEnabled bool
 
 	// Route-only link teardown/restore deps, wired after the ACL provisioner is
 	// built (SetLinkACL). Nil in solo/hoster mode, where there are no link kits.
@@ -105,8 +110,8 @@ type warpPeerDisconnector interface {
 	DisconnectKeyPeers(ctx context.Context, keyID int) int
 }
 
-func NewBillingLifecycleService(s store.Store, q *QueueService, registry *nodegrpc.Registry, frontendURL string, suspendGrace time.Duration) *BillingLifecycleService {
-	return &BillingLifecycleService{store: s, queue: q, registry: registry, frontendURL: frontendURL, interval: time.Hour, suspendGrace: suspendGrace}
+func NewBillingLifecycleService(s store.Store, q *QueueService, registry *nodegrpc.Registry, frontendURL string, suspendGrace time.Duration, storeEnabled bool) *BillingLifecycleService {
+	return &BillingLifecycleService{store: s, queue: q, registry: registry, frontendURL: frontendURL, interval: time.Hour, suspendGrace: suspendGrace, storeEnabled: storeEnabled}
 }
 
 func (s *BillingLifecycleService) SetLeader(l leader.Election) { s.leader = l }

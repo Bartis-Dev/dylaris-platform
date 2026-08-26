@@ -76,13 +76,18 @@ func (s *AppState) CacheConfigFromSettings() services.CacheConfig {
 	}
 }
 
-// ApplyCacheSettings points the cache at whatever the settings say. Called at
-// boot and after a save.
+// ApplyCacheSettings points the cache at whatever the settings say, at BOOT.
+//
+// It adopts rather than reconfigures, so a stored dedicated endpoint that is not
+// answering yet stays the target instead of falling back to the control-plane
+// Redis - the one thing configuring it was meant to prevent. The error is worth
+// logging and is not a reason to refuse the setting. The save path is the
+// opposite and validates before storing; see Cache.Adopt and Cache.Reconfigure.
 func (s *AppState) ApplyCacheSettings(ctx context.Context) error {
 	if s.Cache == nil {
 		return nil
 	}
-	return s.Cache.Reconfigure(ctx, s.CacheConfigFromSettings())
+	return s.Cache.Adopt(ctx, s.CacheConfigFromSettings())
 }
 
 // Get GET /api/admin/settings/mod-cache

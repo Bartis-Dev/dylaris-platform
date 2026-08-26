@@ -161,3 +161,90 @@ func TestCacheOperationsAreSafeWithNoClient(t *testing.T) {
 		t.Error("a cache with no client reported healthy")
 	}
 }
+
+// Boot must honour a stored dedicated endpoint even when it is not answering.
+//
+// This is the whole reason Adopt exists. Reconfigure returns early on a failed
+// ping without recording cfg, which is right for a save and was wrong for boot:
+// c.cfg stayed empty, so client() handed back the BUS and every cached Modrinth
+// response went to the control plane - precisely what configuring a dedicated
+// cache moves it away from. The isolation held after a save and not after a
+// restart.
+func TestCacheAdoptKeepsAnUnreachableEndpointInsteadOfFallingBackToTheBus(t *testing.T) {
+	bus, busClient := newTestRedis(t)
+	dead, _ := newTestRedis(t)
+	addr := dead.Addr()
+	dead.Close() // configured at some point, not answering now
+
+	c := NewCache(busClient)
+	ctx := context.Background()
+
+	if err := c.Adopt(ctx, CacheConfig{Addr: addr}); err == nil {
+		t.Fatal("Adopt reported success for an endpoint that is not answering")
+	}
+
+	c.Set(ctx, "k", "v", time.Minute)
+	if bus.Exists("k") {
+		t.Fatal("wrote to the panel Redis: an operator who moved the cache off the control plane " +
+			"had it moved back by a restart, silently")
+	}
+	if _, ok := c.Get(ctx, "k"); ok {
+		t.Error("a dead endpoint returned a hit")
+	}
+}
+
+// ...and it has to SAY so. The settings screen renders the address from the
+// stored settings while the health line comes from here, so a status that
+// described the bus put a green tick next to the dedicated host.
+func TestCacheStatusAfterAdoptingAnUnreachableEndpointDescribesThatEndpoint(t *testing.T) {
+	_, busClient := newTestRedis(t)
+	dead, _ := newTestRedis(t)
+	addr := dead.Addr()
+	dead.Close()
+
+	c := NewCache(busClient)
+	_ = c.Adopt(context.Background(), CacheConfig{Addr: addr})
+
+	st := c.Status(context.Background())
+	if !st.Dedicated {
+		t.Error("status reports the bus while a dedicated endpoint is configured")
+	}
+	if st.Healthy {
+		t.Error("status reports healthy for an endpoint that is not answering")
+	}
+	if st.Addr != addr {
+		t.Errorf("status addr = %q, want %q", st.Addr, addr)
+	}
+	if st.Error == "" {
+		t.Error("status carries no reason, which is the only thing the screen can act on")
+	}
+}
+
+// The save path keeps its opposite behaviour: an address that does not answer is
+// refused and nothing changes. Typing a bad host must not take the working cache
+// away.
+func TestCacheReconfigureLeavesAWorkingCacheAloneWhenTheNewAddressIsDead(t *testing.T) {
+	_, busClient := newTestRedis(t)
+	good, _ := newTestRedis(t)
+	dead, _ := newTestRedis(t)
+	deadAddr := dead.Addr()
+	dead.Close()
+
+	c := NewCache(busClient)
+	ctx := context.Background()
+	if err := c.Reconfigure(ctx, CacheConfig{Addr: good.Addr()}); err != nil {
+		t.Fatalf("configuring a reachable endpoint failed: %v", err)
+	}
+
+	if err := c.Reconfigure(ctx, CacheConfig{Addr: deadAddr}); err == nil {
+		t.Fatal("accepted an endpoint that is not answering")
+	}
+
+	c.Set(ctx, "k", "v", time.Minute)
+	if !good.Exists("k") {
+		t.Error("a refused save moved the cache off the endpoint that was working")
+	}
+	if st := c.Status(ctx); st.Addr != good.Addr() {
+		t.Errorf("status addr = %q, want the endpoint that is still in use (%q)", st.Addr, good.Addr())
+	}
+}

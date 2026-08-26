@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -152,3 +153,33 @@ func TestMintToken_AllowedWithEntitlement(t *testing.T) {
 
 func ptrI64(i int64) *int64       { return &i }
 func ptrT(t time.Time) *time.Time { return &t }
+
+// An administrator is not a customer of the platform they run.
+//
+// Every other admin gate in this codebase reads it that way (canManageNode opens
+// with it) and this one did not, so on a hosted install with the store live the
+// owner could not mint an enroll token for their own machine without selling
+// themselves a subscription first. The billing row here is the worst case a
+// customer could have - suspended, nothing bought - and none of it describes an
+// operator.
+func TestMintToken_AdminIsNotSubjectToTheGate(t *testing.T) {
+	state := newEntGateState(&store.UserBilling{Status: "suspended"}, true)
+	h := NewNodeEnrollHandler(state)
+
+	req := nodeEnrollMintReq("admin-1", map[string]interface{}{})
+	req = req.WithContext(context.WithValue(req.Context(), "isAdmin", true))
+
+	rec := httptest.NewRecorder()
+	h.MintToken(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// The mirror, so this is about who is asking and not a way past the gate:
+	// the same row without the admin flag is still refused.
+	rec = httptest.NewRecorder()
+	h.MintToken(rec, nodeEnrollMintReq("u1", map[string]interface{}{}))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for an ordinary account: %s", rec.Code, rec.Body.String())
+	}
+}

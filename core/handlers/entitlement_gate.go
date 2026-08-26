@@ -48,16 +48,22 @@ const (
 // requireEntitlement resolves what the tenant may use and refuses with a reason
 // the panel can act on. kind is EntitlementByon or EntitlementRouteOnly.
 //
+// Takes the request rather than a bare context because the answer depends on WHO
+// is asking: an administrator is not a customer, and EffectiveEntitlement reads
+// that the same way canManageNode already does. Without it the owner of a hosted
+// install could not mint an enroll token for their own machine.
+//
 // Returns true when the request may proceed. On false it has already written the
 // response.
-func (s *AppState) requireEntitlement(ctx context.Context, w http.ResponseWriter, userID, kind string) bool {
+func (s *AppState) requireEntitlement(r *http.Request, w http.ResponseWriter, userID, kind string) bool {
+	ctx := r.Context()
 	// BYON off: there is no entitlement plane, and every one of these endpoints
 	// is already unreachable. Nothing to decide.
 	if s.FeatureFlags == nil || !s.FeatureFlags.IsBYONEnabled(ctx) {
 		return true
 	}
 
-	ent, err := services.EffectiveEntitlement(s.Store, userID, time.Now(), s.StoreEnabled)
+	ent, err := services.EffectiveEntitlement(s.Store, userID, time.Now(), s.StoreEnabled, IsAdmin(r))
 	if err != nil {
 		sendJSONError(w, "Could not determine your subscription", http.StatusInternalServerError)
 		return false

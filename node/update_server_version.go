@@ -102,23 +102,49 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 
 	log.Printf("update_server_version: moving %s/%s (%d removals, %d installs)", pl.UUID, subName, len(pl.Remove), len(pl.Install))
 
-	dm.PowerAction(pl.UUID, "stop")
-	time.Sleep(3 * time.Second)
-
 	// Same traversal + symlink boundary install_mod goes through: the mods
 	// directory is bind-mounted into the tenant's own container, so a symlink
 	// planted there would otherwise redirect every write and delete below.
 	modsDir, err := resolveWithinDir(serverPath, filepath.Join(subName, targetDir))
 	if err != nil {
 		log.Printf("update_server_version: %v", err)
-		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
 		return
 	}
 	if err := os.MkdirAll(modsDir, 0o755); err != nil {
 		log.Printf("update_server_version: mkdir %s: %v", modsDir, err)
-		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
 		return
 	}
+
+	// EVERY new jar is fetched and verified BEFORE anything is removed and
+	// before the server is even stopped.
+	//
+	// The order used to be the other way round - remove, then download, skipping
+	// past any download that failed, then clean, reinstall and start. One failed
+	// fetch meant the old jar was already gone, the new one never arrived, and
+	// the server came up on the new Minecraft version without that mod while the
+	// panel reported success. The only trace was a line in this log.
+	//
+	// Which mods travel and which are dropped is a decision the tenant already
+	// made in the panel, on a list Core resolved. A jar that Core said was
+	// available and then would not download is not that decision, so it aborts
+	// instead of quietly enacting a different one. Aborting here costs nothing:
+	// nothing has been deleted and the server has not even been stopped.
+	staged, err := stageInstalls(modsDir, pl.Install, downloadAndVerify)
+	if err != nil {
+		log.Printf("update_server_version: %v; the move is aborted and %s/%s is left exactly as it was",
+			err, pl.UUID, subName)
+		return
+	}
+	defer func() {
+		for _, sj := range staged {
+			os.Remove(sj.tmp) // a no-op once renamed into place
+		}
+	}()
+	log.Printf("update_server_version: staged %d new jars for %s/%s", len(staged), pl.UUID, subName)
+
+	// Past this point the move is committed: everything it needs is on disk.
+	dm.PowerAction(pl.UUID, "stop")
+	time.Sleep(3 * time.Second)
 
 	for _, name := range pl.Remove {
 		if !validate.IsPlainFileName(name) {
@@ -131,36 +157,14 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		}
 	}
 
-	// Downloads happen before the reinstall so nothing is still arriving when
-	// the reinstall starts the container at the end.
-	installed := 0
-	for _, f := range pl.Install {
-		if !validate.IsPlainFileName(f.FileName) {
-			log.Printf("update_server_version: skipping invalid install name %q", f.FileName)
-			continue
+	for _, sj := range staged {
+		if err := os.Rename(sj.tmp, sj.final); err != nil {
+			// A rename failing after every download succeeded is a filesystem
+			// fault, not a content problem. Say which jar, so the gap in the
+			// mods directory has a name.
+			log.Printf("update_server_version: could not put %s in place: %v", sj.final, err)
 		}
-		if err := validateModrinthURL(f.DownloadURL); err != nil {
-			log.Printf("update_server_version: %v", err)
-			continue
-		}
-		tmpFile, err := resolveWithinDir(modsDir, f.FileName+".part")
-		if err != nil {
-			log.Printf("update_server_version: %v", err)
-			continue
-		}
-		if err := downloadAndVerify(f.DownloadURL, tmpFile, f.SHA512); err != nil {
-			os.Remove(tmpFile)
-			log.Printf("update_server_version: download failed for %s: %v", f.FileName, err)
-			continue
-		}
-		if err := os.Rename(tmpFile, filepath.Join(modsDir, f.FileName)); err != nil {
-			os.Remove(tmpFile)
-			log.Printf("update_server_version: rename %s: %v", f.FileName, err)
-			continue
-		}
-		installed++
 	}
-	log.Printf("update_server_version: %s/%s now has %d of %d new jars in place", pl.UUID, subName, installed, len(pl.Install))
 
 	subServerDir := filepath.Join(serverPath, subName)
 	if err := CleanServerJars(subServerDir); err != nil {
@@ -190,3 +194,44 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	}
 	log.Printf("update_server_version: %s/%s moved and running", pl.UUID, subName)
 }
+
+// stageInstalls fetches and verifies every jar into a ".part" beside its final
+// name, and returns what to rename once the move is committed.
+//
+// All or nothing, and separate from the caller so that is testable: the point of
+// staging is that a fetch which fails costs nothing, and the way that stops being
+// true is a caller that carries on with a partial set. Anything already written
+// is removed before returning the error, so a failed attempt leaves no debris in
+// a directory that is bind-mounted into the tenant's container.
+//
+// fetch is injected for the same reason - the rule worth pinning is what happens
+// when one of them fails, and that must not need a Modrinth to test.
+func stageInstalls(modsDir string, files []versionUpdateFile, fetch func(url, dst, sha512 string) error) ([]stagedJar, error) {
+	staged := make([]stagedJar, 0, len(files))
+	fail := func(err error) ([]stagedJar, error) {
+		for _, sj := range staged {
+			os.Remove(sj.tmp)
+		}
+		return nil, err
+	}
+	for _, f := range files {
+		if !validate.IsPlainFileName(f.FileName) {
+			return fail(fmt.Errorf("refusing invalid install name %q", f.FileName))
+		}
+		if err := validateModrinthURL(f.DownloadURL); err != nil {
+			return fail(err)
+		}
+		tmpFile, err := resolveWithinDir(modsDir, f.FileName+".part")
+		if err != nil {
+			return fail(err)
+		}
+		staged = append(staged, stagedJar{tmp: tmpFile, final: filepath.Join(modsDir, f.FileName)})
+		if err := fetch(f.DownloadURL, tmpFile, f.SHA512); err != nil {
+			return fail(fmt.Errorf("%s could not be fetched: %w", f.FileName, err))
+		}
+	}
+	return staged, nil
+}
+
+// stagedJar is one downloaded-and-verified jar waiting to be renamed into place.
+type stagedJar struct{ tmp, final string }

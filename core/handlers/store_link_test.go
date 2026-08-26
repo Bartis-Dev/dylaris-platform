@@ -142,7 +142,7 @@ func newStoreLinkHandler(fs *storeLinkFakeStore, rdb *redis.Client, withBilling 
 		StoreSharedKey: storeLinkTestKey,
 	}
 	if withBilling {
-		state.Billing = services.NewBillingLifecycleService(fs, services.NewQueueService(rdb), nil, "https://panel.example.com", 48*time.Hour)
+		state.Billing = services.NewBillingLifecycleService(fs, services.NewQueueService(rdb), nil, "https://panel.example.com", 48*time.Hour, true)
 	}
 	return &StoreHandler{state: state}
 }
@@ -345,39 +345,21 @@ func TestProvision_ActionRouting(t *testing.T) {
 		}
 	})
 
-	t.Run("activate with planId also assigns the plan", func(t *testing.T) {
+	// planId is accepted and ignored. Plan tiers are gone, so assigning one
+	// wrote a column no resolver reads while answering the store with success -
+	// a path that reported work it did not do. An older store that still sends
+	// the field must keep working, and what it actually needed all along is the
+	// entitlement, which travels as maxNodes/maxLinks.
+	t.Run("activate with a planId no longer assigns a plan and still succeeds", func(t *testing.T) {
 		fs := &storeLinkFakeStore{users: map[string]*models.User{"u1": {ID: "u1"}}}
 		h := newStoreLinkHandler(fs, newStoreLinkRedis(t), true)
 		rec := httptest.NewRecorder()
 		h.Provision(rec, storeLinkPost("/api/store/provision", map[string]interface{}{"uuid": "u1", "action": "activate", "planId": 7}, storeLinkTestKey))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
-		}
-		if len(fs.setUserPlanCalls) != 1 || fs.setUserPlanCalls[0] != (storeLinkSetPlanCall{"u1", 7}) {
-			t.Fatalf("setUserPlanCalls = %+v, want [{u1 7}]", fs.setUserPlanCalls)
-		}
-	})
-
-	t.Run("activate with planId<=0 does not assign a plan", func(t *testing.T) {
-		fs := &storeLinkFakeStore{users: map[string]*models.User{"u1": {ID: "u1"}}}
-		h := newStoreLinkHandler(fs, newStoreLinkRedis(t), true)
-		rec := httptest.NewRecorder()
-		h.Provision(rec, storeLinkPost("/api/store/provision", map[string]interface{}{"uuid": "u1", "action": "activate", "planId": 0}, storeLinkTestKey))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 		}
 		if len(fs.setUserPlanCalls) != 0 {
-			t.Fatalf("expected no SetUserPlan call for planId<=0, got %+v", fs.setUserPlanCalls)
-		}
-	})
-
-	t.Run("activate returns 500 when SetUserPlan fails", func(t *testing.T) {
-		fs := &storeLinkFakeStore{users: map[string]*models.User{"u1": {ID: "u1"}}, setUserPlanErr: errors.New("db down")}
-		h := newStoreLinkHandler(fs, newStoreLinkRedis(t), true)
-		rec := httptest.NewRecorder()
-		h.Provision(rec, storeLinkPost("/api/store/provision", map[string]interface{}{"uuid": "u1", "action": "activate", "planId": 7}, storeLinkTestKey))
-		if rec.Code != http.StatusInternalServerError {
-			t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+			t.Fatalf("still assigned a plan: %+v", fs.setUserPlanCalls)
 		}
 	})
 

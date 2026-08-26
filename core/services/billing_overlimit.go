@@ -24,9 +24,32 @@ type tenantUsage struct {
 	nodes, nodeLimit   int64
 	links, linkLimit   int64
 	routes, routeLimit int64
+	// entitled is whether the tenant may hold ANY of this. Separate from the
+	// three caps because a cap cannot express it: see over().
+	entitled bool
 }
 
+func (u tenantUsage) holdsAnything() bool {
+	return u.nodes > 0 || u.links > 0 || u.routes > 0
+}
+
+// over reports whether a tenant holds more than they are due.
+//
+// Two questions, and the caps can only answer one of them. A cap of 0 means "no
+// cap", which is right for self-host and for an unmetered tenant - but 0 is also
+// exactly what a cancellation pushes, so reading the caps alone made a tenant
+// who cancelled EVERYTHING permanently within their limits. The entitlement gate
+// stopped them creating anything new; nothing ever took away what they had.
+// Downgrading from five nodes to one was enforced and downgrading to none was
+// not, which is the wrong way round.
+//
+// entitled is resolved from services.EffectiveEntitlement, so it is true for
+// every self-host install (no store, no billing plane, nothing to buy) and this
+// clause never fires there.
 func (u tenantUsage) over() bool {
+	if !u.entitled && u.holdsAnything() {
+		return true
+	}
 	return (u.nodeLimit > 0 && u.nodes > u.nodeLimit) ||
 		(u.linkLimit > 0 && u.links > u.linkLimit) ||
 		(u.routeLimit > 0 && u.routes > u.routeLimit)
@@ -36,6 +59,13 @@ func (u tenantUsage) over() bool {
 // log. Naming only what is wrong keeps a one-node overage from reading like a
 // total failure.
 func (u tenantUsage) describe() string {
+	if !u.entitled && u.holdsAnything() {
+		// No plan at all is one fact, not three dimensions. Listing "3 nodes
+		// (allowed 0)" would read as a cap that was lowered, when what happened
+		// is that the subscription ended.
+		return fmt.Sprintf("%d nodes, %d route-only locations and %d protected addresses with no active plan",
+			u.nodes, u.links, u.routes)
+	}
 	var parts []string
 	if u.nodeLimit > 0 && u.nodes > u.nodeLimit {
 		parts = append(parts, fmt.Sprintf("%d nodes (allowed %d)", u.nodes, u.nodeLimit))
@@ -74,6 +104,24 @@ func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID str
 		return u, err
 	}
 	u.nodeLimit, u.linkLimit = lim.MaxNodes, lim.MaxLinks
+
+	// May they hold ANY of this, which the caps above cannot express: an account
+	// that bought nothing carries the same zeroes as one that bought unlimited.
+	// See over(). This is the same resolver the create paths gate on, so the
+	// sweep and the doors cannot disagree about who is entitled.
+	//
+	// The administrator flag is the SUBJECT's, read from their row - an operator
+	// running the platform is not a customer of it and must never be swept off
+	// their own machines.
+	subjectIsAdmin := false
+	if usr, uerr := s.store.GetUserByID(userID); uerr == nil && usr != nil {
+		subjectIsAdmin = usr.IsAdmin
+	}
+	ent, err := EffectiveEntitlement(s.store, userID, time.Now(), s.storeEnabled, subjectIsAdmin)
+	if err != nil {
+		return u, err
+	}
+	u.entitled = ent.Byon || ent.RouteOnly
 
 	nodes, err := s.store.CountNodesByOwner(userID)
 	if err != nil {

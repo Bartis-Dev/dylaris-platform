@@ -274,7 +274,6 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
-	planID, _ := h.state.Store.GetUserPlanID(userID)
 	get := func(key, def string) string {
 		if v, _ := h.state.Store.GetSetting(key); v != "" {
 			return v
@@ -286,7 +285,6 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 		"status":      b.Status,
 		"graceUntil":  b.GraceUntil,
 		"suspendedAt": b.SuspendedAt,
-		"planId":      planID,
 		"overrides": map[string]interface{}{
 			"gracePeriod":       b.GracePeriod,
 			"r2Retention":       b.R2Retention,

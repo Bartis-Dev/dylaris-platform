@@ -45,7 +45,7 @@ func (h *EntitlementHandler) GetMine(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled)
+	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, IsAdmin(r))
 	if err != nil {
 		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
@@ -57,7 +57,7 @@ func (h *EntitlementHandler) GetMine(w http.ResponseWriter, r *http.Request) {
 // GetForUser GET /api/admin/users/{id}/entitlement - RequireCap("plans.read").
 func (h *EntitlementHandler) GetForUser(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled)
+	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, h.subjectIsAdmin(userID))
 	if err != nil {
 		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
@@ -117,9 +117,21 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 		"expires_at": expires,
 	})
 
-	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled)
+	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, h.subjectIsAdmin(userID))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(entitlementResponse{Success: true, Entitlement: ent})
+}
+
+// subjectIsAdmin answers the entitlement question about the user NAMED IN THE
+// PATH, not about the administrator asking. The caller's own admin flag says
+// nothing about them, and using it here would make every customer's entitlement
+// screen read "unlimited" whenever an admin opened it.
+//
+// A lookup failure answers false: reporting a customer as unlimited because a
+// query failed is the worse of the two wrong answers.
+func (h *EntitlementHandler) subjectIsAdmin(userID string) bool {
+	u, err := h.state.Store.GetUserByID(userID)
+	return err == nil && u != nil && u.IsAdmin
 }
 
 // Revoke DELETE /api/admin/users/{id}/entitlement - RequireCap("plans.write").
@@ -135,7 +147,7 @@ func (h *EntitlementHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	actor, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventEntitlementRevoked, actor, userID, nil)
 
-	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled)
+	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, h.subjectIsAdmin(userID))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(entitlementResponse{Success: true, Entitlement: ent})
 }

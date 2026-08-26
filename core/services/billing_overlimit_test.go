@@ -145,20 +145,40 @@ func TestEnforceEntitlementLimits_Stamping(t *testing.T) {
 // TestTenantUsage_Over pins which dimension trips the sweep, and that 0 keeps
 // meaning UNLIMITED - the same convention the mint gates use. A 0 read as "none
 // allowed" would cut off every tenant on an uncapped platform.
+//
+// Which is why the entitlement is a separate field. The caps cannot say "this
+// tenant may hold nothing", because the value that would mean it is the value
+// that means "no cap". Every case below that is about a CAP therefore sets
+// entitled, and the ones about the entitlement set the caps to zero.
 func TestTenantUsage_Over(t *testing.T) {
 	tests := []struct {
 		name string
 		u    tenantUsage
 		want bool
 	}{
-		{"within every limit", tenantUsage{nodes: 2, nodeLimit: 2, links: 1, linkLimit: 1}, false},
-		{"one node too many", tenantUsage{nodes: 3, nodeLimit: 2}, true},
-		{"one location too many", tenantUsage{links: 2, linkLimit: 1}, true},
-		{"one address too many", tenantUsage{routes: 7, routeLimit: 6}, true},
-		{"a zero node limit is unlimited", tenantUsage{nodes: 99, nodeLimit: 0}, false},
-		{"a zero link limit is unlimited", tenantUsage{links: 99, linkLimit: 0}, false},
-		{"a zero route limit is unlimited", tenantUsage{routes: 99, routeLimit: 0}, false},
-		{"nothing held anywhere", tenantUsage{}, false},
+		{"within every limit", tenantUsage{entitled: true, nodes: 2, nodeLimit: 2, links: 1, linkLimit: 1}, false},
+		{"one node too many", tenantUsage{entitled: true, nodes: 3, nodeLimit: 2}, true},
+		{"one location too many", tenantUsage{entitled: true, links: 2, linkLimit: 1}, true},
+		{"one address too many", tenantUsage{entitled: true, routes: 7, routeLimit: 6}, true},
+		{"a zero node limit is unlimited", tenantUsage{entitled: true, nodes: 99, nodeLimit: 0}, false},
+		{"a zero link limit is unlimited", tenantUsage{entitled: true, links: 99, linkLimit: 0}, false},
+		{"a zero route limit is unlimited", tenantUsage{entitled: true, routes: 99, routeLimit: 0}, false},
+		{"nothing held anywhere", tenantUsage{entitled: true}, false},
+
+		// The hole this closes. A cancellation pushes maxNodes 0, and 0 is
+		// "no cap", so a tenant who cancelled EVERYTHING read as permanently
+		// within their limits: the entitlement gate stopped them creating
+		// anything new and nothing ever took away what they already had.
+		// Downgrading five nodes to one was enforced; downgrading to none
+		// was not.
+		{"no entitlement but still holding nodes", tenantUsage{entitled: false, nodes: 3}, true},
+		{"no entitlement but still holding locations", tenantUsage{entitled: false, links: 1}, true},
+		{"no entitlement but still holding addresses", tenantUsage{entitled: false, routes: 1}, true},
+
+		// And the boundary that keeps it from being a blanket cutoff: holding
+		// nothing is not over anything, so an account that simply never bought
+		// in is never warned or swept.
+		{"no entitlement and holding nothing", tenantUsage{entitled: false}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -172,12 +192,20 @@ func TestTenantUsage_Over(t *testing.T) {
 // TestTenantUsage_Describe proves the warning names only what is actually wrong.
 // A tenant one node over should not read a message implying everything is.
 func TestTenantUsage_Describe(t *testing.T) {
-	one := tenantUsage{nodes: 3, nodeLimit: 2}
+	one := tenantUsage{entitled: true, nodes: 3, nodeLimit: 2}
 	if got := one.describe(); got != "3 nodes (allowed 2)" {
 		t.Fatalf("describe() = %q", got)
 	}
-	both := tenantUsage{nodes: 3, nodeLimit: 2, routes: 7, routeLimit: 6}
+	both := tenantUsage{entitled: true, nodes: 3, nodeLimit: 2, routes: 7, routeLimit: 6}
 	if got := both.describe(); got != "3 nodes (allowed 2) and 7 protected addresses (allowed 6)" {
 		t.Fatalf("describe() = %q", got)
+	}
+	// No plan at all is ONE fact, not three dimensions. Rendering it as
+	// "3 nodes (allowed 0)" would read as a cap somebody lowered, when what
+	// happened is that the subscription ended.
+	none := tenantUsage{entitled: false, nodes: 3, links: 1}
+	want := "3 nodes, 1 route-only locations and 0 protected addresses with no active plan"
+	if got := none.describe(); got != want {
+		t.Fatalf("describe() = %q, want %q", got, want)
 	}
 }

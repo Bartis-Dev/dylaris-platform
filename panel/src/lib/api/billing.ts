@@ -33,7 +33,6 @@ export interface UserBillingAdmin {
     status: BillingStatus;
     graceUntil?: string | null;
     suspendedAt?: string | null;
-    planId?: number | null;
     overrides: UserBillingOverrides;
     defaults: { gracePeriod: string; r2Retention: string; nodeRetention: string; r2QuotaGb: string };
     message?: string;

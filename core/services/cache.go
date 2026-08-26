@@ -67,8 +67,41 @@ func NewCache(bus *redis.Client) *Cache { return &Cache{bus: bus} }
 // Reconfigure points the cache at a dedicated endpoint, or back at the bus when
 // cfg carries no address. It dials and pings before swapping, so a bad address
 // is reported to the caller instead of silently disabling the cache.
+//
+// A failed ping changes NOTHING: this is the save path, and refusing to store an
+// endpoint that does not answer is the whole point of it. Boot is a different
+// question - see Adopt.
 func (c *Cache) Reconfigure(ctx context.Context, cfg CacheConfig) error {
+	return c.point(ctx, cfg, false)
+}
+
+// Adopt points the cache at a configuration that is ALREADY STORED, whether or
+// not the endpoint answers right now. It is the boot path.
+//
+// The difference from Reconfigure is the whole reason it exists. Reconfigure
+// leaves state untouched when the ping fails, which is right when an operator is
+// typing an address - and wrong at boot, where it silently left cfg unset and so
+// sent every cached Modrinth response to the control-plane Redis. That is exactly
+// what an operator who configured a dedicated cache moved it away from, and the
+// contract in client() below promises it does not happen. It held after a save
+// and not after a restart.
+//
+// It was also invisible: the settings screen renders the address from the
+// SETTINGS while Status() reports on c.cfg, so the page showed the dedicated host
+// next to a green healthy tick that had pinged the bus.
+//
+// The client is kept even when the ping fails. go-redis dials lazily per command,
+// so an endpoint that was down at boot starts working on its own once it is back,
+// and the caches degrade to misses in the meantime - which is what they already
+// do for an endpoint that dies after a successful configure. One behaviour, not
+// two.
+func (c *Cache) Adopt(ctx context.Context, cfg CacheConfig) error {
+	return c.point(ctx, cfg, true)
+}
+
+func (c *Cache) point(ctx context.Context, cfg CacheConfig, keepUnreachable bool) error {
 	var next *redis.Client
+	var pingErr error
 	if cfg.Configured() {
 		opts := &redis.Options{
 			Addr:     strings.TrimSpace(cfg.Addr),
@@ -92,8 +125,11 @@ func (c *Cache) Reconfigure(ctx context.Context, cfg CacheConfig) error {
 		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if err := next.Ping(pingCtx).Err(); err != nil {
-			_ = next.Close()
-			return fmt.Errorf("cache redis at %s: %w", cfg.Addr, err)
+			pingErr = fmt.Errorf("cache redis at %s: %w", cfg.Addr, err)
+			if !keepUnreachable {
+				_ = next.Close()
+				return pingErr
+			}
 		}
 	}
 
@@ -106,7 +142,9 @@ func (c *Cache) Reconfigure(ctx context.Context, cfg CacheConfig) error {
 	if old != nil {
 		_ = old.Close()
 	}
-	return nil
+	// Adopted, and still reported: the caller logs it, and Status() now says
+	// "dedicated, not answering" instead of describing the bus.
+	return pingErr
 }
 
 // client returns the endpoint to use, or nil when there is none.

@@ -254,7 +254,12 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UUID   string `json:"uuid"`
 		Action string `json:"action"`
-		PlanID *int   `json:"planId,omitempty"`
+		// planId is deliberately not read any more. Plan tiers are gone; nothing
+		// resolves a plan, so assigning one wrote a column no reader consults
+		// while answering the store with success. A field that is silently
+		// ignored is better than one that reports work it did not do - and an
+		// older store that still sends it now gets the entitlement applied from
+		// maxNodes/maxLinks below, which is what it always actually needed.
 		// MaxNodes/MaxLinks carry the PURCHASED entitlement. The store sells a node
 		// COUNT (quantity x per-node price), not one of Core's plans, so the number
 		// the customer paid for arrives here rather than as a planId. Omitted =
@@ -292,12 +297,6 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		if err := h.state.Billing.Reactivate(req.UUID); err != nil {
 			sendJSONError(w, "Failed to activate billing", http.StatusInternalServerError)
 			return
-		}
-		if req.PlanID != nil && *req.PlanID > 0 {
-			if err := h.state.Store.SetUserPlan(req.UUID, req.PlanID); err != nil {
-				sendJSONError(w, "Activated but failed to assign plan", http.StatusInternalServerError)
-				return
-			}
 		}
 		nodes, setNodes, nerr := parseEntitlement(req.MaxNodes)
 		links, setLinks, lerr := parseEntitlement(req.MaxLinks)

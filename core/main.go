@@ -260,7 +260,7 @@ func main() {
 	// that is silently absent only shows up as a slower panel.
 	appState.Cache = services.NewCache(redisClient)
 	if err := appState.ApplyCacheSettings(context.Background()); err != nil {
-		log.Printf("mod metadata cache: keeping the default Redis: %v", err)
+		log.Printf("mod metadata cache: the configured endpoint is not answering yet, so nothing is cached until it does (it is NOT falling back to the panel Redis): %v", err)
 	}
 
 	// In-panel cross-database migration. The source is THIS Core's live DB,
@@ -372,7 +372,7 @@ func main() {
 	// window has elapsed into suspended (hard cutoff deferred to SuspendGrace
 	// later, keeps data). Payment-provider-agnostic; handlers/webhooks call
 	// EnterPastDue/Reactivate/Suspend.
-	appState.Billing = services.NewBillingLifecycleService(pgStore, appState.Queue, grpcRegistry, cfg.FrontendURL, cfg.SuspendGrace)
+	appState.Billing = services.NewBillingLifecycleService(pgStore, appState.Queue, grpcRegistry, cfg.FrontendURL, cfg.SuspendGrace, cfg.StoreEnabled)
 	appState.Billing.SetLeader(coreLeader)
 	// Start() is deferred until after SetLinkACL below, so the ticker can never run
 	// a suspend before the link teardown dependencies are wired.

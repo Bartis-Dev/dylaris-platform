@@ -82,6 +82,7 @@ func purchasedKind(byon, routeOnly bool) string {
 //
 // The rules, in order:
 //
+//  0. An administrator is not a customer and is entitled to everything.
 //  1. A suspended tenant gets nothing, whatever they hold. Suspension is a hard
 //     stop; an admin who wants to restore access sets the status back to active.
 //     (past_due is NOT a stop - that is what the grace window is for.)
@@ -106,7 +107,18 @@ func purchasedKind(byon, routeOnly bool) string {
 //
 // Callers must gate this behind feature_byon_enabled; with BYON off none of it
 // is meaningful.
-func EffectiveEntitlement(st entitlementStore, userID string, now time.Time, storeEnabled bool) (Entitlement, error) {
+func EffectiveEntitlement(st entitlementStore, userID string, now time.Time, storeEnabled, isAdmin bool) (Entitlement, error) {
+	// 0. An administrator is not a customer. They run the platform, the store
+	// has nothing to sell them, and canManageNode already reads admin exactly
+	// this way. Without this the owner of a hosted install cannot mint an enroll
+	// token or a warp key for their own machine without first selling themselves
+	// a subscription, and the over-limit sweep would eventually stop anything
+	// they had enrolled under their own account. Checked before the store is
+	// even read, because none of it applies to them.
+	if isAdmin {
+		return Entitlement{Byon: true, RouteOnly: true, Source: EntitlementSourceUnlimited}, nil
+	}
+
 	billing, err := st.GetUserBilling(userID)
 	if err != nil {
 		return Entitlement{}, err
