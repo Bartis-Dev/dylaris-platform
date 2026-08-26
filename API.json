@@ -3821,6 +3821,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/settings/gateway/dns/probe",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write.",
+      "handler": "GatewayDNSHandler.Probe",
+      "group": "settings",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/settings/gateway/hub-redis-admin",
       "auth": "session",
@@ -4157,6 +4167,16 @@
       "authorization": "settings.write",
       "description": "adds a reusable storage connection.",
       "handler": "StorageConnectionsHandler.CreateConnection",
+      "group": "storage-connections",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/storage-connections/test",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "Runs the same probe against a connection that has NOT been saved.",
+      "handler": "StorageConnectionsHandler.TestDraftConnection",
       "group": "storage-connections",
       "external": false
     },
@@ -4752,10 +4772,10 @@
     }
   ],
   "counts": {
-    "total": 475,
+    "total": 477,
     "byAuth": {
       "none": 36,
-      "session": 426,
+      "session": 428,
       "user API key": 10,
       "warp key": 3
     },
@@ -4788,14 +4808,14 @@
       "scheduled-tasks": 1,
       "server-roles": 4,
       "servers": 70,
-      "settings": 30,
+      "settings": 31,
       "setup": 2,
       "share": 1,
       "solder": 12,
       "sse-ticket": 1,
       "status": 1,
       "storage": 1,
-      "storage-connections": 5,
+      "storage-connections": 6,
       "store": 6,
       "system": 4,
       "tabproxy": 3,

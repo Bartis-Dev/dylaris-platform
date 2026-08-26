@@ -45,7 +45,10 @@ const FILE_OPTIONS: ModeOption<FileAccessMode>[] = [
 const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
     { id: 'gateway', label: 'Gateway', icon: Router },
     { id: 'xdp', label: 'DDoS Protection', icon: Shield },
-    { id: 'hub', label: 'Hub Admin', icon: KeyRound },
+    // Not the Hub's own web interface, which is off by default and stays off.
+    // This mints the Redis ACL user the Hub needs to reach Core's Redis at all,
+    // which is how a Hub deployed alongside the platform is bootstrapped.
+    { id: 'hub', label: 'Hub Redis access', icon: KeyRound },
 ];
 
 // ─────────────────────────────────────────────
@@ -759,7 +762,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 
             {/* DNS & Domains check — verify the records derived from the
                 hoster domains / CNAME target / panel URL configured above. */}
-            <GatewayDnsCard showToast={showToast} />
+            <GatewayDnsCard />
 
             <DnsCheckCard />
 
@@ -1341,8 +1344,16 @@ function HubAdminPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =
     return (
         <div className="space-y-6">
             <div>
-                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Hub Admin Redis User</h2>
-                <p className="text-sm text-(--base-07)">Create the gateway Hub&apos;s admin Redis ACL user (<span className="font-mono">gw-hub-admin</span>, full rights) and reveal its password once.</p>
+                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Hub Redis access</h2>
+                <p className="text-sm text-(--base-07)">
+                    The gateway Hub reaches this platform through Redis, and needs its own account
+                    to do it. This creates that account (<span className="font-mono">gw-hub-admin</span>)
+                    and shows the password once, ready to paste into the Hub&apos;s deployment.
+                </p>
+                <p className="text-xs text-(--base-06) mt-1.5">
+                    Nothing to do with the Hub&apos;s own web interface, which is off by default and
+                    can stay off - this is the credential, not a login.
+                </p>
             </div>
 
             {/* Same-instance notice */}

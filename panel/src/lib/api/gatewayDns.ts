@@ -104,3 +104,38 @@ export function parseZones(raw: string): string[] {
         .map(z => z.trim().toLowerCase())
         .filter(z => z.length > 0);
 }
+
+// One credential probe, as the gateway reported it. The shape belongs to the
+// gateway; Core relays it.
+export interface GatewayDnsProbe {
+    ok: boolean;
+    // False means the provider cannot list zones AT ALL. That is a property of
+    // the provider, not a fault in the credential, and must not be rendered as
+    // one - the remedy is to name the zones by hand, not to mint a new token.
+    zone_listing: boolean;
+    zones?: string[];
+    message: string;
+}
+
+export interface GatewayDnsProbeResponse {
+    success: boolean;
+    available?: boolean;
+    probe?: GatewayDnsProbe;
+    message?: string;
+}
+
+// Try a credential without storing it. Blank token = test the stored one, which
+// is how a configuration is re-checked without retyping a secret the form never
+// shows back.
+export async function probeGatewayDns(provider: string, token: string): Promise<GatewayDnsProbeResponse> {
+    try {
+        const res = await fetch(`${API_URL}/settings/gateway/dns/probe`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, token }),
+        });
+        return (await handleResponse(res)) as GatewayDnsProbeResponse;
+    } catch (err) {
+        return handleError(err) as GatewayDnsProbeResponse;
+    }
+}

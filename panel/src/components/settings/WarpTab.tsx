@@ -15,6 +15,7 @@ import type { DeployPlatform } from '@/lib/warpDeploy';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { API_URL } from '@/lib/api/core';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import HelpTip from '@/components/ui/HelpTip';
 
 const enrollUrl = API_URL.replace(/\/api\/?$/, '');
 
@@ -198,7 +199,10 @@ export default function WarpTab() {
         if (!form.name.trim()) { showToast('Name required', false); return; }
         setMinting(true);
         const res = await mintWarpKey({
-            name: form.name.trim(), policy: form.policy, max_conns: form.max_conns,
+            name: form.name.trim(), policy: form.policy,
+            // A fixed key is enforced at 1 at enrol regardless. Sending the form
+            // value stored a row that disagreed with what actually happens.
+            max_conns: form.policy === 'fixed' ? 1 : form.max_conns,
             on_new_conn: form.on_new_conn, region: form.region,
         });
         setMinting(false);
@@ -394,23 +398,65 @@ export default function WarpTab() {
                             </select>
                         </div>
                         <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">Policy</label>
-                            <select className="input-field" value={form.policy} onChange={e => setForm(f => ({ ...f, policy: e.target.value as 'fixed' | 'general' }))}>
+                            <label className="input-label flex items-center gap-1.5">
+                                Policy
+                                <HelpTip label="About the enrollment policy">
+                                    <p className="mb-2">
+                                        This decides <strong>where the ceiling is</strong>, and nothing else.
+                                    </p>
+                                    <p className="mb-2">
+                                        <strong>Fixed</strong> is a hard limit of one machine that cannot be
+                                        raised later - to allow a second, mint a new key.
+                                        <strong> General</strong> uses the number in Max connections, and it
+                                        can be edited afterwards.
+                                    </p>
+                                    <p>
+                                        What happens once the ceiling is reached is the separate setting
+                                        beside it, and it applies to both.
+                                    </p>
+                                </HelpTip>
+                            </label>
+                            {/* The description used to promise that a fixed key
+                                "can be pinned to a fixed overlay IP". Core does
+                                accept fixed_wg_ip at mint, but this form has
+                                never sent it and there is no field for it, so
+                                the one advertised reason to choose Fixed was
+                                unreachable. Fixed is a hard limit of 1; that is
+                                the whole of it. */}
+                            <select className="input-field" value={form.policy} onChange={e => setForm(f => ({ ...f, policy: e.target.value as 'fixed' | 'general', max_conns: e.target.value === 'fixed' ? 1 : f.max_conns }))}>
                                 <option value="general">General (several machines)</option>
                                 <option value="fixed">Fixed (exactly one machine)</option>
                             </select>
                             <p className="text-[11px] text-(--base-06)">
                                 {form.policy === 'fixed'
-                                    ? 'One machine only, and it can be pinned to a fixed overlay IP. For a known host that must always land on the same address.'
+                                    ? 'A hard limit of one machine that cannot be raised later. To allow a second, mint another key.'
                                     : 'Several machines may join with this one key, each running its own warp client. A machine cannot share its tunnel with others, so one slot = one machine.'}
                             </p>
                         </div>
                         {form.policy === 'general' && (
                             <div className="flex flex-col gap-[5px]">
-                                <label className="input-label">Max Connections</label>
+                                <label className="input-label flex items-center gap-1.5">
+                                    Max connections
+                                    <HelpTip label="About max connections">
+                                        <p className="mb-2">
+                                            The number of <strong>enrolled machines</strong> this one key may
+                                            hold at once - one per WireGuard public key. Not tunnels, not
+                                            servers, and not a per-node number: it belongs to the key.
+                                        </p>
+                                        <p className="mb-2">
+                                            Re-enrolling a machine that is already here costs nothing; it
+                                            keeps the slot it has.
+                                        </p>
+                                        <p>
+                                            Checked at the moment a machine joins, under a cluster-wide lock,
+                                            so two machines joining at the same instant cannot both slip past
+                                            the last free slot.
+                                        </p>
+                                    </HelpTip>
+                                </label>
                                 <input type="number" min={1} className="input-field" value={form.max_conns} onChange={e => setForm(f => ({ ...f, max_conns: parseInt(e.target.value) || 1 }))} />
                                 <p className="text-[11px] text-(--base-06)">
-                                    How many machines (WireGuard keys) may be enrolled on this key at the same time. Fixed always means 1.
+                                    How many machines (WireGuard keys) may be enrolled on this key at the same time.
                                 </p>
                             </div>
                         )}
@@ -420,15 +466,39 @@ export default function WarpTab() {
                             It used to render only for fixed, which made a
                             general key with kill_old impossible to create. */}
                         <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">When the limit is reached</label>
+                            <label className="input-label flex items-center gap-1.5">
+                                When the limit is reached
+                                <HelpTip label="About the limit behaviour">
+                                    <p className="mb-2">
+                                        This decides <strong>what happens at the ceiling</strong>, and applies
+                                        to both policies.
+                                    </p>
+                                    <p className="mb-2">
+                                        <strong>Refuse</strong> turns the new machine away with an error it
+                                        can read, and everything already connected keeps running.
+                                    </p>
+                                    <p>
+                                        <strong>Disconnect the first</strong> removes the machine that
+                                        enrolled EARLIEST from every leader and gives the new one its slot.
+                                        Order of enrolment, not activity - the evicted machine may be the
+                                        busy one.
+                                    </p>
+                                </HelpTip>
+                            </label>
                             <select className="input-field" value={form.on_new_conn} onChange={e => setForm(f => ({ ...f, on_new_conn: e.target.value as 'kill_old' | 'block' }))}>
                                 <option value="block">Refuse the new machine</option>
-                                <option value="kill_old">Disconnect the oldest machine</option>
+                                <option value="kill_old">Disconnect the first machine that joined</option>
                             </select>
+                            {/* The old wording promised "the longest-idle
+                                machine". The eviction is ORDER BY id, i.e. the
+                                earliest enrolled, and warp_peers records no
+                                last-seen time to sort by instead. Saying which
+                                one actually goes matters: it can be the machine
+                                someone is playing on. */}
                             <p className="text-[11px] text-(--base-06)">
                                 {form.on_new_conn === 'block'
                                     ? 'A further machine is turned away and the existing ones keep running.'
-                                    : 'The longest-idle machine is removed from every leader and the new one takes its slot.'}
+                                    : 'The machine that enrolled first is removed from every leader and the new one takes its slot. That is by join order, not by how busy it is.'}
                             </p>
                         </div>
                     </div>

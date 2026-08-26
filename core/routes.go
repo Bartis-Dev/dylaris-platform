@@ -329,18 +329,21 @@ var requiredCaps = map[string]string{
 	"/api/settings/filemanager":                       "settings.read",
 	"/api/settings/gateway":                           "settings.read",
 	"/api/settings/gateway/dns":                       "settings.read",
-	"/api/settings/gateway/hub-redis-admin":           "settings.read",
-	"/api/settings/gateway/hub-redis-admin/roll":      "settings.write",
-	"/api/settings/placement":                         "settings.read",
-	"/api/admin/servers/{id:[0-9]+}/demo":             "settings.write",
-	"/api/admin/settings/demo-account":                "settings.read",
-	"/api/settings/servers":                           "settings.read",
-	"/api/settings/backup":                            "settings.read",
-	"/api/settings/warp-firewall":                     "settings.read",
-	"/api/admin/settings/security-questions-pool":     "settings.read",
-	"/api/admin/settings/auth":                        "settings.read",
-	"/api/admin/settings/smtp":                        "settings.read",
-	"/api/admin/settings/smtp/test":                   "settings.write",
+	// settings.write, not read: it sends an operator-supplied credential to a
+	// third-party DNS API.
+	"/api/settings/gateway/dns/probe":             "settings.write",
+	"/api/settings/gateway/hub-redis-admin":       "settings.read",
+	"/api/settings/gateway/hub-redis-admin/roll":  "settings.write",
+	"/api/settings/placement":                     "settings.read",
+	"/api/admin/servers/{id:[0-9]+}/demo":         "settings.write",
+	"/api/admin/settings/demo-account":            "settings.read",
+	"/api/settings/servers":                       "settings.read",
+	"/api/settings/backup":                        "settings.read",
+	"/api/settings/warp-firewall":                 "settings.read",
+	"/api/admin/settings/security-questions-pool": "settings.read",
+	"/api/admin/settings/auth":                    "settings.read",
+	"/api/admin/settings/smtp":                    "settings.read",
+	"/api/admin/settings/smtp/test":               "settings.write",
 
 	// Phase 4 Task 18: gateway/warp topology + dns + infrastructure oversight
 	// (PANEL topology.*). /api/warp/enroll, /api/warp/assignment, /api/warp/link-boot
@@ -1435,6 +1438,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// forward the panel's form; Core holds no copy. See handlers/gateway_dns.go.
 	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayDNSHandler.Get))).Methods("GET")
 	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayDNSHandler.Save))).Methods("PUT")
+	api.HandleFunc("/settings/gateway/dns/probe", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayDNSHandler.Probe))).Methods("POST")
 	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(hubRedisAdminHandler.GetStatus))).Methods("GET")
 	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Provision))).Methods("POST")
 	api.HandleFunc("/settings/gateway/hub-redis-admin/roll", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Roll))).Methods("POST")

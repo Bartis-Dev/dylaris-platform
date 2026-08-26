@@ -115,7 +115,78 @@ func (h *GatewayDNSHandler) Save(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Probe POST /api/settings/gateway/dns/probe - PANEL settings.write.
+//
+// Asks the Hub to try the credential and report which zones it can see. It
+// stores nothing, which is the point: the credential is the one part of a DNS
+// configuration that cannot be checked by reading it back, and the only way to
+// find out whether it worked used to be to save it, switch record writing on,
+// and wait for a reconciler tick that either wrote something or logged a failure
+// nobody was watching.
+//
+// settings.write rather than settings.read because it sends an
+// operator-supplied credential to a third-party API.
+func (h *GatewayDNSHandler) Probe(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	var req struct {
+		Provider string `json:"provider"`
+		// Empty means "use the stored one", so a re-check does not need a secret
+		// that no screen ever shows back.
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		dnsError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	raw, ok := h.callHub(w, r, map[string]any{
+		"action":   "probe",
+		"provider": strings.TrimSpace(req.Provider),
+		"token":    req.Token,
+	})
+	if !ok {
+		return
+	}
+
+	// The verdict's shape belongs to the gateway, so it is relayed rather than
+	// re-declared here - the same reason cert_status is a json.RawMessage.
+	var probe json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		dnsError(w, http.StatusBadGateway, "the gateway hub's answer could not be read")
+		return
+	}
+	dnsJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"available": true,
+		"probe":     probe,
+	})
+}
+
 func (h *GatewayDNSHandler) forward(w http.ResponseWriter, r *http.Request, body map[string]any) {
+	raw, ok := h.callHub(w, r, body)
+	if !ok {
+		return
+	}
+	var cfg dnsConfigPayload
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		dnsError(w, http.StatusBadGateway, "the gateway hub's answer could not be read")
+		return
+	}
+	dnsJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"available": true,
+		"config":    cfg,
+	})
+}
+
+// callHub signs and posts one request to the Hub and returns its body.
+//
+// It writes the response itself on every failure - including the
+// no-gateway-configured case, which is a successful "not available" rather than
+// an error - and reports ok=false so the caller simply returns. Split out of
+// forward() when the probe needed the same transport with a different answer
+// shape; there is one place that knows how to talk to the Hub.
+func (h *GatewayDNSHandler) callHub(w http.ResponseWriter, r *http.Request, body map[string]any) ([]byte, bool) {
 	hubURL := strings.TrimSpace(h.state.GatewayHubURL)
 	if hubURL == "" {
 		// Not an error. A platform-only install has no gateway and no records to
@@ -125,11 +196,11 @@ func (h *GatewayDNSHandler) forward(w http.ResponseWriter, r *http.Request, body
 			"success":   true,
 			"available": false,
 		})
-		return
+		return nil, false
 	}
 	if h.state.ClusterSecret == "" {
 		dnsError(w, http.StatusServiceUnavailable, "CLUSTER_SECRET is not configured")
-		return
+		return nil, false
 	}
 
 	ts := time.Now().Unix()
@@ -140,7 +211,7 @@ func (h *GatewayDNSHandler) forward(w http.ResponseWriter, r *http.Request, body
 	payload, err := json.Marshal(body)
 	if err != nil {
 		dnsError(w, http.StatusInternalServerError, "could not build the request")
-		return
+		return nil, false
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), dnsForwardTimeout)
@@ -149,21 +220,21 @@ func (h *GatewayDNSHandler) forward(w http.ResponseWriter, r *http.Request, body
 		strings.TrimRight(hubURL, "/")+"/internal/dns-config", bytes.NewReader(payload))
 	if err != nil {
 		dnsError(w, http.StatusInternalServerError, "could not build the request")
-		return
+		return nil, false
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		dnsError(w, http.StatusBadGateway, "the gateway hub did not answer")
-		return
+		return nil, false
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if err != nil {
 		dnsError(w, http.StatusBadGateway, "the gateway hub's answer could not be read")
-		return
+		return nil, false
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -179,19 +250,10 @@ func (h *GatewayDNSHandler) forward(w http.ResponseWriter, r *http.Request, body
 			msg = fmt.Sprintf("the gateway hub returned %d", resp.StatusCode)
 		}
 		dnsError(w, http.StatusBadRequest, msg)
-		return
+		return nil, false
 	}
 
-	var cfg dnsConfigPayload
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		dnsError(w, http.StatusBadGateway, "the gateway hub's answer could not be read")
-		return
-	}
-	dnsJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"available": true,
-		"config":    cfg,
-	})
+	return raw, true
 }
 
 // hubProof reproduces the gateway's proof-of-possession:

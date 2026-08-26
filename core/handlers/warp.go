@@ -228,6 +228,14 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	if req.MaxConns < 1 {
 		req.MaxConns = 1
 	}
+	// A fixed key is enforced at 1 regardless of what was stored (see
+	// services/warp.go: policy "fixed" sets limit = 1). Storing anything else
+	// leaves a row that disagrees with what actually happens at enrol, which is
+	// what a "max 5" fixed key looked like in the list while the second machine
+	// was being refused.
+	if req.Policy == "fixed" {
+		req.MaxConns = 1
+	}
 	// A pinned fixed overlay IP must be a legitimate host inside a known region's
 	// subnet. Reject early so a junk key is never stored (the enroll path re-checks).
 	if req.FixedWGIP != "" {
