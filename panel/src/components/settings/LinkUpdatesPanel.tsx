@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     getLinkUpdateSettings, saveLinkUpdateSettings, getLinkUpdateStates, triggerLinkUpdate,
     getNodes, type LinkUpdatePolicy, type LinkUpdateSettings, type NodeLinkState, type Node,
@@ -8,7 +8,8 @@ import {
 import Select from '@/components/ui/Select';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { SkeletonCard } from '@/components/Skeleton';
-import { RefreshCw, Save, CircleCheck, AlertTriangle, Link2 } from 'lucide-react';
+import { RefreshCw, CircleCheck, AlertTriangle, Link2 } from 'lucide-react';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 const POLICY_OPTIONS: { value: LinkUpdatePolicy; label: string }[] = [
     { value: 'auto_idle', label: 'When idle — apply once no players are connected' },
@@ -31,8 +32,17 @@ export default function LinkUpdatesPanel({ showToast }: Props) {
         setNodes(Array.isArray(n) ? n : []);
     }, []);
 
+    // What was last loaded or saved. This panel is a two-field form with a Save
+    // and no dirty tracking; the Apply buttons below it are actions and stay
+    // immediate with their confirmation.
+    const snapshotRef = useRef<LinkUpdateSettings | null>(null);
+
     useEffect(() => {
-        getLinkUpdateSettings().then(s => setSettings(s ?? { policy: 'auto_idle', intervalMinutes: 15 }));
+        getLinkUpdateSettings().then(s => {
+            const stored = s ?? { policy: 'auto_idle' as const, intervalMinutes: 15 };
+            setSettings(stored);
+            snapshotRef.current = stored;
+        });
         loadStates();
         // The node reports on its heartbeat, so a freshly applied update shows up
         // within a beat rather than instantly. Poll gently instead of pretending.
@@ -45,8 +55,20 @@ export default function LinkUpdatesPanel({ showToast }: Props) {
         setSaving(true);
         const res = await saveLinkUpdateSettings(settings);
         setSaving(false);
+        if (res) snapshotRef.current = settings;
         showToast(res ? 'Link update policy saved' : 'Could not save the Link update policy', !!res);
     };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
+
+    useUnsavedChanges({
+        dirty,
+        saving,
+        save,
+        discard: () => { if (snapshotRef.current) setSettings(snapshotRef.current); },
+    });
 
     const apply = async (nodeId?: string) => {
         const label = nodeId ? `node ${nodeId}` : 'every node with a pending update';
@@ -113,15 +135,6 @@ export default function LinkUpdatesPanel({ showToast }: Props) {
                     </label>
                 </div>
 
-                <div className="mt-4 flex justify-end">
-                    <button
-                        onClick={save}
-                        disabled={saving}
-                        className="inline-flex items-center gap-2 rounded-lg bg-(--accent) px-3.5 py-2 text-sm font-medium text-(--base-00) transition hover:bg-(--accent-light) disabled:opacity-50"
-                    >
-                        <Save size={14} /> {saving ? 'Saving…' : 'Save'}
-                    </button>
-                </div>
             </div>
 
             <div className="rounded-xl border border-(--base-03) bg-(--base-01) p-5">

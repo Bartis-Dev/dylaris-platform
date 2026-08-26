@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     getNodes, Node,
     getPlacementSettings, savePlacementSettings, PlacementSettings,
@@ -20,6 +20,7 @@ import StoragePlacement from '@/components/StoragePlacement';
 import LinkUpdatesPanel from '@/components/settings/LinkUpdatesPanel';
 import Tabs from '@/components/ui/Tabs';
 import { useTabParam } from '@/lib/useTabParam';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { toast } from '@/components/ui/Toast';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
@@ -837,10 +838,18 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    // Fifteen fields with no dirty tracking: clicking another tab dropped the
+    // lot without a word. The per-node editors above keep their Cancel/Save,
+    // because entering edit mode on a row and committing or cancelling it is the
+    // same shape as a dialog. This is not that - it is a page of fields.
+    const snapshotRef = useRef<PlacementSettings | null>(null);
 
     useEffect(() => {
         getPlacementSettings().then(res => {
-            if (res.success && res.settings) setSettings(res.settings);
+            if (res.success && res.settings) {
+                setSettings(res.settings);
+                snapshotRef.current = res.settings;
+            }
             setLoading(false);
         });
     }, []);
@@ -849,8 +858,20 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
         setSaving(true);
         const res = await savePlacementSettings(settings);
         setSaving(false);
+        if (res.success) snapshotRef.current = settings;
         showToast(res.success ? 'Placement settings saved.' : (res.message || 'Save failed.'), res.success);
     };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
+
+    useUnsavedChanges({
+        dirty,
+        saving,
+        save: handleSave,
+        discard: () => { if (snapshotRef.current) setSettings(snapshotRef.current); },
+    });
 
     if (loading) return (
         <div className="space-y-6">
@@ -1106,12 +1127,6 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
             </div>
 
-            <div className="flex gap-3 pt-2">
-                <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-40">
-                    <Save size={14} />
-                    {saving ? 'Saving...' : 'Save Settings'}
-                </button>
-            </div>
         </div>
     );
 }
