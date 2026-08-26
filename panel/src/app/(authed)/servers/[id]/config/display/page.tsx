@@ -10,6 +10,7 @@ import { API_URL, getAuthHeader } from '@/lib/api/core';
 import { parseProperties, serializeProperties } from '@/lib/properties-codec';
 import { toast } from '@/components/ui/Toast';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import SettingsCard from '@/components/settings/SettingsCard';
 import {
     parseMotd, motdVisibleLengths, insertMotdCode,
     MOTD_COLORS, MOTD_STYLES, MOTD_MAX_LINES, MOTD_SOFT_LINE_LIMIT,
@@ -248,21 +249,12 @@ export default function ServerConfigDisplayPage() {
     return (
         <div className="max-w-3xl space-y-6">
             {/* MOTD */}
-            <section className="card p-5 space-y-4">
-                <header className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
-                        <MessageSquare size={16} className="text-(--accent-light)" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                        <h2 className="text-base font-display font-semibold text-(--base-09)">MOTD</h2>
-                        <p className="text-xs text-(--base-06) mt-0.5">
-                            Two lines, shown in the multiplayer server list. Click a colour or a style to
-                            insert its code at the cursor; a colour also clears the styles before it, exactly
-                            as the game does. Requires a server restart to take effect.
-                        </p>
-                    </div>
-                </header>
-
+            <SettingsCard
+                title="MOTD"
+                icon={MessageSquare}
+                form={{ dirty: motdDirty, saving: savingMotd, save: handleSaveMotd, discard: () => setMotd(motdInitial) }}
+                description="Two lines, shown in the multiplayer server list. Click a colour or a style to insert its code at the cursor; a colour also clears the styles before it, exactly as the game does. Requires a server restart to take effect."
+            >
                 {/* Toolbar. The codes are typeable by hand and always were -
                     this is so nobody has to remember that &o is italic. */}
                 <div className="space-y-2">
@@ -361,22 +353,19 @@ export default function ServerConfigDisplayPage() {
                     </div>
                 </div>
 
-            </section>
+            </SettingsCard>
 
-            {/* Server Icon */}
-            <section className="card p-5 space-y-4">
-                <header className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
-                        <ImageIcon size={16} className="text-(--accent-light)" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                        <h2 className="text-base font-display font-semibold text-(--base-09)">Server Icon</h2>
-                        <p className="text-xs text-(--base-06) mt-0.5">
-                            64×64 PNG, max 1 MB. Stored as <code className="font-mono">{activeSubServer}/server-icon.png</code>.
-                            Requires a server restart to take effect.
-                        </p>
-                    </div>
-                </header>
+            {/* Server Icon. Uploads on pick, so it owns no form and shows no
+                save: there is nothing pending for a button to commit. */}
+            <SettingsCard
+                title="Server icon"
+                icon={ImageIcon}
+                description={<>
+                    64x64 PNG, max 1 MB. Stored as{' '}
+                    <code className="font-mono">{activeSubServer}/server-icon.png</code>.
+                    Requires a server restart to take effect.
+                </>}
+            >
 
                 <div className="flex items-center gap-4">
                     <div className="w-16 h-16 rounded-md border border-(--base-04) bg-(--base-02) flex items-center justify-center overflow-hidden shrink-0">
@@ -422,7 +411,7 @@ export default function ServerConfigDisplayPage() {
                         </button>
                     </div>
                 </div>
-            </section>
+            </SettingsCard>
 
             {/* Edge MOTD (transitional). Only the gateway edge can answer a ping
                 for a server whose container is not running - it is the thing
@@ -430,20 +419,17 @@ export default function ServerConfigDisplayPage() {
                 listener at all while the server is down, so the whole card would
                 configure something nothing reads. */}
             {gatewayEnabled && (
-            <section className="card p-5 space-y-4">
-                <header className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
-                        <Globe size={16} className="text-(--accent-light)" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                        <h2 className="text-base font-display font-semibold text-(--base-09)">Edge MOTD (transitional)</h2>
-                        <p className="text-xs text-(--base-06) mt-0.5">
-                            What players see via the gateway edge while the server is down, starting, or migrating.
-                            Applies when gateway routing is enabled. Takes effect within a few seconds, no restart needed.
-                        </p>
-                    </div>
-                </header>
-
+            <SettingsCard
+                title="Edge MOTD (transitional)"
+                icon={Globe}
+                form={{
+                    dirty: edgeMotdDirty,
+                    saving: savingEdgeMotd,
+                    save: handleSaveEdgeMotd,
+                    discard: () => { setEdgeMotdMode(edgeMotdInitial.mode); setEdgeMotdText(edgeMotdInitial.text); },
+                }}
+                description="What players see via the gateway edge while the server is down, starting, or migrating. Applies when gateway routing is enabled. Takes effect within a few seconds, no restart needed."
+            >
                 <div className="flex flex-col gap-[5px] max-w-xs">
                     <label className="mono-label">Mode</label>
                     <select
@@ -475,8 +461,7 @@ export default function ServerConfigDisplayPage() {
                         </p>
                     </div>
                 )}
-
-            </section>
+            </SettingsCard>
             )}
 
         </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Pencil, X, Cloud, Save, Cable } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, Cloud, Save, Cable, Database } from 'lucide-react';
 import {
     StorageConnection,
     StorageConnectionConfig,
@@ -14,6 +14,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import Switch from '@/components/ui/Switch';
 import HelpPanel, { HelpPanelButton, useHelpPanel, type HelpEntry } from '@/components/ui/HelpPanel';
+import SettingsPage from '@/components/settings/SettingsPage';
 
 // editing holds a StorageConnection plus a transient secret. The list never
 // carries the secret (secretSet only); a save sends secretAccessKey only when
@@ -240,11 +241,11 @@ export default function StorageConnectionsTab() {
     );
 
     return (
-        <div className="max-w-3xl space-y-6">
-            <div>
-                <h2 className="h-section mb-1">Storage connections</h2>
-                <p className="text-sm text-(--base-07)">Define an S3 connection once, by name, and reuse it across core storage, modpacks and backups. The secret is encrypted at rest and never leaves the server.</p>
-            </div>
+        <SettingsPage
+            title="Storage connections"
+            icon={Database}
+            description="Define an S3 connection once, by name, and reuse it across core storage, modpacks and backups. The secret is encrypted at rest and never leaves the server."
+        >
 
             <div className="card card-pad">
                 <div className="flex items-center justify-between mb-4">
@@ -290,7 +291,7 @@ export default function StorageConnectionsTab() {
             {editing && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setEditing(null)}>
                     <div
-                        className="flex flex-col lg:flex-row items-stretch gap-4 w-full max-w-5xl max-h-[90vh] px-4"
+                        className="modal-with-help"
                         onClick={e => e.stopPropagation()}
                     >
                         <div className="modal-panel w-full lg:max-w-lg flex flex-col min-h-0">
@@ -404,6 +405,6 @@ export default function StorageConnectionsTab() {
                     </div>
                 </div>
             )}
-        </div>
+        </SettingsPage>
     );
 }

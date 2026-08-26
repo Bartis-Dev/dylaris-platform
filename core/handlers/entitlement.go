@@ -45,7 +45,7 @@ func (h *EntitlementHandler) GetMine(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now())
+	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled)
 	if err != nil {
 		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
@@ -57,7 +57,7 @@ func (h *EntitlementHandler) GetMine(w http.ResponseWriter, r *http.Request) {
 // GetForUser GET /api/admin/users/{id}/entitlement - RequireCap("plans.read").
 func (h *EntitlementHandler) GetForUser(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now())
+	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled)
 	if err != nil {
 		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
@@ -117,7 +117,7 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 		"expires_at": expires,
 	})
 
-	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now())
+	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(entitlementResponse{Success: true, Entitlement: ent})
 }
@@ -135,7 +135,7 @@ func (h *EntitlementHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	actor, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventEntitlementRevoked, actor, userID, nil)
 
-	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now())
+	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(entitlementResponse{Success: true, Entitlement: ent})
 }

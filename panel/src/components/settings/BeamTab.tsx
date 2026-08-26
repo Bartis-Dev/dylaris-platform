@@ -7,6 +7,8 @@ import { API_URL } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import { SwitchRow } from '@/components/ui/Switch';
+import SettingsPage from '@/components/settings/SettingsPage';
+import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import HelpTip from '@/components/ui/HelpTip';
 
 // ─────────────────────────────────────────────
@@ -275,21 +277,14 @@ export default function BeamTab() {
 
     return (
         <>
-        <div className="space-y-6">
-            <div>
-                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Beam Desktop Client</h2>
-                <p className="text-sm text-(--base-07)">
-                    Beam is DYLARIS&apos;s built-in desktop client for file transfer and server console. It always works
-                    over the local network or a direct connection, with no gateway required - Core mints the connection
-                    ticket and the node authenticates it. The gateway only adds an optional encrypted relay so users can
-                    reach their servers remotely.
-                </p>
-            </div>
-
-            <div className="space-y-6">
-
-            <div className="card p-5 space-y-4">
-                <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-2">General</h3>
+        <SettingsPage
+            title="Beam desktop client"
+            description="Beam is DYLARIS's built-in desktop client for file transfer and server console. It always works over the local network or a direct connection, with no gateway required: Core mints the connection ticket and the node authenticates it. The gateway only adds an optional encrypted relay so users can reach their servers remotely."
+        >
+            {/* One endpoint writes all of this, so it is one card. It was four,
+                which read as four independent things above a single save. */}
+            <SettingsCard title="Beam" form={form}>
+            <SettingsGroup title="General" first>
 
                 <SwitchRow
                     label="Offer Beam to users"
@@ -407,10 +402,10 @@ export default function BeamTab() {
                         that floor are asked to update before they can connect.
                     </span>
                 </p>
-            </div>
+            </SettingsGroup>
 
             {/* ─── Throttle (enforced) ─── */}
-            <div className="card p-5 space-y-4">
+            <SettingsGroup>
                 <div>
                     <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1 flex items-center gap-1.5">
                         Bandwidth throttle
@@ -483,10 +478,10 @@ export default function BeamTab() {
                         />
                     </div>
                 </div>
-            </div>
+            </SettingsGroup>
 
             {/* ─── Upload limits (enforced) ─── */}
-            <div className="card p-5 space-y-4">
+            <SettingsGroup>
                 <div>
                     <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1 flex items-center gap-1.5">
                         Upload limits
@@ -543,10 +538,10 @@ export default function BeamTab() {
                         <p className="text-xs text-(--base-06)">Running total per account, reset at midnight UTC.</p>
                     </div>
                 </div>
-            </div>
+            </SettingsGroup>
 
             {/* ─── Reference (host hardware — informational only) ─── */}
-            <div className="card p-5 space-y-4">
+            <SettingsGroup>
                 <div>
                     <h3 className="text-sm font-display font-semibold text-(--base-08) mb-1 flex items-center gap-1.5">
                         Host hardware reference
@@ -605,10 +600,9 @@ export default function BeamTab() {
                         />
                     </div>
                 </div>
-            </div>
-
-            </div>
-        </div>
+            </SettingsGroup>
+            </SettingsCard>
+        </SettingsPage>
 
         {showDownloadLinkWarning && (
             <div className="modal-overlay animate-fade-in" onClick={() => setShowDownloadLinkWarning(false)}>

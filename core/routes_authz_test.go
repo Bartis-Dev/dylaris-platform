@@ -1055,26 +1055,41 @@ func TestCap_TicketsUserRouteExemptAuthed(t *testing.T) {
 	}
 }
 
-// TestCap_PlansBillingPanel proves the admin plans/billing/usage routes are
-// gated by PANEL plans.* at the chokepoint (fine per-method caps: read for
-// list/GET, write for create/update/PATCH, delete for DELETE), while the
-// caller's own /me/usage stays authed-exempt (not RequireCap-gated).
-func TestCap_PlansBillingPanel(t *testing.T) {
+// TestCap_BillingPanel proves the admin billing/usage/limit-override routes are
+// gated by PANEL plans.* at the chokepoint (read for GET, write for PATCH),
+// while the caller's own /me/usage stays authed-exempt (not RequireCap-gated).
+//
+// Plan CRUD used to be checked here too. Those routes are gone: nothing sold a
+// plan, and the capability that guarded them still guards what replaced them.
+func TestCap_BillingPanel(t *testing.T) {
 	fs := &authzFakeStore{}
 	panelHolder(fs, "bl-id", "bl", "plans.read")
 	fs.addUser("plain-id", "plain", false)
 	srv := newAuthzTestServer(t, fs)
-	if c := doAs(t, srv, "GET", "/api/admin/plans", testIdentity{UserID: "bl-id", Username: "bl"}); c == 403 {
-		t.Error("plans.read holder must list plans")
+	if c := doAs(t, srv, "GET", "/api/admin/settings/billing", testIdentity{UserID: "bl-id", Username: "bl"}); c == 403 {
+		t.Error("plans.read holder must read billing settings")
 	}
-	if c := doAs(t, srv, "POST", "/api/admin/plans", testIdentity{UserID: "bl-id", Username: "bl"}); c != 403 {
-		t.Errorf("plans.read-only holder must be 403 on POST /admin/plans (needs plans.write), got %d", c)
+	if c := doAs(t, srv, "PUT", "/api/admin/settings/billing", testIdentity{UserID: "bl-id", Username: "bl"}); c != 403 {
+		t.Errorf("plans.read-only holder must be 403 on PUT billing settings (needs plans.write), got %d", c)
 	}
-	if c := doAs(t, srv, "GET", "/api/admin/plans", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
-		t.Errorf("ordinary user must be 403 on admin plans, got %d", c)
+	if c := doAs(t, srv, "GET", "/api/admin/settings/billing", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on admin billing settings, got %d", c)
 	}
 	if c := doAs(t, srv, "GET", "/api/me/usage", testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
 		t.Error("EXEMPT-authed /me/usage must not 403 an authed user")
+	}
+}
+
+// The removed plan routes must stay removed: a 404 here rather than a 403 is
+// what proves the surface is gone, not merely guarded.
+func TestPlanRoutesAreGone(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("admin-id", "adm", true)
+	srv := newAuthzTestServer(t, fs)
+	for _, path := range []string{"/api/admin/plans", "/api/settings/gateway/hub-redis-admin"} {
+		if c := doAs(t, srv, "GET", path, testIdentity{UserID: "admin-id", Username: "adm", IsAdmin: true}); c != 404 {
+			t.Errorf("GET %s = %d, want 404 (the route should not exist)", path, c)
+		}
 	}
 }
 

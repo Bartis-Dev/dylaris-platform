@@ -405,23 +405,30 @@ func (h *StoreHandler) fetchLinkStatus(ctx context.Context, uuid string) (bool, 
 // report WHAT is wrong with the storefront integration instead of the panel
 // silently rendering "not linked".
 func (h *StoreHandler) probeLinkStatus(ctx context.Context, uuid string) (bool, string, error) {
-	endpoint := strings.TrimRight(h.state.StoreURL, "/") + "/api/store/link-status?uuid=" + url.QueryEscape(uuid)
+	return h.state.probeStoreLink(ctx, uuid)
+}
+
+// probeStoreLink lives on AppState rather than on StoreHandler because the
+// entitlement gate needs the same answer and holds no handler. It reads only
+// StoreURL and StoreSharedKey, both of which are state.
+func (s *AppState) probeStoreLink(ctx context.Context, uuid string) (bool, string, error) {
+	endpoint := strings.TrimRight(s.StoreURL, "/") + "/api/store/link-status?uuid=" + url.QueryEscape(uuid)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return false, "", err
 	}
-	req.Header.Set("X-Store-Key", h.state.StoreSharedKey)
+	req.Header.Set("X-Store-Key", s.StoreSharedKey)
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, "", fmt.Errorf("cannot reach the storefront at %s: %w", h.state.StoreURL, err)
+		return false, "", fmt.Errorf("cannot reach the storefront at %s: %w", s.StoreURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		// The single most likely misconfiguration, and the one that looks most
 		// like normal operation from the panel.
-		return false, "", fmt.Errorf("the storefront refused our key (HTTP %d) - STORE_SHARED_KEY does not match the value configured on %s", resp.StatusCode, h.state.StoreURL)
+		return false, "", fmt.Errorf("the storefront refused our key (HTTP %d) - STORE_SHARED_KEY does not match the value configured on %s", resp.StatusCode, s.StoreURL)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return false, "", fmt.Errorf("the storefront answered HTTP %d", resp.StatusCode)

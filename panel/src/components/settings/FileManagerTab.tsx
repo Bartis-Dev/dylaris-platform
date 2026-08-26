@@ -1,15 +1,23 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
+import { FolderOpen } from 'lucide-react';
 import { getFileManagerSettings, saveFileManagerSettings, FileManagerSettings } from '@/lib/api';
-import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
-import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
-import { toast } from '@/components/ui/Toast';
+import { useSettingsForm } from '@/lib/useSettingsForm';
+import SettingsPage from '@/components/settings/SettingsPage';
+import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 
 const UNITS = [
     { label: 'MB', multiplier: 1024 * 1024 },
     { label: 'GB', multiplier: 1024 * 1024 * 1024 },
 ];
+
+const DEFAULTS: FileManagerSettings = {
+    adminUploadLimit: 2 * 1024 * 1024 * 1024,
+    adminDownloadLimit: 5 * 1024 * 1024 * 1024,
+    userUploadLimit: 500 * 1024 * 1024,
+    userDownloadLimit: 1 * 1024 * 1024 * 1024,
+};
 
 function bytesToDisplay(bytes: number): { value: number; unit: string } {
     if (bytes >= 1024 * 1024 * 1024 && bytes % (1024 * 1024 * 1024) === 0) {
@@ -24,12 +32,13 @@ function displayToBytes(value: number, unit: string): number {
 }
 
 interface LimitFieldProps {
+    id: string;
     label: string;
     bytes: number;
     onChange: (bytes: number) => void;
 }
 
-function LimitField({ label, bytes, onChange }: LimitFieldProps) {
+function LimitField({ id, label, bytes, onChange }: LimitFieldProps) {
     const display = bytesToDisplay(bytes);
     const [value, setValue] = useState(display.value);
     const [unit, setUnit] = useState(display.unit);
@@ -52,9 +61,10 @@ function LimitField({ label, bytes, onChange }: LimitFieldProps) {
 
     return (
         <div className="flex flex-col gap-[5px]">
-            <label className="input-label">{label}</label>
+            <label className="input-label" htmlFor={id}>{label}</label>
             <div className="flex gap-2">
                 <input
+                    id={id}
                     type="number"
                     min={1}
                     value={value}
@@ -64,6 +74,7 @@ function LimitField({ label, bytes, onChange }: LimitFieldProps) {
                 <select
                     value={unit}
                     onChange={e => handleUnitChange(e.target.value)}
+                    aria-label={`${label} unit`}
                     className="input-field w-20"
                 >
                     {UNITS.map(u => (
@@ -76,93 +87,48 @@ function LimitField({ label, bytes, onChange }: LimitFieldProps) {
 }
 
 export default function FileManagerTab() {
-    const [settings, setSettings] = useState<FileManagerSettings>({
-        adminUploadLimit: 2 * 1024 * 1024 * 1024,
-        adminDownloadLimit: 5 * 1024 * 1024 * 1024,
-        userUploadLimit: 500 * 1024 * 1024,
-        userDownloadLimit: 1 * 1024 * 1024 * 1024,
+    const form = useSettingsForm<FileManagerSettings>({
+        load: async () => {
+            const res = await getFileManagerSettings();
+            return res.success && res.settings ? res.settings : null;
+        },
+        save: async value => {
+            const res = await saveFileManagerSettings(value);
+            return { ok: res.success, message: res.message };
+        },
+        successMessage: 'File manager settings saved.',
     });
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
 
-    // Snapshot of last-saved settings for dirty detection.
-    const snapshotRef = useRef<FileManagerSettings | null>(null);
-
-    const showToast = (msg: string, ok = true) => toast(msg, ok);
-
-    useEffect(() => {
-        getFileManagerSettings().then(res => {
-            if (res.success && res.settings) {
-                setSettings(res.settings);
-                snapshotRef.current = res.settings;
-            }
-            setLoading(false);
-        });
-    }, []);
-
-    const handleSave = async (): Promise<boolean> => {
-        setSaving(true);
-        try {
-        const res = await saveFileManagerSettings(settings);
-        if (res.success) {
-            showToast('File manager settings saved.');
-            snapshotRef.current = settings;
-            return true;
-        }
-        showToast(res.message || 'Save failed.', false);
-        return false;
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const handleDiscard = () => {
-        if (snapshotRef.current) setSettings(snapshotRef.current);
-    };
-
-    const dirty =
-        snapshotRef.current !== null &&
-        JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
-
-    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
-
-    const set = (key: keyof FileManagerSettings, value: number) =>
-        setSettings(prev => ({ ...prev, [key]: value }));
-
-    if (loading) return (
-        <div className="max-w-2xl space-y-6">
-            <SkeletonHeader />
-            <SkeletonCard height="h-36" />
-            <SkeletonCard height="h-36" />
-        </div>
-    );
+    const s = form.value ?? DEFAULTS;
+    const set = (key: keyof FileManagerSettings, value: number) => form.patch({ [key]: value });
 
     return (
-        <div className="max-w-2xl space-y-6">
-            <div>
-                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Transfer Limits</h2>
-                <p className="text-sm text-(--base-07)">Maximum file sizes for uploads and downloads in the web browser file manager only. Separate limits for admins and regular users. The Beam desktop app is not governed by these limits; it enforces its own separate upload limits.</p>
-            </div>
+        <SettingsPage
+            title="Transfer limits"
+            icon={FolderOpen}
+            description="Maximum file sizes for uploads and downloads in the browser file manager only. The Beam desktop app is not governed by these; it enforces its own upload limits."
+            width="2xl"
+            loading={form.loading}
+        >
+            <SettingsCard
+                title="File manager"
+                description="Separate ceilings for admins and regular users."
+                form={form}
+            >
+                <SettingsGroup title="Admin limits" first>
+                    <div className="grid grid-cols-2 gap-4">
+                        <LimitField id="fm-admin-up" label="Upload limit" bytes={s.adminUploadLimit} onChange={v => set('adminUploadLimit', v)} />
+                        <LimitField id="fm-admin-down" label="Download limit" bytes={s.adminDownloadLimit} onChange={v => set('adminDownloadLimit', v)} />
+                    </div>
+                </SettingsGroup>
 
-            {/* Admin Limits */}
-            <div className="card p-5">
-                <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-4">Admin Limits</h3>
-                <div className="grid grid-cols-2 gap-4">
-                    <LimitField label="Upload Limit" bytes={settings.adminUploadLimit} onChange={v => set('adminUploadLimit', v)} />
-                    <LimitField label="Download Limit" bytes={settings.adminDownloadLimit} onChange={v => set('adminDownloadLimit', v)} />
-                </div>
-            </div>
-
-            {/* User Limits */}
-            <div className="card p-5">
-                <h3 className="text-sm font-display font-semibold text-(--base-08) mb-4">User Limits</h3>
-                <div className="grid grid-cols-2 gap-4">
-                    <LimitField label="Upload Limit" bytes={settings.userUploadLimit} onChange={v => set('userUploadLimit', v)} />
-                    <LimitField label="Download Limit" bytes={settings.userDownloadLimit} onChange={v => set('userDownloadLimit', v)} />
-                </div>
-            </div>
-
-            {/* Toast */}
-        </div>
+                <SettingsGroup title="User limits">
+                    <div className="grid grid-cols-2 gap-4">
+                        <LimitField id="fm-user-up" label="Upload limit" bytes={s.userUploadLimit} onChange={v => set('userUploadLimit', v)} />
+                        <LimitField id="fm-user-down" label="Download limit" bytes={s.userDownloadLimit} onChange={v => set('userDownloadLimit', v)} />
+                    </div>
+                </SettingsGroup>
+            </SettingsCard>
+        </SettingsPage>
     );
 }

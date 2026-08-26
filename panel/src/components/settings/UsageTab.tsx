@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { getAllUsage, formatBytes, TrafficUsage } from '@/lib/api/usage';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { Activity, FolderDown, HardDrive, Info, AlertTriangle } from 'lucide-react';
+import SettingsPage from '@/components/settings/SettingsPage';
 
 // currentMonth returns YYYY-MM for the <input type="month"> default.
 function currentMonth(): string {
@@ -52,15 +53,12 @@ export default function UsageTab() {
     );
 
     return (
-        <div className="space-y-6">
-            {/* Header + period picker */}
-            <div className="flex flex-wrap items-end justify-between gap-4">
-                <div>
-                    <h2 className="font-display text-xl text-(--base-09)">Traffic & Storage Usage</h2>
-                    <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-(--base-06) mt-1">
-                        Per-tenant metering (BYON)
-                    </p>
-                </div>
+        <SettingsPage
+            title="Traffic and storage usage"
+            icon={Activity}
+            width="full"
+            description="Per-tenant metering for BYON."
+            actions={
                 <label className="flex flex-col gap-1">
                     <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">Billing month</span>
                     <input
@@ -70,8 +68,8 @@ export default function UsageTab() {
                         className="input-field w-44"
                     />
                 </label>
-            </div>
-
+            }
+        >
             {/* Context note */}
             <div className="flex items-start gap-2 rounded-md border border-(--base-04) bg-(--base-01) p-3">
                 <Info size={15} className="text-(--base-06) shrink-0 mt-0.5" />
@@ -130,7 +128,7 @@ export default function UsageTab() {
                     </table>
                 </div>
             )}
-        </div>
+        </SettingsPage>
     );
 }
 

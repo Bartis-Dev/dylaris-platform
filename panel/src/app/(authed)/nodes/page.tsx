@@ -136,6 +136,10 @@ function MyNodesInner() {
     // install with the store wired points somewhere else, and a link that goes to
     // the wrong shop is worse than no link.
     const [storeUrl, setStoreUrl] = useState<string | null>(null);
+    // null = not asked yet. The three-way matters: "we do not know" must not
+    // render as "you are not connected", which would tell a linked customer to
+    // fix a join that is fine.
+    const [storeLinked, setStoreLinked] = useState<boolean | null>(null);
     // Core's own public origin, used in the deploy snippets as ENROLL_URL. The
     // browser is talking to it right now, so it is the one address known to be
     // reachable from outside - guessing it would be worse.
@@ -209,7 +213,11 @@ function MyNodesInner() {
         if (!featureFlags.store) return;
         let cancelled = false;
         getStoreStatus().then(res => {
-            if (!cancelled && res.success && res.storeUrl) setStoreUrl(res.storeUrl);
+            if (cancelled || !res.success) return;
+            if (res.storeUrl) setStoreUrl(res.storeUrl);
+            // Only meaningful when the store is actually wired up. A self-host
+            // install has no store account to connect to.
+            setStoreLinked(res.enabled ? !!res.linked : true);
         });
         return () => { cancelled = true; };
     }, [featureFlags.store]);
@@ -382,6 +390,7 @@ function MyNodesInner() {
                         enrollUrl={enrollUrl}
                         config={deployConfig}
                         storeUrl={storeUrl}
+                        storeLinked={storeLinked}
                         allowed={routeOnlyAllowed}
                         entitlementKnown={entitlementKnown}
                         suspended={suspended}
@@ -412,7 +421,7 @@ function MyNodesInner() {
                 {!entitlementKnown ? (
                     <SkeletonCard height="h-16" />
                 ) : !byonAllowed ? (
-                    <NotIncluded what="bring your own node" storeUrl={storeUrl} suspended={suspended} />
+                    <NotIncluded what="bring your own node" storeUrl={storeUrl} suspended={suspended} storeLinked={storeLinked} />
                 ) : (
                     <>
                         <div className="flex flex-col sm:flex-row gap-2 sm:items-start">

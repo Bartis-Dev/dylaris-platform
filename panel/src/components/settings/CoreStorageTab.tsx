@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useReducer, useRef } from 'react';
+import { useState, useEffect, useReducer, useRef } from 'react';
 import { getCoreStorage, saveCoreStorage, testCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage, type CoreStorageConfig } from '@/lib/coreStorage';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/Badge';
 import { systemEvents } from '@/lib/systemEvents';
 import { reachReducer, initialReachState, statusLabel, statusRemedy, parseStorageReachEvent } from '@/lib/storageReach';
 import StorageHealthCard from '@/components/settings/StorageHealthCard';
+import SettingsPage from '@/components/settings/SettingsPage';
+import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
 import HelpTip from '@/components/ui/HelpTip';
 
@@ -190,13 +192,40 @@ export default function CoreStorageTab() {
     </div>
   );
 
-  return (
-    <div className="max-w-2xl space-y-6">
-      <div>
-        <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Core File Storage</h2>
-        <p className="text-sm text-(--base-07)">Where Core keeps Library files, ticket attachments and ticket backups. Required before running more than one Core, and before enabling the Ticket System.</p>
-      </div>
+  // The card owns the save control, but not this save: the fleet reachability
+  // round below has a generation guard and a Retry that has to fire while the
+  // previous attempt is still in flight, so the existing state machine stays
+  // and only hands the card the four things it needs.
+  const savable = { dirty, saving, save: handleSave, discard: handleDiscard };
+  const blockedReason = canSave
+    ? undefined
+    : settings.backend !== 'path'
+      ? 'Select a storage connection before saving'
+      : 'Enter an absolute path and tick the confirmation before saving';
 
+  return (
+    <SettingsPage
+      title="Core file storage"
+      icon={HardDrive}
+      width="2xl"
+      description="Where Core keeps Library files, ticket attachments and ticket backups. Required before running more than one Core, and before enabling the ticket system."
+    >
+    <SettingsCard
+      title="Backend"
+      form={savable}
+      saveBlockedReason={blockedReason}
+      actions={!usingConnection && (
+        <button
+          type="button"
+          onClick={handleTest}
+          disabled={testing}
+          className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+        >
+          {testing ? <Loader2 size={13} className="animate-spin" /> : <Cable size={13} />}
+          {testing ? 'Testing...' : 'Test connection'}
+        </button>
+      )}
+    >
       {/* Backend selector */}
       <div>
         <label className="input-label mb-2 flex items-center gap-1.5">
@@ -364,8 +393,6 @@ export default function CoreStorageTab() {
         </div>
       )}
 
-      <StorageHealthCard />
-
       {/* Live fleet-wide reachability round, run on every save: the settings
           are persisted only once every online Core proves it can read and
           write the same shared storage. */}
@@ -423,37 +450,15 @@ export default function CoreStorageTab() {
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex flex-wrap gap-3 pt-4 border-t border-(--base-03)">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={!canSave || saving}
-          className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-        >
-          {saving && <Loader2 size={14} className="animate-spin" />}
-          {saving ? 'Saving...' : 'Save'}
-        </button>
-        {!usingConnection && (
-          <button
-            type="button"
-            onClick={handleTest}
-            disabled={testing}
-            className="btn btn-secondary disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-          >
-            {testing ? <Loader2 size={14} className="animate-spin" /> : <Cable size={14} />}
-            {testing ? 'Testing...' : 'Test Connection'}
-          </button>
-        )}
-      </div>
-
       {testWarning && (
         <div className="alert alert-warning text-xs flex items-start gap-2">
           <CircleAlert size={14} className="shrink-0 mt-0.5" />
           <span>{testWarning}</span>
         </div>
       )}
+    </SettingsCard>
 
-    </div>
+    <StorageHealthCard />
+    </SettingsPage>
   );
 }

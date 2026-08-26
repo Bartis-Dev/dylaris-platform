@@ -14,6 +14,15 @@ export interface SetupStatus {
     success: boolean;
     mode: SetupMode;
     adminSecretConfigured: boolean;
+    /** env SETUP as configured on Core. Reported separately from `open` so the
+     *  page can say WHY the wizard is closed rather than only that it is. */
+    setupEnabled: boolean;
+    /** Whether there is a working form here at all. Computed by the same gate
+     *  the create endpoint uses, so the page and the handler cannot disagree. */
+    open: boolean;
+    /** Ask for the red "no admin token configured" banner: the door is open and
+     *  without ADMIN_SECRET nothing can come through it. */
+    needsSecretWarning: boolean;
     frontendUrl?: string;
     message?: string;
 }
@@ -72,7 +81,12 @@ export async function getSetupStatus(): Promise<SetupStatus> {
         // network doesn't lock the user into the wizard forever. The next
         // user action that fetches anything else will reveal whether the
         // backend is actually reachable.
-        return { success: false, mode: 'complete', adminSecretConfigured: false };
+        // Closed, not open: a transport failure must not render a working-looking
+        // admin-creation form.
+        return {
+            success: false, mode: 'complete', adminSecretConfigured: false,
+            setupEnabled: false, open: false, needsSecretWarning: false,
+        };
     }
 }
 

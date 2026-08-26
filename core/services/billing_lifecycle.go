@@ -34,9 +34,11 @@ const (
 
 // R2QuotaExceeded reports whether a tenant is at or over their R2 backup quota.
 // Quota resolution (first that is set wins): per-user override
-// (user_billing.r2_quota_gb), else the tenant's plan (assigned, else the default
-// plan), else the platform setting (billing.r2_quota_gb), else 0 = unlimited. A
-// 0/unset quota never blocks (so solo/hoster and unmetered tenants are unaffected).
+// (user_billing.r2_quota_gb), else the platform setting (billing.r2_quota_gb),
+// else 0 = unlimited. A 0/unset quota never blocks (so solo/hoster and unmetered
+// tenants are unaffected).
+//
+// The plan step between those two is gone along with plans themselves.
 func R2QuotaExceeded(st store.Store, ownerID string) (exceeded bool, usedBytes, quotaBytes int64) {
 	b, err := st.GetUserBilling(ownerID)
 	if err != nil {
@@ -47,24 +49,7 @@ func R2QuotaExceeded(st store.Store, ownerID string) (exceeded bool, usedBytes, 
 	if b.R2QuotaGB != nil {
 		quotaGB = *b.R2QuotaGB
 	}
-	// 2. the tenant's plan (assigned, else default). A plan's value — including an
-	// explicit 0 (unlimited) — is authoritative, so we do not fall through to the
-	// platform setting once a plan is found.
-	if quotaGB < 0 {
-		if pid, perr := st.GetUserPlanID(ownerID); perr == nil {
-			var plan *store.Plan
-			if pid != nil {
-				plan, _ = st.GetPlan(*pid)
-			}
-			if plan == nil {
-				plan, _ = st.GetDefaultPlan()
-			}
-			if plan != nil {
-				quotaGB = plan.R2QuotaGB
-			}
-		}
-	}
-	// 3. the platform setting (pre-plan default).
+	// 2. the platform setting.
 	if quotaGB < 0 {
 		if v, _ := st.GetSetting(BillingR2QuotaKey); v != "" {
 			if n, perr := strconv.ParseInt(v, 10, 64); perr == nil {

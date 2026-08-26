@@ -33,8 +33,8 @@ export interface UnsavedChangesRegistration {
     saving: boolean;
 }
 
-// The value read by the bar and the navigation guards: one aggregate over
-// every registered section, or null when nothing is registered.
+// The value read by the navigation guards: one aggregate over every registered
+// section, or null when nothing is registered.
 type UnsavedChangesContextValue = UnsavedChangesRegistration | null;
 
 interface UnsavedChangesCtx {
@@ -48,8 +48,12 @@ interface UnsavedChangesCtx {
 // ---------------------------------------------------------------------------
 
 /**
- * aggregate folds every registered section into the one thing the save bar and
- * the navigation guards act on.
+ * aggregate folds every registered section into the one thing the navigation
+ * guards act on: leaving a page, leaving a tab, closing the browser.
+ *
+ * Each card commits itself, so this is no longer what draws a Save button. It
+ * is still what answers "is anything unsaved anywhere on this page", which is a
+ * question about the page and not about any one card.
  *
  * It exists because the context used to hold exactly ONE registration, and an
  * unmount cleared it unconditionally. That was survivable while a settings page
@@ -157,7 +161,7 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
 
 /**
  * Call this hook inside a settings section to register its dirty state, save
- * handler and discard handler with the shared bar.
+ * handler and discard handler with the page's navigation guards.
  *
  * Several sections on one page may each call it; they are keyed independently
  * and unregister only themselves on unmount.

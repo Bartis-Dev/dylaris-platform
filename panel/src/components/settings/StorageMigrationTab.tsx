@@ -20,6 +20,7 @@ import {
 import { systemEvents } from '@/lib/systemEvents';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
+import SettingsPage from '@/components/settings/SettingsPage';
 
 const PHASE_LABEL: Record<StorageMigrationPhase, string> = {
     preparing: 'Preparing',
@@ -257,23 +258,22 @@ export default function StorageMigrationTab() {
     }
 
     return (
-        <div className="space-y-6">
-            <div className="flex items-start justify-between gap-4">
-                <div>
-                    <h2 className="text-lg font-medium text-(--base-09) flex items-center gap-2">
-                        <HardDrive size={18} className="text-(--accent-light)" /> Storage
-                    </h2>
-                    <p className="text-xs text-(--base-06) mt-1 max-w-2xl">
+        <SettingsPage
+            title="Storage"
+            icon={HardDrive}
+            width="full"
+            description={<>
                         Inventory, move and verify the blob data sets. Every migration is manifest-based:
                         the objects a data set lists are read once and checksummed, the copy skips only objects
-                        that are already byte-identical, and verification compares the target against that manifest.
-                        The source is never modified unless you explicitly opt in to deleting it.
-                    </p>
-                </div>
+                that are already byte-identical, and verification compares the target against that
+                manifest. The source is never modified unless you explicitly opt in to deleting it.
+            </>}
+            actions={
                 <button className="btn btn-primary shrink-0" onClick={openWizard} disabled={busy || migratable.length === 0}>
                     <Play size={14} /> New migration
                 </button>
-            </div>
+            }
+        >
 
             {jobError && (
                 <p className="alert alert-error text-xs">{jobError}</p>
@@ -527,8 +527,7 @@ export default function StorageMigrationTab() {
                     </div>
                 </div>
             )}
-
-        </div>
+        </SettingsPage>
     );
 }
 

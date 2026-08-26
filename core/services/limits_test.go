@@ -6,27 +6,25 @@ import (
 	"dylaris-core/store"
 )
 
+// The rule these decide: a tenant's caps are the per-user overrides and nothing
+// else. Plans used to sit underneath as a baseline; they are gone, because the
+// hosted store never sold one (it pushes a node COUNT) and self-hosters were
+// never meant to hand out tariffs of their own.
+//
+// The trap worth keeping in view while reading these: zero means UNLIMITED here,
+// and an account that bought nothing also carries zero. That ambiguity is why
+// callers must gate on EffectiveEntitlement first and treat this only as the
+// ceiling behind it.
+
 type fakeLimitStore struct {
 	billing *store.UserBilling
-	planID  *int
-	plans   map[int]*store.Plan
-	def     *store.Plan
 }
 
 func (f *fakeLimitStore) GetUserBilling(string) (*store.UserBilling, error) { return f.billing, nil }
-func (f *fakeLimitStore) GetUserPlanID(string) (*int, error)                { return f.planID, nil }
-func (f *fakeLimitStore) GetPlan(id int) (*store.Plan, error) {
-	if p, ok := f.plans[id]; ok {
-		return p, nil
-	}
-	return nil, store.ErrWarpLimitReached // any error -> resolver falls back to default
-}
-func (f *fakeLimitStore) GetDefaultPlan() (*store.Plan, error) { return f.def, nil }
 
 func ptr(v int64) *int64 { return &v }
-func iptr(v int) *int    { return &v }
 
-func TestEffectiveLimits_NoPlanNoOverride_AllUnlimited(t *testing.T) {
+func TestEffectiveLimits_NoOverrideIsUnlimited(t *testing.T) {
 	lim, err := EffectiveLimits(&fakeLimitStore{}, "u1")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -36,48 +34,63 @@ func TestEffectiveLimits_NoPlanNoOverride_AllUnlimited(t *testing.T) {
 	}
 }
 
-func TestEffectiveLimits_DefaultPlanUsed(t *testing.T) {
-	st := &fakeLimitStore{def: &store.Plan{MaxNodes: 3, R2QuotaGB: 50, TrafficCombinedGB: 100}}
-	lim, _ := EffectiveLimits(st, "u1")
-	if lim.MaxNodes != 3 || lim.R2QuotaGB != 50 || lim.TrafficCombinedGB != 100 {
-		t.Fatalf("default plan not applied: %+v", lim)
+// A billing row that exists but sets no caps is the same as no row: an account
+// can have a status and a traffic ceiling without any limit override.
+func TestEffectiveLimits_BillingRowWithoutCapsIsUnlimited(t *testing.T) {
+	st := &fakeLimitStore{billing: &store.UserBilling{Status: "active"}}
+	lim, err := EffectiveLimits(st, "u1")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if lim != (Limits{}) {
+		t.Fatalf("expected all-zero (unlimited), got %+v", lim)
 	}
 }
 
-func TestEffectiveLimits_AssignedPlanBeatsDefault(t *testing.T) {
-	st := &fakeLimitStore{
-		planID: iptr(7),
-		plans:  map[int]*store.Plan{7: {MaxNodes: 10}},
-		def:    &store.Plan{MaxNodes: 3},
+func TestEffectiveLimits_OverridesApplied(t *testing.T) {
+	st := &fakeLimitStore{billing: &store.UserBilling{
+		MaxNodes:          ptr(3),
+		MaxLinks:          ptr(2),
+		R2QuotaGB:         ptr(50),
+		TrafficEdgeGB:     ptr(10),
+		TrafficRelayGB:    ptr(20),
+		TrafficCombinedGB: ptr(100),
+	}}
+	lim, err := EffectiveLimits(st, "u1")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
 	}
-	lim, _ := EffectiveLimits(st, "u1")
-	if lim.MaxNodes != 10 {
-		t.Fatalf("assigned plan should win over default: %+v", lim)
-	}
-}
-
-func TestEffectiveLimits_DeletedPlanFallsBackToDefault(t *testing.T) {
-	st := &fakeLimitStore{
-		planID: iptr(99), // not in plans -> GetPlan errors
-		plans:  map[int]*store.Plan{},
-		def:    &store.Plan{MaxNodes: 3},
-	}
-	lim, _ := EffectiveLimits(st, "u1")
-	if lim.MaxNodes != 3 {
-		t.Fatalf("deleted plan should fall back to default: %+v", lim)
+	want := Limits{MaxNodes: 3, MaxLinks: 2, R2QuotaGB: 50, TrafficEdgeGB: 10, TrafficRelayGB: 20, TrafficCombinedGB: 100}
+	if lim != want {
+		t.Fatalf("got %+v, want %+v", lim, want)
 	}
 }
 
-func TestEffectiveLimits_UserOverrideWins(t *testing.T) {
-	st := &fakeLimitStore{
-		def:     &store.Plan{MaxNodes: 3, TrafficCombinedGB: 100},
-		billing: &store.UserBilling{MaxNodes: ptr(20), TrafficCombinedGB: ptr(0)},
+// An explicitly stored 0 still means unlimited HERE. Kept as its own case
+// because it is the ambiguity the entitlement gate exists to cover: the same
+// zero means "bought nothing" one layer up.
+func TestEffectiveLimits_ExplicitZeroIsUnlimited(t *testing.T) {
+	st := &fakeLimitStore{billing: &store.UserBilling{MaxNodes: ptr(0), TrafficCombinedGB: ptr(0)}}
+	lim, err := EffectiveLimits(st, "u1")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
 	}
-	lim, _ := EffectiveLimits(st, "u1")
-	if lim.MaxNodes != 20 {
-		t.Fatalf("override should win: %+v", lim)
+	if lim.MaxNodes != 0 || lim.TrafficCombinedGB != 0 {
+		t.Fatalf("expected zeroes to pass through, got %+v", lim)
 	}
-	if lim.TrafficCombinedGB != 0 {
-		t.Fatalf("explicit 0 override (unlimited) should win over plan 100: %+v", lim)
+}
+
+// Fields the caller did not set must not be invented from the ones it did.
+func TestEffectiveLimits_UnsetFieldsStayZero(t *testing.T) {
+	st := &fakeLimitStore{billing: &store.UserBilling{MaxNodes: ptr(5)}}
+	lim, err := EffectiveLimits(st, "u1")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if lim.MaxNodes != 5 {
+		t.Fatalf("MaxNodes = %d, want 5", lim.MaxNodes)
+	}
+	if lim.MaxLinks != 0 || lim.R2QuotaGB != 0 || lim.TrafficCombinedGB != 0 {
+		t.Fatalf("unset fields leaked a value: %+v", lim)
 	}
 }

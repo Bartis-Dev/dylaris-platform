@@ -234,3 +234,14 @@
 {"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Searching the settings while you have unsaved changes now asks first instead of navigating away."}
 {"date": "2026-08-26", "service": "core", "type": "fix", "summary": "Saving the email settings without naming a provider no longer silently switches a Resend setup back to SMTP."}
 {"date": "2026-08-26", "service": "core", "type": "fix", "summary": "The feature-flag endpoint no longer resolves modpack storage on every request, which could make login wait on the shared storage limiter."}
+{"date": "2026-08-26", "service": "core", "type": "security", "summary": "Bringing your own node or a protected address now requires an active subscription. Accounts that had bought nothing were previously treated as having no limit at all."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "When infrastructure is locked, the panel now says whether you still need to connect your store account or whether you need a plan, and links straight to the right place."}
+{"date": "2026-08-26", "service": "core", "type": "change", "summary": "A new SETUP environment variable keeps the first-run setup page closed once an administrator exists. Set SETUP=true together with ADMIN_SECRET and restart if you ever need to create another admin."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "Plan tiers are gone from the settings. A tenant's limits are now set directly on their account, which is what the store has always written."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "The Hub Redis access tab was removed from the gateway settings."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "The player head beside your username in the navbar shows up again when a Minecraft username is set."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "The setup page now explains itself and offers a way back when you reach it on an instance that is already set up."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "Save and Discard moved out of the bar at the bottom of the screen and into the corner of each settings box, so the button that writes a setting sits next to the setting."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "Settings pages that wrote one thing through several boxes are now one box with sections, which is Modpacks, Beam, Features, Gateway and DDoS protection."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "A dialog with a help panel now stays centred whether the help is open or closed, instead of sitting left of centre and jumping when it opens."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "Every settings page now uses the same heading, the same box and the same save control, so the six different header styles and five ways of saving are gone."}

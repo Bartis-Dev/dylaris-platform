@@ -24,8 +24,7 @@ type nodeEnrollFakeStore struct {
 
 	settings map[string]string
 
-	planID        *int
-	plan          *store.Plan
+	billing       *store.UserBilling
 	nodes         int
 	pendingTokens int
 
@@ -44,15 +43,13 @@ func (f *nodeEnrollFakeStore) GetSetting(key string) (string, error) {
 	return f.settings[key], nil
 }
 
-// The plan-cap gate (MintToken counts existing nodes + redeemable tokens
-// against max_nodes) runs before the token is generated. These fields let a
-// case put the caller over the line; zero values mean "no plan, no limit", so
-// the expiry cases stay about the expiry.
-func (f *nodeEnrollFakeStore) GetUserPlanID(userID string) (*int, error) { return f.planID, nil }
-func (f *nodeEnrollFakeStore) GetPlan(id int) (*store.Plan, error)       { return f.plan, nil }
-func (f *nodeEnrollFakeStore) GetDefaultPlan() (*store.Plan, error)      { return f.plan, nil }
+// The cap gate (MintToken counts existing nodes + redeemable tokens against
+// max_nodes) runs before the token is generated. billing is where both the
+// entitlement and the cap come from now; nil means an account that bought
+// nothing, which these tests reach through the self-host path (StoreEnabled
+// false) so they stay about the cap rather than about entitlement.
 func (f *nodeEnrollFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
-	return nil, nil
+	return f.billing, nil
 }
 func (f *nodeEnrollFakeStore) CountNodesByOwner(ownerID string) (int, error) { return f.nodes, nil }
 func (f *nodeEnrollFakeStore) CountPendingNodeEnrollTokens(userID string) (int, error) {
@@ -293,35 +290,41 @@ func TestMintToken_StoreErrorIsInternalServerError(t *testing.T) {
 // - the same reasoning behind the warp sibling's "Revoke an unused key or remove
 // a machine first".
 func TestMintToken_HonorsTheNodeCap(t *testing.T) {
-	plan2 := &store.Plan{MaxNodes: 2}
+	cap2 := func() *store.UserBilling {
+		n := int64(2)
+		return &store.UserBilling{Status: "active", MaxNodes: &n}
+	}
 
 	tests := []struct {
 		name          string
-		plan          *store.Plan
+		billing       *store.UserBilling
 		nodes         int
 		pendingTokens int
 		wantStatus    int
 	}{
-		{name: "no plan means no cap", wantStatus: http.StatusOK},
-		{name: "under the cap", plan: plan2, nodes: 1, wantStatus: http.StatusOK},
+		// Self-host, nothing configured: no cap. Reached with StoreEnabled false
+		// below, because on a HOSTED install this same state means "bought
+		// nothing" and is refused by the entitlement gate instead.
+		{name: "nothing configured means no cap", wantStatus: http.StatusOK},
+		{name: "under the cap", billing: cap2(), nodes: 1, wantStatus: http.StatusOK},
 		{
-			name: "machines alone reach the cap",
-			plan: plan2, nodes: 2, wantStatus: http.StatusForbidden,
+			name:    "machines alone reach the cap",
+			billing: cap2(), nodes: 2, wantStatus: http.StatusForbidden,
 		},
 		{
 			// The case the sibling endpoint already refuses: nothing is enrolled
 			// yet, but every slot is spoken for by a token that can still be
 			// redeemed. Counting only machines would hand out a token that is
 			// guaranteed to fail at pairing time.
-			name: "unredeemed tokens fill the remaining slots",
-			plan: plan2, nodes: 1, pendingTokens: 1, wantStatus: http.StatusForbidden,
+			name:    "unredeemed tokens fill the remaining slots",
+			billing: cap2(), nodes: 1, pendingTokens: 1, wantStatus: http.StatusForbidden,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := &nodeEnrollFakeStore{
-				plan:          tt.plan,
+				billing:       tt.billing,
 				nodes:         tt.nodes,
 				pendingTokens: tt.pendingTokens,
 			}

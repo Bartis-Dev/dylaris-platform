@@ -16,7 +16,6 @@ import BillingBanner from '@/components/BillingBanner';
 import StorageBanner from '@/components/StorageBanner';
 import { ConfirmDialogRoot } from '@/components/ui/ConfirmDialog';
 import { ToastRoot } from '@/components/ui/Toast';
-import UnsavedBar from '@/components/settings/UnsavedBar';
 import CoreRegionChip from '@/components/CoreRegionChip';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
@@ -24,6 +23,13 @@ import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
 import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
+
+// The player head shown beside the username. Encoded because the name is stored
+// user input: without it a value carrying a slash would address a different
+// path on the avatar host.
+function avatarURL(minecraftUsername: string): string {
+    return `https://cravatar.eu/helmavatar/${encodeURIComponent(minecraftUsername)}/64.png`;
+}
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
     const { user, ready, apiUnreachable, retryBoot, featureFlags, gatewayEnabled, servers } = useAppData();
@@ -124,11 +130,6 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                 dismiss timeouts from 2800ms to 4500ms, so the same action
                 reported differently depending on which screen ran it. */}
             <ToastRoot />
-            {/* The one save bar. It used to live inside the settings layout,
-                which is why "everything saves the same way" only applied to a
-                quarter of the panel. It renders nothing while nothing is
-                dirty. */}
-            <UnsavedBar />
             {/* Global maintenance banner. Renders nothing when off. */}
             <MaintenanceBanner />
             {/* Non-dismissible billing banner for past_due/suspended tenants. */}
@@ -198,7 +199,12 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                         >
                             <div className="w-8 h-8 rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-sm overflow-hidden border border-(--base-04) shrink-0">
                                 {user.minecraftUsername ? (
-                                    <img src={`https://cravatar.eu/helmavatar/${user.minecraftUsername}/32.png`} alt="" className="w-full h-full object-cover" />
+                                    // 64, never 32: cravatar treats 32 as its default size and answers
+                                    // that one request with a 308 to a plain-http URL, which the browser
+                                    // then refuses as mixed content. So the head rendered everywhere the
+                                    // panel asked for any other size and broke only here. One size for
+                                    // both avatars, downscaled by CSS, which is sharper on HiDPI anyway.
+                                    <img src={avatarURL(user.minecraftUsername)} alt="" className="w-full h-full object-cover" />
                                 ) : (
                                     user.username.charAt(0).toUpperCase()
                                 )}
@@ -212,7 +218,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 <div className="flex items-center gap-3 px-3 py-3 border-b border-(--base-03) mb-1.5">
                                     <div className="w-9 h-9 rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-sm overflow-hidden border border-(--base-04) shrink-0">
                                         {user.minecraftUsername ? (
-                                            <img src={`https://cravatar.eu/helmavatar/${user.minecraftUsername}/36.png`} alt="" className="w-full h-full object-cover" />
+                                            <img src={avatarURL(user.minecraftUsername)} alt="" className="w-full h-full object-cover" />
                                         ) : (
                                             user.username.charAt(0).toUpperCase()
                                         )}

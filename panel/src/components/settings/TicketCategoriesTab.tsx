@@ -8,6 +8,7 @@ import {
 } from '@/lib/api/tickets';
 import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import SettingsPage from '@/components/settings/SettingsPage';
 
 const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
 
@@ -126,22 +127,21 @@ export default function TicketCategoriesTab() {
     );
 
     return (
-        <div className="space-y-6 max-w-4xl">
-            <header className="flex items-start justify-between gap-4">
-                <div>
-                    <h2 className="text-lg font-display flex items-center gap-2">
-                        <LifeBuoy size={18} className="text-(--accent-light)" /> Ticket Categories
-                    </h2>
-                    <p className="text-sm text-(--base-06) mt-1">
-                        Categories users pick from when creating a ticket. <span className="font-mono">requires_server</span> gates
-                        the server-picker step. Categories with attached tickets can be disabled but not deleted.
-                    </p>
-                </div>
+        <SettingsPage
+            title="Ticket categories"
+            icon={LifeBuoy}
+            width="4xl"
+            description={<>
+                Categories users pick from when creating a ticket.{' '}
+                <span className="font-mono">requires_server</span> gates the server-picker step.
+                Categories with attached tickets can be disabled but not deleted.
+            </>}
+            actions={
                 <button type="button" onClick={openCreate} className="btn btn-primary inline-flex items-center gap-2 shrink-0">
                     <Plus size={14} /> Add category
                 </button>
-            </header>
-
+            }
+        >
             <div className="card overflow-hidden">
                 <table className="w-full text-sm">
                     <thead className="bg-(--base-03) text-(--base-06)">
@@ -343,6 +343,6 @@ export default function TicketCategoriesTab() {
                     </span>
                 </div>
             )}
-        </div>
+        </SettingsPage>
     );
 }

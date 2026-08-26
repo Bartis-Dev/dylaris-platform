@@ -24,6 +24,23 @@ type Config struct {
 	// via ADMIN_SECRET (or ADMIN_SECRET_FILE). Never persisted, never logged.
 	AdminSecret string
 
+	// SetupEnabled (env SETUP) decides whether /setup stays reachable on an
+	// instance that ALREADY has an admin. It is deliberately the narrow switch:
+	//
+	//   - No admin exists (fresh install, or every admin lost): ignored entirely,
+	//     /setup is open regardless. Otherwise a false here would be a permanent
+	//     lockout with no way in to change it.
+	//   - An admin exists: false closes the door, true leaves it open behind
+	//     ADMIN_SECRET.
+	//
+	// Defaults to FALSE. Before this, a configured ADMIN_SECRET left /setup
+	// answering on every live instance forever, which is a working break-glass
+	// but also a permanently mounted door that most operators never wanted and
+	// nobody could turn off. Recovering a lost admin on a closed instance is
+	// SETUP=true plus a restart, which is a deliberate act rather than a
+	// standing exposure.
+	SetupEnabled bool
+
 	// Cluster
 	ClusterSecret string
 	// GatewayHubURL is the gateway Hub's internal base URL, e.g.
@@ -195,11 +212,16 @@ func LoadConfig() (Config, error) {
 	tabProxyPort := strings.TrimSpace(getEnv("TAB_PROXY_PORT", ""))
 	tabProxyOrigin, tabProxyIsolationActive := resolveTabProxyOrigin(getEnv("TAB_PROXY_ORIGIN", ""), frontendURL)
 
+	// An unparseable SETUP is treated as off, matching the default. The value is
+	// a door: "SETUP=yes" not parsing must not swing it open.
+	setupEnabled, _ := strconv.ParseBool(getEnv("SETUP", "false"))
+
 	cfg := Config{
 		APIPort:        getEnv("API_PORT", "25500"),
 		FrontendURL:    frontendURL,
 		JWTSecret:      getSecret("JWT_SECRET", "change-this-secret"),
 		AdminSecret:    getSecret("ADMIN_SECRET", ""),
+		SetupEnabled:   setupEnabled,
 		ClusterSecret:  getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
 		GatewayHubURL:  strings.TrimSpace(getEnv("GATEWAY_HUB_URL", "")),
 		CoreID:         coreID,

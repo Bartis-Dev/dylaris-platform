@@ -163,45 +163,11 @@ func TestR2QuotaExceeded(t *testing.T) {
 			wantQuotaGB:  0,
 		},
 		{
-			name: "assigned plan is used and exceeded",
+			// Plans used to sit between the override and this setting. With them
+			// gone the platform setting is the only fallback left.
+			name: "no override falls back to the platform setting",
 			store: &billingFakeStore{
 				billing:     &store.UserBilling{},
-				planID:      iptr(7),
-				plan:        &store.Plan{R2QuotaGB: 5},
-				backupBytes: 6 * GB,
-			},
-			wantExceeded: true,
-			wantUsed:     6 * GB,
-			wantQuotaGB:  5,
-		},
-		{
-			name: "assigned plan explicit 0 does not fall through to the platform setting",
-			store: &billingFakeStore{
-				billing:     &store.UserBilling{},
-				planID:      iptr(7),
-				plan:        &store.Plan{R2QuotaGB: 0},
-				settings:    map[string]string{BillingR2QuotaKey: "1"},
-				backupBytes: 999 * GB,
-			},
-			wantExceeded: false,
-			wantQuotaGB:  0,
-		},
-		{
-			name: "no assigned plan falls back to the default plan",
-			store: &billingFakeStore{
-				billing:     &store.UserBilling{},
-				def:         &store.Plan{R2QuotaGB: 2},
-				backupBytes: 3 * GB,
-			},
-			wantExceeded: true,
-			wantUsed:     3 * GB,
-			wantQuotaGB:  2,
-		},
-		{
-			name: "no plan lookup at all falls back to the platform setting",
-			store: &billingFakeStore{
-				billing:     &store.UserBilling{},
-				planIDErr:   errors.New("plan lookup unavailable"),
 				settings:    map[string]string{BillingR2QuotaKey: "1"},
 				backupBytes: 2 * GB,
 			},
@@ -213,7 +179,6 @@ func TestR2QuotaExceeded(t *testing.T) {
 			name: "nothing set anywhere means unlimited",
 			store: &billingFakeStore{
 				billing:     &store.UserBilling{},
-				planIDErr:   errors.New("plan lookup unavailable"),
 				backupBytes: 999 * GB,
 			},
 			wantExceeded: false,

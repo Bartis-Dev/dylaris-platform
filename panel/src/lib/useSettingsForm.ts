@@ -89,7 +89,8 @@ export function useSettingsForm<T>(opts: SettingsFormOptions<T>): SettingsForm<T
     //
     // State rather than a ref, even though it is never rendered directly: dirty
     // IS derived from it during render, and a ref that changes without a
-    // re-render would leave the save bar showing a state that is no longer true.
+    // re-render would leave the Save button showing a state that is no longer
+    // true.
     const [snapshot, setSnapshot] = useState<T | null>(null);
 
     // Identifies the newest in-flight load, so a slower earlier one cannot
@@ -182,8 +183,7 @@ export function useSettingsForm<T>(opts: SettingsFormOptions<T>): SettingsForm<T
         } catch (err) {
             // A save that THREW leaves the form dirty and the operator on the
             // page. Without the finally below, `saving` stayed true forever and
-            // the bar disabled both of its buttons - dirty edits, no way to save
-            // them, no way to discard them.
+            // the card disabled its Save - dirty edits, no way to save them.
             const msg = err instanceof Error ? err.message : 'Could not save.';
             setError(msg);
             toast(msg, false);

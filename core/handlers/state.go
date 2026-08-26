@@ -168,6 +168,11 @@ type AppState struct {
 	// persisted, never logged.
 	AdminSecret string
 
+	// SetupEnabled mirrors config.SetupEnabled (env SETUP): whether /setup stays
+	// reachable once an admin exists. Ignored while no admin exists. See the
+	// config field for why the default is false.
+	SetupEnabled bool
+
 	// SuspendGrace mirrors config.SuspendGrace: how long after a tenant is marked
 	// "suspended" the LinkBoot gate keeps letting their route-only links boot. The
 	// gate uses it via linkHardSuspended; MUST match the reconciler + enforcement

@@ -45,7 +45,14 @@ func (f *setupFakeStore) CreateAdditionalAdmin(username, passwordHash, totpSecre
 }
 
 func newSetupTestHandler(fs *setupFakeStore, adminSecret string) *SetupHandler {
-	state := &AppState{Store: fs, AdminSecret: adminSecret, FrontendURL: "https://panel.example.com"}
+	return newSetupTestHandlerWithSetup(fs, adminSecret, false)
+}
+
+// newSetupTestHandlerWithSetup builds a handler with env SETUP set explicitly.
+// The default is FALSE, matching production: on an instance that already has an
+// admin, /setup is shut unless the operator opened it.
+func newSetupTestHandlerWithSetup(fs *setupFakeStore, adminSecret string, setupEnabled bool) *SetupHandler {
+	state := &AppState{Store: fs, AdminSecret: adminSecret, SetupEnabled: setupEnabled, FrontendURL: "https://panel.example.com"}
 	auth := NewAuthHandler(state, "test-jwt-secret")
 	return NewSetupHandler(state, auth)
 }
@@ -88,10 +95,14 @@ func TestCreateAdmin_Matrix(t *testing.T) {
 		userCount   int
 		adminCount  int
 		adminSecret string // configured on the server
-		body        map[string]interface{}
-		createErr   error
-		wantStatus  int
-		wantErrCode string // "" means success
+		// setupEnabled is env SETUP. Only consulted once an admin exists, so
+		// every fresh-install and lost-admin case below leaves it false on
+		// purpose: those must work without it.
+		setupEnabled bool
+		body         map[string]interface{}
+		createErr    error
+		wantStatus   int
+		wantErrCode  string // "" means success
 	}{
 		{
 			name:       "fresh install unset -> 200",
@@ -130,27 +141,53 @@ func TestCreateAdmin_Matrix(t *testing.T) {
 			wantStatus:  http.StatusOK,
 		},
 		{
-			name:       "complete unset -> 403 admin_recovery_disabled",
+			// SETUP is checked before the secret, so the reason reported is the
+			// door being shut rather than a missing secret. That ordering is the
+			// point: an operator who turned setup off should not be sent hunting
+			// for an env var that would not have helped.
+			name:       "complete unset + SETUP off -> 403 setup_disabled",
 			userCount:  1,
 			adminCount: 1,
 			body:       map[string]interface{}{"username": "backup", "password": "password123"},
-			wantStatus: http.StatusForbidden, wantErrCode: "admin_recovery_disabled",
+			wantStatus: http.StatusForbidden, wantErrCode: "setup_disabled",
 		},
 		{
-			name:        "complete set + correct -> 200 (break-glass additional admin)",
+			// The case env SETUP was added for: a correct secret is not enough on
+			// a live instance, because the operator switched the door off.
+			name:        "complete set + correct but SETUP off -> 403 setup_disabled",
 			userCount:   1,
 			adminCount:  1,
 			adminSecret: secret,
 			body:        map[string]interface{}{"username": "backup", "password": "password123", "adminSecret": secret},
-			wantStatus:  http.StatusOK,
+			wantStatus:  http.StatusForbidden, wantErrCode: "setup_disabled",
 		},
 		{
-			name:        "complete set + wrong -> 403 invalid_admin_secret",
-			userCount:   1,
-			adminCount:  1,
-			adminSecret: secret,
-			body:        map[string]interface{}{"username": "backup", "password": "password123", "adminSecret": "nope"},
-			wantStatus:  http.StatusForbidden, wantErrCode: "invalid_admin_secret",
+			name:         "complete set + correct + SETUP on -> 200 (break-glass additional admin)",
+			userCount:    1,
+			adminCount:   1,
+			adminSecret:  secret,
+			setupEnabled: true,
+			body:         map[string]interface{}{"username": "backup", "password": "password123", "adminSecret": secret},
+			wantStatus:   http.StatusOK,
+		},
+		{
+			name:         "complete set + wrong + SETUP on -> 403 invalid_admin_secret",
+			userCount:    1,
+			adminCount:   1,
+			adminSecret:  secret,
+			setupEnabled: true,
+			body:         map[string]interface{}{"username": "backup", "password": "password123", "adminSecret": "nope"},
+			wantStatus:   http.StatusForbidden, wantErrCode: "invalid_admin_secret",
+		},
+		{
+			// SETUP on with no secret configured is a misconfiguration, not a way
+			// in. The status endpoint answers it with the red banner.
+			name:         "complete SETUP on but no secret -> 403 admin_recovery_disabled",
+			userCount:    1,
+			adminCount:   1,
+			setupEnabled: true,
+			body:         map[string]interface{}{"username": "backup", "password": "password123"},
+			wantStatus:   http.StatusForbidden, wantErrCode: "admin_recovery_disabled",
 		},
 		{
 			name:       "allowed but bad username -> 400 invalid_username",
@@ -169,20 +206,21 @@ func TestCreateAdmin_Matrix(t *testing.T) {
 			wantStatus: http.StatusConflict, wantErrCode: "setup_already_complete",
 		},
 		{
-			name:        "break-glass username collision -> 409 username_taken",
-			userCount:   1,
-			adminCount:  1,
-			adminSecret: secret,
-			body:        map[string]interface{}{"username": "backup", "password": "password123", "adminSecret": secret},
-			createErr:   store.ErrUsernameTaken,
-			wantStatus:  http.StatusConflict, wantErrCode: "username_taken",
+			name:         "break-glass username collision -> 409 username_taken",
+			userCount:    1,
+			adminCount:   1,
+			adminSecret:  secret,
+			setupEnabled: true,
+			body:         map[string]interface{}{"username": "backup", "password": "password123", "adminSecret": secret},
+			createErr:    store.ErrUsernameTaken,
+			wantStatus:   http.StatusConflict, wantErrCode: "username_taken",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &setupFakeStore{userCount: tc.userCount, adminCount: tc.adminCount, createErr: tc.createErr}
-			h := newSetupTestHandler(fs, tc.adminSecret)
+			h := newSetupTestHandlerWithSetup(fs, tc.adminSecret, tc.setupEnabled)
 			rec := postCreateAdmin(h, tc.body)
 
 			if rec.Code != tc.wantStatus {

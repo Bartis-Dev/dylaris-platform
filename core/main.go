@@ -571,6 +571,7 @@ func main() {
 	appState.ClusterSecret = cfg.ClusterSecret
 	appState.GatewayHubURL = cfg.GatewayHubURL
 	appState.AdminSecret = cfg.AdminSecret
+	appState.SetupEnabled = cfg.SetupEnabled
 	appState.SuspendGrace = cfg.SuspendGrace
 
 	// ACL reconciler - leader-gated. Periodically (and on a Redis reconnect)

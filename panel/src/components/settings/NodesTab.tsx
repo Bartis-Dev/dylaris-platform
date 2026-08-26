@@ -21,6 +21,8 @@ import LinkUpdatesPanel from '@/components/settings/LinkUpdatesPanel';
 import GuardedTabs from '@/components/settings/GuardedTabs';
 import { useTabParam } from '@/lib/useTabParam';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import SettingsPage from '@/components/settings/SettingsPage';
+import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
@@ -885,15 +887,14 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
     );
 
     return (
-        <div className="space-y-6">
-            <div>
-                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Placement</h2>
-                <p className="text-sm text-(--base-07)">
-                    Global defaults for how new servers are placed on nodes. Per-node overrides live on the Nodes tab.
-                </p>
-            </div>
-
-            <div className="card p-5 space-y-5">
+        <SettingsPage
+            title="Placement"
+            description="Global defaults for how new servers are placed on nodes. Per-node overrides live on the Nodes tab."
+        >
+            <SettingsCard
+                title="Placement defaults"
+                form={{ dirty, saving, save: handleSave, discard: () => { if (snapshotRef.current) setSettings(snapshotRef.current); } }}
+            >
                 <div>
                     <h3 className="mono-label mb-3">Overcommit Defaults</h3>
                     <p className="text-xs text-(--base-06) mb-4">
@@ -1129,9 +1130,8 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                         </div>
                     )}
                 </div>
-            </div>
-
-        </div>
+            </SettingsCard>
+        </SettingsPage>
     );
 }
 

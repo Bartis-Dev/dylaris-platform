@@ -152,46 +152,6 @@
     },
     {
       "method": "GET",
-      "path": "/api/admin/plans",
-      "auth": "session",
-      "authorization": "plans.read",
-      "description": "RequireCap(\"plans.read\")",
-      "handler": "PlansHandler.List",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/admin/plans",
-      "auth": "session",
-      "authorization": "plans.write",
-      "description": "RequireCap(\"plans.write\")",
-      "handler": "PlansHandler.Create",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/admin/plans/{id:[0-9]+}",
-      "auth": "session",
-      "authorization": "plans.delete",
-      "description": "RequireCap(\"plans.delete\")",
-      "handler": "PlansHandler.Delete",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "PUT",
-      "path": "/api/admin/plans/{id:[0-9]+}",
-      "auth": "session",
-      "authorization": "plans.write",
-      "description": "RequireCap(\"plans.write\")",
-      "handler": "PlansHandler.Update",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "GET",
       "path": "/api/admin/regions",
       "auth": "session",
       "authorization": "regions.read",
@@ -935,7 +895,6 @@
       "path": "/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides",
       "auth": "session",
       "authorization": "plans.write",
-      "description": "RequireCap(\"plans.write\").",
       "handler": "PlansHandler.SetUserLimitOverrides",
       "group": "admin",
       "external": false
@@ -987,16 +946,6 @@
       "authorization": "users.write",
       "description": "SetUserPermissions PUT /api/admin/users/{id}/permissions Sets per-user capability flags.",
       "handler": "UserHandler.SetUserPermissionsHandler",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "PATCH",
-      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/plan",
-      "auth": "session",
-      "authorization": "plans.write",
-      "description": "RequireCap(\"plans.write\").",
-      "handler": "PlansHandler.SetUserPlan",
       "group": "admin",
       "external": false
     },
@@ -3832,36 +3781,6 @@
     },
     {
       "method": "GET",
-      "path": "/api/settings/gateway/hub-redis-admin",
-      "auth": "session",
-      "authorization": "settings.read",
-      "description": "non-secret status only.",
-      "handler": "HubRedisAdminHandler.GetStatus",
-      "group": "settings",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/settings/gateway/hub-redis-admin",
-      "auth": "session",
-      "authorization": "settings.write",
-      "description": "create gw-hub-admin on Core's own Redis (the ONE shared instance) and return the generated password ONCE, or in manual mode return the ready-to-paste command.",
-      "handler": "HubRedisAdminHandler.Provision",
-      "group": "settings",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/settings/gateway/hub-redis-admin/roll",
-      "auth": "session",
-      "authorization": "settings.write",
-      "description": "re-mint the password on the recorded target.",
-      "handler": "HubRedisAdminHandler.Roll",
-      "group": "settings",
-      "external": false
-    },
-    {
-      "method": "GET",
       "path": "/api/settings/placement",
       "auth": "session",
       "authorization": "settings.read",
@@ -4772,15 +4691,15 @@
     }
   ],
   "counts": {
-    "total": 477,
+    "total": 469,
     "byAuth": {
       "none": 36,
-      "session": 428,
+      "session": 420,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 111,
+      "admin": 106,
       "auth": 18,
       "authz": 3,
       "backup-jobs": 4,
@@ -4808,7 +4727,7 @@
       "scheduled-tasks": 1,
       "server-roles": 4,
       "servers": 70,
-      "settings": 31,
+      "settings": 28,
       "setup": 2,
       "share": 1,
       "solder": 12,

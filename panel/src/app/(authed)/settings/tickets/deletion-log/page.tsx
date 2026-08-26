@@ -76,7 +76,7 @@ export default function TicketDeletionLogPage() {
                     <Link href="/settings/tickets" className="inline-flex items-center gap-1.5 text-xs text-(--base-06) hover:text-(--accent-light) mb-3">
                         <ArrowLeft size={12} /> Back to ticket settings
                     </Link>
-                    <h2 className="text-lg font-display flex items-center gap-2">
+                    <h2 className="h-section flex items-center gap-2">
                         <Trash2 size={18} className="text-(--error-light)" /> Ticket Deletion Log
                     </h2>
                     <p className="text-sm text-(--base-06) mt-1">

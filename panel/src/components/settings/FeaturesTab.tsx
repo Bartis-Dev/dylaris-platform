@@ -1,15 +1,19 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getFeatureSettings, saveFeatureSettings, FeatureSettings } from '@/lib/api';
 import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload } from '@/lib/api/featureFlags';
 import { getTabProxySettings, setTabProxySettings, type TabProxySettings } from '@/lib/api/tabProxySettings';
 import { getCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage } from '@/lib/coreStorage';
-import { Network, Globe, LifeBuoy, Package, Move, AlertTriangle, Server, Key, ChevronDown, ChevronRight } from 'lucide-react';
+import { Network, Globe, AlertTriangle, Server, ChevronDown, ChevronRight } from 'lucide-react';
 import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import SettingsPage from '@/components/settings/SettingsPage';
+import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
+import { SwitchRow } from '@/components/ui/Switch';
+import Checkbox from '@/components/ui/Checkbox';
 import { useAppData } from '@/lib/AppDataContext';
 import { toast } from '@/components/ui/Toast';
 import HelpTip from '@/components/ui/HelpTip';
@@ -37,9 +41,9 @@ export default function FeaturesTab() {
     // These used to persist on every click, and say nothing when they worked.
     // Three save models sat in one scroll on this page - these seven flags
     // autosaving silently, the two tab-proxy switches autosaving on click and
-    // its numbers on blur, and everything else waiting for the save bar - on
-    // controls that look identical to each other. Now all three are dirty
-    // states and the bar commits them.
+    // its numbers on blur, and everything else waiting for a save bar - on
+    // controls that look identical to each other. All three are dirty states
+    // now, and each is committed by the card it lives in.
     const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
@@ -92,7 +96,7 @@ export default function FeaturesTab() {
             } else {
                 // Say so instead of rendering the seed values as if they were
                 // fetched. snapshotRef stays null on this path, which keeps
-                // `dirty` false and the save bar hidden - so the admin cannot
+                // `dirty` false and the card's Save inert - so the admin cannot
                 // write these unconfirmed values back over the real ones - but
                 // without a message the screen just quietly lies about what is
                 // enabled.
@@ -125,7 +129,7 @@ export default function FeaturesTab() {
         });
     }, []);
 
-    // An edit to a platform flag. Local; the bar commits it.
+    // An edit to a platform flag. Local; the card's Save commits it.
     const editPlatformFlag = (key: keyof FeatureFlagsAdminPayload, value: boolean | string) => {
         setPlatformFlags(prev => ({ ...prev, [key]: value }));
         setLastBulk(null);
@@ -243,267 +247,143 @@ export default function FeaturesTab() {
         </div>
     );
 
+    // Three payloads, three endpoints, so three cards each owning its own save.
+    // They used to be seven boxes over those same three payloads, which is why
+    // "which of these does the one Save button write" had no answer on screen.
+    const proxyForm = { dirty, saving, save: handleSave, discard: handleDiscard };
+    const platformForm = { dirty: platformDirty, saving: platformSaving, save: savePlatform, discard: discardPlatform };
+    const proxyTabForm = { dirty: tabProxyDirty, saving: tabProxySaving, save: saveTabProxy, discard: discardTabProxy };
+
     return (
-        <div className="max-w-2xl space-y-6">
-            <div>
-                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Feature Toggles</h2>
-                <p className="text-sm text-(--base-07)">Enable or disable platform features. Disabled features hide all related UI and block API endpoints.</p>
-            </div>
+        <SettingsPage
+            title="Feature toggles"
+            width="2xl"
+            description="Turn platform features on or off. A disabled feature hides all related UI and blocks its API endpoints."
+        >
+            <SettingsCard title="Proxy and network support" icon={Network} form={proxyForm}>
+                <SwitchRow
+                    label="Proxy support"
+                    description="BungeeCord, Velocity and Waterfall proxy containers, and server linking."
+                    checked={settings.proxyEnabled}
+                    onChange={v => setSettings(prev => ({ ...prev, proxyEnabled: v }))}
+                />
+            </SettingsCard>
 
-            <div className="card p-5">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                            <Network size={18} className="text-(--accent-light)" />
-                        </div>
-                        <div>
-                            <div className="font-medium text-sm text-(--base-09)">Proxy / Network Support</div>
-                            <div className="text-xs text-(--base-06)">BungeeCord, Velocity, Waterfall proxy containers and server linking</div>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={settings.proxyEnabled}
-                        onClick={() => setSettings(prev => ({ ...prev, proxyEnabled: !prev.proxyEnabled }))}
-                        className={`toggle-track ${settings.proxyEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                    >
-                        <span className={`toggle-knob ${settings.proxyEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-            </div>
-
-            {/* No Gateway toggle here: the gateway is on exactly when Game
-                Traffic routes through it, so the routing-mode selector in the
+            {/* No Gateway toggle here: the gateway is on exactly when game
+                traffic routes through it, so the routing-mode selector in the
                 Gateway sub-tab is its only switch. */}
 
-            {/* Platform-wide subsystem toggles. Save on click — each flip
-                immediately blocks/restores the whole API surface so an
-                explicit Save bar would be a footgun. */}
-            <div className="card p-5">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                            <LifeBuoy size={18} className="text-(--accent-light)" />
-                        </div>
-                        <div>
-                            <div className="font-medium text-sm text-(--base-09)">Ticket System</div>
-                            <div className="text-xs text-(--base-06)">
-                                Enables the tickets module, inbox, attachments, canned responses and notifications. When off, all <code className="font-mono">/api/tickets/*</code> endpoints return 503 and the Tickets nav entry is hidden.
-                            </div>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={platformFlags.tickets}
-                        disabled={(!platformFlags.tickets && storageConfigured !== true)}
-                        onClick={() => editPlatformFlag('tickets', !platformFlags.tickets)}
-                        className={`toggle-track ${platformFlags.tickets ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
+            <SettingsCard title="Platform subsystems" icon={Server} form={platformForm}>
+                <SettingsGroup first>
+                    <SwitchRow
+                        label="Ticket system"
+                        description={<>Enables the tickets module, inbox, attachments, canned responses and notifications. When off, all <code className="font-mono">/api/tickets/*</code> endpoints return 503 and the Tickets nav entry is hidden.</>}
+                        checked={platformFlags.tickets}
+                        disabled={!platformFlags.tickets && storageConfigured !== true}
+                        onChange={v => editPlatformFlag('tickets', v)}
                     >
-                        <span className={`toggle-knob ${platformFlags.tickets ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-                {!platformFlags.tickets && storageConfigured !== true && (
-                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-3">
-                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                        <span>Requires Core file storage. Configure and save it under Settings -&gt; Core Storage first.</span>
-                    </p>
-                )}
-            </div>
-
-            {/* Two switches, one subsystem. "Modpacks" turns it on for ADMINS;
-                "Open authoring to users" widens it to everyone else. Nested
-                rather than side by side because the second is meaningless without
-                the first, and the backend folds it to false when Modpacks goes
-                off - so the nesting is the real relationship, not decoration.
-                The Modpacks navbar entry follows both: it appears with the
-                subsystem and switches from admin-only to everyone with authoring. */}
-            <div className="card p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                            <Package size={18} className="text-(--accent-light)" />
-                        </div>
-                        <div>
-                            <div className="font-medium text-sm text-(--base-09)">Modpacks</div>
-                            <div className="text-xs text-(--base-06)">
-                                Turns on the modpack builder, storage and Solder endpoints for <strong>admins</strong>. When off, modpack write endpoints return 503 and the Modpacks nav entry is hidden. Existing modpacks stay readable and downloadable.
-                            </div>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={platformFlags.modpacks}
-                        
-                        onClick={() => editPlatformFlag('modpacks', !platformFlags.modpacks)}
-                        className={`toggle-track ${platformFlags.modpacks ? 'toggle-track-on' : 'toggle-track-off'}`}
-                    >
-                        <span className={`toggle-knob ${platformFlags.modpacks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-
-                <div className={`border-t border-(--base-03) pt-4 ${platformFlags.modpacks ? '' : 'opacity-60'}`}>
-                    <div className="flex items-center justify-between gap-4">
-                        <div className="min-w-0">
-                            <div className="text-sm font-medium text-(--base-09)">Open authoring to users</div>
-                            <p className="text-xs text-(--base-06)">
-                                Lets non-admin users create and publish their own modpacks. Off means admins only. You can still revoke a single user afterwards under Settings -&gt; Users.
+                        {!platformFlags.tickets && storageConfigured !== true && (
+                            <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-2">
+                                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                <span>Requires Core file storage. Configure and save it under Settings, Core storage first.</span>
                             </p>
-                        </div>
-                        <button
-                            type="button"
-                            role="switch"
-                            aria-checked={platformFlags.modpackAuthoring}
-                            disabled={!platformFlags.modpacks}
-                            onClick={() => editPlatformFlag('modpackAuthoring', !platformFlags.modpackAuthoring)}
-                            className={`toggle-track ${platformFlags.modpackAuthoring ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
-                        >
-                            <span className={`toggle-knob ${platformFlags.modpackAuthoring ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                        </button>
-                    </div>
+                        )}
+                    </SwitchRow>
+                </SettingsGroup>
 
-                    {/* Checked = the next flip of the switch above also rewrites
-                        users an admin set by hand. Unchecked (the default) keeps
-                        those decisions. Deliberately NOT a stored setting: it
-                        describes what one change should do, so remembering it
-                        across sessions would silently widen a later toggle. */}
-                    <label className={`flex items-start gap-2 mt-3 text-xs ${platformFlags.modpacks ? 'text-(--base-07) cursor-pointer' : 'text-(--base-06)'}`}>
-                        <input
-                            type="checkbox"
+                {/* Two switches, one subsystem. "Modpacks" turns it on for ADMINS;
+                    "Open authoring to users" widens it to everyone else. Nested
+                    rather than side by side because the second is meaningless without
+                    the first, and the backend folds it to false when Modpacks goes
+                    off - so the nesting is the real relationship, not decoration. */}
+                <SettingsGroup title="Modpacks">
+                    <SwitchRow
+                        label="Modpacks"
+                        description={<>Turns on the modpack builder, storage and Solder endpoints for <strong>admins</strong>. When off, modpack write endpoints return 503 and the Modpacks nav entry is hidden. Existing modpacks stay readable and downloadable.</>}
+                        checked={platformFlags.modpacks}
+                        onChange={v => editPlatformFlag('modpacks', v)}
+                    />
+                    <div className={`pl-4 border-l-2 border-(--base-03) space-y-3 ${platformFlags.modpacks ? '' : 'opacity-60'}`}>
+                        <SwitchRow
+                            label="Open authoring to users"
+                            description="Lets non-admin users create and publish their own modpacks. Off means admins only. You can still revoke a single user afterwards under Settings, Users."
+                            checked={platformFlags.modpackAuthoring}
+                            disabled={!platformFlags.modpacks}
+                            onChange={v => editPlatformFlag('modpackAuthoring', v)}
+                        />
+                        {/* Checked = the next flip of the switch above also rewrites
+                            users an admin set by hand. Unchecked (the default) keeps
+                            those decisions. Deliberately NOT a stored setting: it
+                            describes what one change should do, so remembering it
+                            across sessions would silently widen a later toggle. */}
+                        <Checkbox
                             checked={applyToManual}
                             disabled={!platformFlags.modpacks}
-                            onChange={e => setApplyToManual(e.target.checked)}
-                            className="checkbox mt-0.5 shrink-0"
+                            onChange={setApplyToManual}
+                            label="Also apply to users I set by hand"
+                            hint="Off keeps every per-user override; on resets them to follow this switch from now on."
                         />
-                        <span>
-                            Also apply to users I set by hand. Off keeps every per-user override; on resets them to follow this switch from now on.
-                        </span>
-                    </label>
+                        {lastBulk !== null && (
+                            <p className="text-xs font-mono text-(--base-06)">
+                                {lastBulk === 0
+                                    ? 'No user rows needed changing.'
+                                    : `${lastBulk} user${lastBulk === 1 ? '' : 's'} updated.`}
+                            </p>
+                        )}
+                    </div>
+                </SettingsGroup>
 
-                    {lastBulk !== null && (
-                        <p className="mt-2 text-xs font-mono text-(--base-06)">
-                            {lastBulk === 0
-                                ? 'No user rows needed changing.'
-                                : `${lastBulk} user${lastBulk === 1 ? '' : 's'} updated.`}
+                {/* Auto-move and BYON are gateway-only. Both toggles are hard
+                    disabled while routing is on IP:Port, since enabling either
+                    then would 409 on the backend. */}
+                <SettingsGroup title="Gateway-dependent">
+                    <SwitchRow
+                        label="Auto-move"
+                        description="Lets the rebalance worker migrate opted-in servers to a less-loaded node when their current node is overloaded. Per-server opt-in lives in each server's resource settings. The route keeps the player address stable across the node change."
+                        checked={platformFlags.autoMove}
+                        disabled={gatewayOff}
+                        onChange={v => editPlatformFlag('autoMove', v)}
+                    />
+                    {/* An external node FORCES gateway routing locally
+                        (NODE_EXTERNAL), so with no gateway a tenant node has
+                        nothing to join: the flag would switch on an enrolment
+                        surface for machines that can never connect. The panel
+                        therefore ANDs this flag with the live routing mode. */}
+                    <SwitchRow
+                        label="BYON (bring your own node)"
+                        description="Turns on tenant node enrollment, traffic metering and the Usage and Billing admin settings, which stay hidden while it is off."
+                        checked={platformFlags.byon}
+                        disabled={gatewayOff}
+                        onChange={v => editPlatformFlag('byon', v)}
+                    />
+                    {gatewayOff && (
+                        <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
+                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                            <span>
+                                Both require gateway routing. Switch game traffic to Gateway or Both
+                                first: a tenant node forces gateway routing on its own side, so it has
+                                nothing to join while game traffic is on IP:Port.
+                            </span>
                         </p>
                     )}
-                </div>
-            </div>
+                </SettingsGroup>
 
-            {/* Auto-Move — gateway-only. Greyed + the toggle is hard-disabled
-                while routing is on IP:Port, since enabling it then would 409
-                on the backend (gateway_required). */}
-            <div className={`card p-5 ${gatewayOff ? 'opacity-60' : ''}`}>
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                            <Move size={18} className="text-(--accent-light)" />
-                        </div>
-                        <div>
-                            <div className="font-medium text-sm text-(--base-09)">Auto-Move</div>
-                            <div className="text-xs text-(--base-06)">
-                                Lets the rebalance worker migrate opted-in servers to a less-loaded node when their current node is overloaded. Per-server opt-in lives in each server&apos;s resource settings. Migration is gateway-only — the route keeps the player address stable across the node change.
-                            </div>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={platformFlags.autoMove}
-                        disabled={gatewayOff}
-                        onClick={() => editPlatformFlag('autoMove', !platformFlags.autoMove)}
-                        className={`toggle-track ${platformFlags.autoMove ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
-                    >
-                        <span className={`toggle-knob ${platformFlags.autoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-                {gatewayOff && (
-                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-3">
-                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                        <span>Requires gateway routing. Switch Game Traffic to Gateway or Both first.</span>
-                    </p>
-                )}
-            </div>
-
-            {/* BYON (Bring Your Own Node). Platform-wide subsystem toggle wired
-                exactly like tickets/modpacks/auto-move above: same read of the
-                feature-settings payload, same save-on-click via savePlatformFlag.
-                The PUT publishes features.changed, which AppDataContext consumes
-                to refresh featureFlags, so the Settings nav's BYON group
-                (Usage/Billing/Plans) appears/disappears without a manual reload. */}
-            {/* Disabled while routing is on IP:Port, same as Auto-Move above. An
-                external node FORCES gateway routing locally (NODE_EXTERNAL), so
-                with no gateway a tenant node has nothing to join: the flag would
-                switch on an enrolment surface for machines that can never
-                connect. The panel therefore ANDs this flag with the live routing
-                mode (see byonEnabled in AppDataContext). */}
-            <div className={`card p-5 ${gatewayOff ? 'opacity-60' : ''}`}>
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                            <Server size={18} className="text-(--accent-light)" />
-                        </div>
-                        <div>
-                            <div className="font-medium text-sm text-(--base-09)">BYON (Bring Your Own Node)</div>
-                            <div className="text-xs text-(--base-06)">
-                                Enabling BYON turns on tenant node enrollment, traffic metering and the Usage, Billing and Plans admin settings (which stay hidden while it is off).
-                            </div>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={platformFlags.byon}
-                        disabled={gatewayOff}
-                        onClick={() => editPlatformFlag('byon', !platformFlags.byon)}
-                        className={`toggle-track ${platformFlags.byon ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
-                    >
-                        <span className={`toggle-knob ${platformFlags.byon ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-                {gatewayOff && (
-                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-3">
-                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                        <span>Requires gateway routing. A tenant node forces gateway routing on its own side, so it has nothing to join while Game Traffic is on IP:Port.</span>
-                    </p>
-                )}
-            </div>
-
-            {/* User API keys. Two controls, because "may users hold keys" and
-                "which capabilities may they put on one" are different decisions:
-                an operator can open the feature without opening the whole
-                capability catalogue. Both are enforced at MINT and at USE - a
-                key created before the switch was turned off stops working, which
-                is what an operator who turned it off means. */}
-            <div className="card p-5">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                            <Key size={18} className="text-(--accent-light)" />
-                        </div>
-                        <div>
-                            <div className="font-medium text-sm text-(--base-09)">User API Keys</div>
-                            <div className="text-xs text-(--base-06)">
-                                Lets non-admins mint scoped keys for the <code className="font-mono">/api/external</code> automation surface. Admins can always mint their own.
-                            </div>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={platformFlags.userApiKeys}
-                        
-                        onClick={() => editPlatformFlag('userApiKeys', !platformFlags.userApiKeys)}
-                        className={`toggle-track ${platformFlags.userApiKeys ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
-                    >
-                        <span className={`toggle-knob ${platformFlags.userApiKeys ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
+                {/* Two controls, because "may users hold keys" and "which
+                    capabilities may they put on one" are different decisions: an
+                    operator can open the feature without opening the whole
+                    capability catalogue. Both are enforced at MINT and at USE - a
+                    key created before the switch was turned off stops working,
+                    which is what an operator who turned it off means. */}
+                <SettingsGroup title="User API keys">
+                    <SwitchRow
+                        label="User API keys"
+                        description={<>Lets non-admins mint scoped keys for the <code className="font-mono">/api/external</code> automation surface. Admins can always mint their own.</>}
+                        checked={platformFlags.userApiKeys}
+                        onChange={v => editPlatformFlag('userApiKeys', v)}
+                    />
 
                 {platformFlags.userApiKeys && (
-                    <div className="mt-4 pt-4 border-t border-(--base-03)">
+                    <div className="pt-3 border-t border-(--base-03)">
                         <button
                             type="button"
                             onClick={() => setKeyCapsOpen(o => !o)}
@@ -583,39 +463,26 @@ export default function FeaturesTab() {
                         )}
                     </div>
                 )}
-            </div>
+                </SettingsGroup>
+            </SettingsCard>
 
             {/* WS5 custom-tab reverse proxy */}
-            <div className="card p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                            <Globe size={18} className="text-(--accent-light)" />
-                        </div>
-                        <div>
-                            <div className="font-medium text-sm text-(--base-09)">Custom-Tab Reverse Proxy</div>
-                            <div className="text-xs text-(--base-06)">
-                                Streams a server container&apos;s web UI (BlueMap, squaremap, Dynmap) through Dylaris so no public port is needed. When off, proxied tabs and share links stop serving.
-                            </div>
-                        </div>
-                    </div>
-                    <button type="button" role="switch" aria-checked={tabProxy.enabled} 
-                        onClick={() => setTabProxy(t => ({ ...t, enabled: !t.enabled }))}
-                        className={`toggle-track ${tabProxy.enabled ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                        <span className={`toggle-knob ${tabProxy.enabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-                <div className="flex items-center justify-between border-t border-(--base-03) pt-3">
-                    <div>
-                        <div className="text-sm font-medium text-(--base-09)">Allow public share links</div>
-                        <p className="text-xs text-(--base-06)">Let owners publish anonymous (no-login) share links.</p>
-                    </div>
-                    <button type="button" role="switch" aria-checked={tabProxy.allowPublicLinks} 
-                        onClick={() => setTabProxy(t => ({ ...t, allowPublicLinks: !t.allowPublicLinks }))}
-                        className={`toggle-track ${tabProxy.allowPublicLinks ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                        <span className={`toggle-knob ${tabProxy.allowPublicLinks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
+            <SettingsCard title="Custom-tab reverse proxy" icon={Globe} form={proxyTabForm}>
+                <SettingsGroup first>
+                    <SwitchRow
+                        label="Custom-tab reverse proxy"
+                        description="Streams a server container's web UI (BlueMap, squaremap, Dynmap) through Dylaris so no public port is needed. When off, proxied tabs and share links stop serving."
+                        checked={tabProxy.enabled}
+                        onChange={v => setTabProxy(t => ({ ...t, enabled: v }))}
+                    />
+                    <SwitchRow
+                        label="Allow public share links"
+                        description="Let owners publish anonymous, no-login share links."
+                        checked={tabProxy.allowPublicLinks}
+                        onChange={v => setTabProxy(t => ({ ...t, allowPublicLinks: v }))}
+                    />
+                </SettingsGroup>
+                <SettingsGroup>
                 {/* Same-origin security note (WS5 C1 follow-up, closed by spec B5):
                     when origin isolation is active, proxied content is served from
                     a dedicated, different-origin proxy host, so a compromised/
@@ -644,23 +511,30 @@ export default function FeaturesTab() {
                         </span>
                     </p>
                 )}
-                <div className="grid grid-cols-2 gap-3 border-t border-(--base-03) pt-3">
-                    <div>
-                        <label className="input-label">Max proxied tabs / server</label>
-                        <input type="number" min={1} value={tabProxy.maxPerServer} 
-                            onChange={e => setTabProxy({ ...tabProxy, maxPerServer: Number(e.target.value) })}
-                            className="input-field w-full" />
+                </SettingsGroup>
+                <SettingsGroup title="Limits">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label" htmlFor="tabproxy-max-per-server">Max proxied tabs per server</label>
+                            <input
+                                id="tabproxy-max-per-server"
+                                type="number" min={1} value={tabProxy.maxPerServer}
+                                onChange={e => setTabProxy({ ...tabProxy, maxPerServer: Number(e.target.value) })}
+                                className="input-field w-full"
+                            />
+                        </div>
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label" htmlFor="tabproxy-max-links">Max share links per user</label>
+                            <input
+                                id="tabproxy-max-links"
+                                type="number" min={1} value={tabProxy.maxShareLinksPerUser}
+                                onChange={e => setTabProxy({ ...tabProxy, maxShareLinksPerUser: Number(e.target.value) })}
+                                className="input-field w-full"
+                            />
+                        </div>
                     </div>
-                    <div>
-                        <label className="input-label">Max share links / user</label>
-                        <input type="number" min={1} value={tabProxy.maxShareLinksPerUser} 
-                            onChange={e => setTabProxy({ ...tabProxy, maxShareLinksPerUser: Number(e.target.value) })}
-                            className="input-field w-full" />
-                    </div>
-                </div>
-            </div>
-
-            {/* Toast */}
-        </div>
+                </SettingsGroup>
+            </SettingsCard>
+        </SettingsPage>
     );
 }

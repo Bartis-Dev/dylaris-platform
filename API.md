@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **476 routes** in 49 sections: 210 GET, 139 POST, 36 PUT, 35 PATCH, 53 DELETE, 4 (any).
+- **468 routes** in 49 sections: 208 GET, 136 POST, 35 PUT, 34 PATCH, 52 DELETE, 4 (any).
 - **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **324** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **0** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **316** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **1** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (111)
+- [/api/admin](#apiadmin) (106)
 - [/api/auth](#apiauth) (18)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -169,7 +169,7 @@ can still show what exists.
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
 - [/api/servers](#apiservers) (70)
-- [/api/settings](#apisettings) (31)
+- [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
 - [/api/solder](#apisolder) (6)
@@ -211,10 +211,6 @@ can still show what exists.
 | POST | `/api/admin/panel-roles` | session | `panelroles.write` | - | `PanelRolesHandler.CreatePanelRole` | adds a staff role. |
 | PATCH | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.write` | - | `PanelRolesHandler.UpdatePanelRole` | renames a staff role and replaces its capability set. |
 | DELETE | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.delete` | - | `PanelRolesHandler.DeletePanelRole` | deletes a staff role. |
-| GET | `/api/admin/plans` | session | `plans.read` | RequireBYONEnabled | `PlansHandler.List` | RequireCap("plans.read") |
-| POST | `/api/admin/plans` | session | `plans.write` | RequireBYONEnabled | `PlansHandler.Create` | RequireCap("plans.write") |
-| PUT | `/api/admin/plans/{id:[0-9]+}` | session | `plans.write` | RequireBYONEnabled | `PlansHandler.Update` | RequireCap("plans.write") |
-| DELETE | `/api/admin/plans/{id:[0-9]+}` | session | `plans.delete` | RequireBYONEnabled | `PlansHandler.Delete` | RequireCap("plans.delete") |
 | GET | `/api/admin/regions` | session | `regions.read` | - | `RegionsHandler.AdminListRegions` | RequireCap("regions.read") at the route; includes disabled regions. |
 | POST | `/api/admin/regions` | session | `regions.write` | - | `RegionsHandler.CreateRegion` | RequireCap("regions.write") at the route. |
 | PATCH | `/api/admin/regions/{id}` | session | `regions.write` | - | `RegionsHandler.UpdateRegion` | RequireCap("regions.write") at the route. |
@@ -289,13 +285,12 @@ can still show what exists.
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.read` | RequireBYONEnabled | `EntitlementHandler.GetForUser` | RequireCap("plans.read"). |
 | POST | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireBYONEnabled | `EntitlementHandler.Grant` | RequireCap("plans.write"). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireBYONEnabled | `EntitlementHandler.Revoke` | RequireCap("plans.write"). |
-| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides` | session | `plans.write` | RequireBYONEnabled | `PlansHandler.SetUserLimitOverrides` | RequireCap("plans.write"). |
+| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides` | session | `plans.write` | RequireBYONEnabled | `PlansHandler.SetUserLimitOverrides` | - |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag` | session | `settings.write` | - | `ModpackSettingsHandler.SetUserFlag` | PANEL settings.write (RequireCap at the route). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag` | session | `settings.write` | - | `ModpackSettingsHandler.ClearUserFlagOverride` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/panel-role` | session | `panelroles.read` | - | `UserHandler.GetUserPanelRoleHandler` | Reads the user's level-1 panel role id + per-user override caps, symmetric with the PUT. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/panel-role` | session | `panelroles.write` | - | `UserHandler.SetUserPanelRoleHandler` | Assigns (panelRoleId) or clears (panelRoleId=null) the user's level-1 panel role and their per-user panel cap grant/deny overrides. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/permissions` | session | `users.write` | - | `UserHandler.SetUserPermissionsHandler` | SetUserPermissions PUT /api/admin/users/{id}/permissions Sets per-user capability flags. |
-| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/plan` | session | `plans.write` | RequireBYONEnabled | `PlansHandler.SetUserPlan` | RequireCap("plans.write"). |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/regions` | session | `regions.read` | - | `UserRegionsHandler.GetUserRegions` | RequireCap("regions.read") at the route. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/regions` | session | `regions.write` | - | `UserRegionsHandler.SetUserRegions` | RequireCap("regions.write") at the route. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/role` | session | `users.write` | - | `UserHandler.SetUserRoleHandler` | SetUserRole PUT /api/admin/users/{id}/role Valid roles: "user", "support", "admin". |
@@ -712,9 +707,6 @@ can still show what exists.
 | GET | `/api/settings/gateway/dns` | session | `settings.read` | - | `GatewayDNSHandler.Get` | PANEL settings.read. |
 | PUT | `/api/settings/gateway/dns` | session | `settings.write` | - | `GatewayDNSHandler.Save` | PANEL settings.write. |
 | POST | `/api/settings/gateway/dns/probe` | session | `settings.write` | - | `GatewayDNSHandler.Probe` | PANEL settings.write. |
-| GET | `/api/settings/gateway/hub-redis-admin` | session | `settings.read` | - | `HubRedisAdminHandler.GetStatus` | non-secret status only. |
-| POST | `/api/settings/gateway/hub-redis-admin` | session | `settings.write` | - | `HubRedisAdminHandler.Provision` | create gw-hub-admin on Core's own Redis (the ONE shared instance) and return the generated password ONCE, or in manual mode return the ready-to-paste command. |
-| POST | `/api/settings/gateway/hub-redis-admin/roll` | session | `settings.write` | - | `HubRedisAdminHandler.Roll` | re-mint the password on the recorded target. |
 | GET | `/api/settings/placement` | session | `settings.read` | - | `SettingsHandler.GetPlacementSettings` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/placement` | session | `settings.write` | - | `SettingsHandler.SavePlacementSettings` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/settings/routing-mode` | session | _uncapped method_ | - | `SettingsHandler.GetRoutingMode` | available to all authenticated users |

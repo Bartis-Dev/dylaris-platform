@@ -8,10 +8,10 @@ import { useUnsavedChangesState, UnsavedDialog } from '@/components/settings/Uns
  * A tab bar that will not throw away unsaved work.
  *
  * A tab's sections unmount when you leave it, and unmounting unregisters them -
- * so an edit made on one tab vanished the moment another was clicked, taking the
- * save bar with it. Silently, which is the specific thing this whole arc is
- * about. Navigating AWAY from the page already prompted; moving inside it did
- * not, which is the more likely of the two.
+ * so an edit made on one tab vanished the moment another was clicked, with no
+ * prompt. Silently, which is the specific thing this whole arc is about.
+ * Navigating AWAY from the page already prompted; moving inside it did not,
+ * which is the more likely of the two.
  *
  * The same guard the Gateway page had hand-rolled around its own sub-navigation,
  * in one place so the three tabbed pages cannot drift apart.

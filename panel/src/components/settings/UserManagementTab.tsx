@@ -21,6 +21,7 @@ import GuardedTabs from '@/components/settings/GuardedTabs';
 import Switch from '@/components/ui/Switch';
 import HelpTip from '@/components/ui/HelpTip';
 import AccountPolicyCard from '@/components/settings/AccountPolicyCard';
+import SettingsCard, { SettingsRow } from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
 
 const ENCRYPTION_OPTIONS = [
@@ -139,22 +140,19 @@ function DemoAccountSection() {
     });
 
     return (
-        <section className="card p-5 space-y-4">
-            <div className="flex items-center gap-2">
-                <ShieldCheck size={16} className="text-(--accent-light)" />
-                <h3 className="font-medium text-sm text-(--base-09)">Public demo account</h3>
-            </div>
-            <p className="text-xs text-(--base-06)">
-                A single read-only account that sees every server flagged as a demo. It is forced
-                GET-only (cannot edit, power, create or download anything). Reachable with its own
-                password, or one-click via the public demo session. Leave empty to disable.
-            </p>
+        <SettingsCard
+            title="Public demo account"
+            icon={ShieldCheck}
+            form={form}
+            description="A single read-only account that sees every server flagged as a demo. It is forced GET-only: it cannot edit, power, create or download anything. Reachable with its own password, or one-click via the public demo session. Leave empty to disable."
+        >
             {form.loading || !form.value ? (
                 <SkeletonFormRow />
             ) : (
                 <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Demo account username</label>
+                    <label className="input-label" htmlFor="demo-account-username">Demo account username</label>
                     <input
+                        id="demo-account-username"
                         type="text"
                         value={form.value.username}
                         onChange={e => form.patch({ username: e.target.value })}
@@ -164,7 +162,7 @@ function DemoAccountSection() {
                     />
                 </div>
             )}
-        </section>
+        </SettingsCard>
     );
 }
 
@@ -181,8 +179,7 @@ function AuthPolicySection({
 
     if (form.loading || !policy) {
         return (
-            <section className="card p-5 border border-(--base-03) space-y-4">
-                <h3 className="mono-label mb-3 flex items-center gap-2"><Mail size={14} /> Authentication policy</h3>
+            <SettingsCard title="Authentication policy" icon={Mail}>
                 <div className="space-y-3">
                     <SkeletonText width="w-1/3" className="h-3.5" />
                     <Skeleton className="h-10 w-full" />
@@ -190,14 +187,14 @@ function AuthPolicySection({
                     <Skeleton className="h-10 w-full" />
                     <SkeletonFormRow />
                 </div>
-            </section>
+            </SettingsCard>
         );
     }
 
     const set = (patch: Partial<AuthPolicy>) => form.patch(patch);
 
     return (
-        <section className="card p-5 border border-(--base-03) space-y-6 relative">
+        <SettingsCard title="Authentication policy" icon={Mail} form={form}>
             <div className="space-y-4">
                 <h4 className="mono-label text-(--base-07)">Registration</h4>
                 <ToggleRow
@@ -337,7 +334,7 @@ function AuthPolicySection({
                     transport used for verification.
                 </p>
             </div>
-        </section>
+        </SettingsCard>
     );
 }
 
@@ -372,15 +369,14 @@ function MailSection() {
 
     if (form.loading || !cfg) {
         return (
-            <section className="card p-5 border border-(--base-03) space-y-4">
-                <h3 className="mono-label mb-3 flex items-center gap-2"><Send size={14} /> Outgoing email</h3>
+            <SettingsCard title="Outgoing email" icon={Send}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <SkeletonFormRow />
                     <SkeletonFormRow />
                     <SkeletonFormRow />
                     <SkeletonFormRow />
                 </div>
-            </section>
+            </SettingsCard>
         );
     }
 
@@ -403,16 +399,13 @@ function MailSection() {
     };
 
     return (
-        <section className="card p-5 border border-(--base-03) space-y-4 relative">
-            <header className="flex items-center justify-between gap-3">
-                <h3 className="mono-label flex items-center gap-2"><Send size={14} /> Outgoing email</h3>
-                <StatusBadge active={sending} inactiveLabel="Not configured" />
-            </header>
-            <p className="text-xs text-(--base-06)">
-                Used for email verification, password resets, deletion warnings and billing notices.
-                With nothing configured here, every one of those silently does not arrive.
-            </p>
-
+        <SettingsCard
+            title="Outgoing email"
+            icon={Send}
+            form={form}
+            actions={<StatusBadge active={sending} inactiveLabel="Not configured" />}
+            description="Used for email verification, password resets, deletion warnings and billing notices. With nothing configured here, every one of those silently does not arrive."
+        >
             <div className="flex flex-col gap-[5px]">
                 <label className="input-label flex items-center gap-1.5">
                     Provider
@@ -516,7 +509,7 @@ function MailSection() {
                     Save first — the test sends with the stored configuration, not the one on screen.
                 </p>
             )}
-        </section>
+        </SettingsCard>
     );
 }
 
@@ -582,26 +575,23 @@ function AutoDeleteSection({ form }: { form: SettingsForm<AuthPolicy> }) {
 
     if (form.loading || !policy) {
         return (
-            <section className="card p-5 border border-(--base-03) space-y-4">
-                <h3 className="mono-label mb-3 flex items-center gap-2"><Trash2 size={14} /> Auto-delete inactive users</h3>
+            <SettingsCard title="Auto-delete inactive users" icon={Trash2}>
                 <SkeletonText width="w-3/4" />
                 <Skeleton className="h-10 w-full" />
-            </section>
+            </SettingsCard>
         );
     }
 
     const set = (patch: Partial<AuthPolicy>) => form.patch(patch);
 
     return (
-        <section className="card p-5 border border-(--base-03) space-y-4">
-            <header className="flex items-center justify-between gap-3">
-                <h3 className="mono-label flex items-center gap-2"><Trash2 size={14} /> Auto-delete inactive users</h3>
-                <StatusBadge active={running} />
-            </header>
-            <p className="text-xs text-(--base-06)">
-                Daily job that warns dormant accounts by email and then removes them. Admins are never affected. Users with server history get an additional grace window. Signing in at any point cancels the scheduled deletion automatically.
-            </p>
-
+        <SettingsCard
+            title="Auto-delete inactive users"
+            icon={Trash2}
+            form={form}
+            actions={<StatusBadge active={running} />}
+            description="Daily job that warns dormant accounts by email and then removes them. Admins are never affected. Users with server history get an additional grace window. Signing in at any point cancels the scheduled deletion automatically."
+        >
             <ToggleRow
                 label="Enable auto-delete"
                 description="Master toggle. When off, the daily job is a no-op."
@@ -672,7 +662,7 @@ function AutoDeleteSection({ form }: { form: SettingsForm<AuthPolicy> }) {
                     <p className="text-xs text-(--base-06)">Anonymize wipes PII but preserves audit references. Hard delete removes the row.</p>
                 </div>
             </div>
-        </section>
+        </SettingsCard>
     );
 }
 
@@ -700,28 +690,28 @@ function AuditPolicySection() {
 
     if (form.loading || !policy) {
         return (
-            <section className="card p-5 border border-(--base-03) space-y-4">
-                <h3 className="mono-label mb-3 flex items-center gap-2"><FileText size={14} /> Audit retention</h3>
+            <SettingsCard title="Server audit retention" icon={FileText}>
                 <SkeletonText width="w-3/4" />
                 <Skeleton className="h-9 w-24" />
-            </section>
+            </SettingsCard>
         );
     }
 
     return (
-        <section className="card p-5 border border-(--base-03) space-y-4">
-            <header className="flex items-center justify-between gap-3">
-                <h3 className="mono-label flex items-center gap-2"><FileText size={14} /> Server audit retention</h3>
-                <StatusBadge active={inForceDays > 0} inactiveLabel="Keeping forever" />
-            </header>
-            <p className="text-xs text-(--base-06)">
-                How long server-audit events are kept before the daily sweep deletes them. Set to 0 to keep them forever.
-                That is the starting point: the sweep only applies a horizon you saved here, and 365 is a good one.
-                Per-server audit is auto-enabled on first member invite; admins can force it on from each server&apos;s Audit tab.
-            </p>
-            <div className="flex items-center gap-3">
-                <label className="input-label mb-0 shrink-0">Server-event retention</label>
+        <SettingsCard
+            title="Server audit retention"
+            icon={FileText}
+            form={form}
+            actions={<StatusBadge active={inForceDays > 0} inactiveLabel="Keeping forever" />}
+            description="How long server-audit events are kept before the daily sweep deletes them. The sweep only applies a horizon saved here, and 365 is a good one. Per-server audit is auto-enabled on first member invite; admins can force it on from each server's Audit tab."
+        >
+            <SettingsRow
+                label="Server-event retention"
+                htmlFor="audit-retention-days"
+                description="0 keeps them forever. Range 0 to 3650."
+            >
                 <input
+                    id="audit-retention-days"
                     type="number"
                     min={0}
                     max={3650}
@@ -730,9 +720,8 @@ function AuditPolicySection() {
                     className="input-field w-24"
                 />
                 <span className="text-sm text-(--base-07)">days</span>
-                <p className="text-xs text-(--base-06) leading-tight">0 = unlimited. Range 0–3650.</p>
-            </div>
-        </section>
+            </SettingsRow>
+        </SettingsCard>
     );
 }
 
@@ -778,29 +767,26 @@ function SecurityQuestionsPoolSection() {
 
     if (form.loading || !form.value) {
         return (
-            <section className="card p-5 border border-(--base-03) space-y-4">
-                <h3 className="mono-label mb-3 flex items-center gap-2"><HelpCircle size={14} /> Security questions pool</h3>
+            <SettingsCard title="Security questions pool" icon={HelpCircle}>
                 <SkeletonText width="w-3/4" />
                 <div className="space-y-1.5">
                     {Array.from({ length: 5 }).map((_, i) => (
                         <Skeleton key={i} className="h-9 w-full" />
                     ))}
                 </div>
-            </section>
+            </SettingsCard>
         );
     }
 
     return (
-        <section className="card p-5 border border-(--base-03) space-y-4">
-            <header className="flex items-center justify-between gap-3">
-                <h3 className="mono-label flex items-center gap-2"><HelpCircle size={14} /> Security questions pool</h3>
-                {/* Always in force - the pool is whatever it contains, so there is no state to be wrong about. */}
-                <StatusBadge active />
-            </header>
-            <p className="text-xs text-(--base-06)">
-                The list of questions users can choose from. Removing a question doesn&apos;t affect users who already picked it — their chosen wording is stored inline.
-            </p>
-
+        <SettingsCard
+            title="Security questions pool"
+            icon={HelpCircle}
+            form={form}
+            /* Always in force: the pool is whatever it contains, no state to be wrong about. */
+            actions={<StatusBadge active />}
+            description="The list of questions users can choose from. Removing a question does not affect users who already picked it: their chosen wording is stored inline."
+        >
             <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
                 {pool.length === 0 && (
                     <p className="text-sm text-(--base-06) italic text-center py-4">Pool is empty. Add some questions below.</p>
@@ -841,10 +827,10 @@ function SecurityQuestionsPoolSection() {
                 </button>
             </div>
             <p className="text-xs text-(--base-06)">
-                Adding and removing are edits like any other here — the save bar at the bottom of the
-                page commits them.
+                Adding and removing are edits like any other here: nothing is written until this
+                card is saved.
             </p>
-        </section>
+        </SettingsCard>
     );
 }
 

@@ -515,6 +515,73 @@ input[type="number"] {
   color: var(--base-09);
 }
 
+/* ── Settings cards ──
+   The box a settings page is built from. One card is one save: its header
+   carries the Save/Discard pair for the single form it owns. See
+   components/settings/SettingsCard.tsx for why that rule exists. */
+.settings-card {
+  display: flex;
+  flex-direction: column;
+}
+.settings-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--base-03);
+}
+.settings-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--base-09);
+}
+.settings-card-description {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--base-06);
+  margin-top: 3px;
+}
+.settings-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.settings-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+/* For a body whose child brings its own layout (a table, a list, a grid). */
+.settings-card-body-plain {
+  display: block;
+}
+.settings-card-footer {
+  padding: 13px 20px;
+  border-top: 1px solid var(--base-03);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--base-06);
+}
+/* Save with nothing to save. Present so its position is known before it is
+   needed, inert so it cannot be mistaken for an offer. */
+.settings-card-save-idle {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.settings-group-divided {
+  padding-top: 16px;
+  border-top: 1px solid var(--base-03);
+}
+
 /* ── Badges & Status Dots ── */
 .badge {
   display: inline-flex;
@@ -671,13 +738,6 @@ input[type="number"] {
   align-self: stretch;
   flex-shrink: 0;
 }
-/* Toasts sit bottom-right, which is where the save bar also is. Without this
-   a "Saved" toast lands on top of the Save button that produced it - and the bar
-   is present exactly when something is being saved, so it is not a rare case. */
-body:has(.unsaved-bar) .toast-container {
-  bottom: 84px;
-}
-
 /* The card is clickable to dismiss early. It is not focusable: the message is
    already announced through the live region, and a control that appears in the
    tab order for three seconds and then vanishes moves focus out from under
@@ -960,6 +1020,28 @@ body:has(.unsaved-bar) .toast-container {
   padding: 1px 4px;
   overflow-wrap: anywhere;
 }
+/* The row holding a dialog and its optional help panel.
+   Centred as a UNIT. Without justify-content the dialog sits at the left edge
+   of a row as wide as dialog-plus-panel, so it hung left of centre with the
+   help closed and shifted right when it opened - the same dialog in two
+   different places depending on a control that is not about placement. */
+.modal-with-help {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+  max-width: 64rem;
+  max-height: 90vh;
+  padding-inline: 16px;
+}
+/* Below the modal's own breakpoint the panel would leave no room for the form
+   it explains, so it stacks under it instead of beside it. */
+@media (max-width: 1100px) {
+  .modal-with-help {
+    flex-direction: column;
+  }
+}
 .help-panel {
   width: 320px;
   flex-shrink: 0;
@@ -971,9 +1053,18 @@ body:has(.unsaved-bar) .toast-container {
   flex-direction: column;
   max-height: 100%;
   overflow: hidden;
+  /* The row re-centres the instant this appears, which moves the dialog. The
+     panel sliding in from where it lands is what makes that read as the panel
+     arriving rather than the dialog jumping. */
+  animation: help-panel-in 0.18s ease-out;
 }
-/* Below the modal's own breakpoint the panel would leave no room for the form
-   it explains, so it stacks under it instead of beside it. */
+@keyframes help-panel-in {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .help-panel { animation: none; }
+}
 @media (max-width: 1100px) {
   .help-panel {
     width: 100%;

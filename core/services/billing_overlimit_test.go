@@ -66,8 +66,15 @@ func overLimitSvc(fs *overLimitStore) *BillingLifecycleService {
 	return &BillingLifecycleService{store: fs}
 }
 
+// billingRow carries the caps as well as the clock now: EffectiveLimits reads
+// the per-user overrides and plans no longer exist. maxNodes/maxLinks of 0 would
+// mean unlimited, so every case that wants a cap has to set one here.
 func billingRow(id string, since *time.Time, status string) store.UserBilling {
-	return store.UserBilling{UserID: id, Status: status, OverLimitSince: since}
+	maxNodes, maxLinks := int64(2), int64(1)
+	return store.UserBilling{
+		UserID: id, Status: status, OverLimitSince: since,
+		MaxNodes: &maxNodes, MaxLinks: &maxLinks,
+	}
 }
 
 // TestEnforceEntitlementLimits_Stamping pins WHEN the clock starts and stops.
@@ -75,12 +82,10 @@ func billingRow(id string, since *time.Time, status string) store.UserBilling {
 // means a downgrade is free forever, and one that never clears means a tenant who
 // fixed the problem is still cut off three days later.
 func TestEnforceEntitlementLimits_Stamping(t *testing.T) {
-	plan := &store.Plan{MaxNodes: 2, MaxLinks: 1}
-
 	t.Run("going over starts the clock", func(t *testing.T) {
 		fs := &overLimitStore{
 			billing: []store.UserBilling{billingRow("u1", nil, "active")},
-			plan:    plan, nodes: 5,
+			nodes:   5,
 		}
 		overLimitSvc(fs).enforceEntitlementLimits(context.Background())
 		if len(fs.stamps) != 1 || fs.stamps[0].at == nil {
@@ -92,7 +97,7 @@ func TestEnforceEntitlementLimits_Stamping(t *testing.T) {
 		since := time.Now().Add(-time.Hour)
 		fs := &overLimitStore{
 			billing: []store.UserBilling{billingRow("u1", &since, "active")},
-			plan:    plan, nodes: 5,
+			nodes:   5,
 		}
 		overLimitSvc(fs).enforceEntitlementLimits(context.Background())
 		if len(fs.stamps) != 0 {
@@ -104,7 +109,7 @@ func TestEnforceEntitlementLimits_Stamping(t *testing.T) {
 		since := time.Now().Add(-time.Hour)
 		fs := &overLimitStore{
 			billing: []store.UserBilling{billingRow("u1", &since, "active")},
-			plan:    plan, nodes: 2,
+			nodes:   2,
 		}
 		overLimitSvc(fs).enforceEntitlementLimits(context.Background())
 		if len(fs.stamps) != 1 || fs.stamps[0].at != nil {
@@ -115,7 +120,7 @@ func TestEnforceEntitlementLimits_Stamping(t *testing.T) {
 	t.Run("within limits and never stamped writes nothing", func(t *testing.T) {
 		fs := &overLimitStore{
 			billing: []store.UserBilling{billingRow("u1", nil, "active")},
-			plan:    plan, nodes: 1,
+			nodes:   1,
 		}
 		overLimitSvc(fs).enforceEntitlementLimits(context.Background())
 		if len(fs.stamps) != 0 {
@@ -128,7 +133,7 @@ func TestEnforceEntitlementLimits_Stamping(t *testing.T) {
 	t.Run("a suspended tenant is skipped entirely", func(t *testing.T) {
 		fs := &overLimitStore{
 			billing: []store.UserBilling{billingRow("u1", nil, "suspended")},
-			plan:    plan, nodes: 9,
+			nodes:   9,
 		}
 		overLimitSvc(fs).enforceEntitlementLimits(context.Background())
 		if len(fs.stamps) != 0 {

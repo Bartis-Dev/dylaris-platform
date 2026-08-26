@@ -17,6 +17,11 @@ export default function SetupWizard() {
     const router = useRouter();
     const [mode, setMode] = useState<SetupMode | null>(null);
     const [adminSecretConfigured, setAdminSecretConfigured] = useState(false);
+    // Core's answers, not ours. `open` is computed there by the same gate the
+    // create endpoint enforces; needsSecretWarning is Core telling us the door
+    // is open and nothing can come through it.
+    const [open, setOpen] = useState(false);
+    const [needsSecretWarning, setNeedsSecretWarning] = useState(false);
     const [frontendUrl, setFrontendUrl] = useState<string>('');
 
     const [step, setStep] = useState<Step>(1);
@@ -37,19 +42,21 @@ export default function SetupWizard() {
 
     useEffect(() => {
         getSetupStatus().then(s => {
-            const ui = setupUiState({ mode: s.mode, adminSecretConfigured: s.adminSecretConfigured });
+            const ui = setupUiState({ mode: s.mode, adminSecretConfigured: s.adminSecretConfigured, open: s.open });
             if (ui === 'complete') {
                 router.replace('/login');
                 return;
             }
             setMode(s.mode);
             setAdminSecretConfigured(s.adminSecretConfigured);
+            setOpen(s.open);
+            setNeedsSecretWarning(s.needsSecretWarning);
             setFrontendUrl(s.frontendUrl || '');
         });
     }, [router]);
 
     const uiState: SetupUiState | null = mode
-        ? setupUiState({ mode, adminSecretConfigured })
+        ? setupUiState({ mode, adminSecretConfigured, open })
         : null;
     const secretRequired = uiState === 'secret_required';
 
@@ -97,6 +104,34 @@ export default function SetupWizard() {
         );
     }
 
+    if (uiState === 'disabled') {
+        return (
+            <div className="card p-6 w-full max-w-md">
+                <header className="mb-4">
+                    <div className="flex items-center gap-2 mb-1">
+                        <ShieldCheck size={18} className="text-(--accent-light)" />
+                        <h1 className="text-lg font-display text-(--base-09)">Dylaris Setup</h1>
+                    </div>
+                </header>
+                <p className="text-sm text-(--base-07)">
+                    Setup is switched off on this instance, which is the normal state once an
+                    administrator exists.
+                </p>
+                <p className="text-xs text-(--base-06) mt-2">
+                    To create another administrator, set <code className="font-mono">SETUP=true</code> in
+                    Core&apos;s environment together with an{' '}
+                    <code className="font-mono">ADMIN_SECRET</code>, restart, and reload this page.
+                    Turn it off again afterwards.
+                </p>
+                <footer className="mt-5 pt-4 border-t border-(--base-03)">
+                    <a href="/servers" className="text-xs text-(--accent-light) hover:underline">
+                        Back to the panel
+                    </a>
+                </footer>
+            </div>
+        );
+    }
+
     if (uiState === 'recovery_closed') {
         return (
             <div className="card p-6 w-full max-w-md">
@@ -140,6 +175,20 @@ export default function SetupWizard() {
                     </p>
                 )}
             </header>
+
+            {needsSecretWarning && (
+                <div className="mb-4 flex items-start gap-2 rounded-md border border-(--error)/40 bg-(--error)/10 p-3">
+                    <CircleAlert size={14} className="mt-0.5 shrink-0 text-(--error-light)" />
+                    <div className="text-xs text-(--error-light)">
+                        <div className="font-medium">No admin token is configured.</div>
+                        <p className="mt-1 text-(--base-07)">
+                            <code className="font-mono">ADMIN_SECRET</code> is unset on this Core. Setup
+                            is reachable, but an administrator cannot be created without it unless this
+                            is a pristine first install. Set it in Core&apos;s environment and restart.
+                        </p>
+                    </div>
+                </div>
+            )}
 
             {/* Step indicator */}
             <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) mb-4">
@@ -297,9 +346,26 @@ export default function SetupWizard() {
                 </div>
             )}
 
-            {frontendUrl && (
-                <footer className="mt-5 pt-4 border-t border-(--base-03) text-[10px] font-mono text-(--base-06)">
-                    Platform URL: {frontendUrl}
+            {(frontendUrl || mode === 'complete') && (
+                <footer className="mt-5 pt-4 border-t border-(--base-03) space-y-2">
+                    {/* This page stays reachable on a finished install because a configured
+                        ADMIN_SECRET is the break-glass: it is how an admin is created again
+                        when the last one is gone. Without a way back it reads as a dead end
+                        to anyone who lands here by typing the URL. */}
+                    {mode === 'complete' && (
+                        <p className="text-[10px] text-(--base-06)">
+                            This platform is already set up. The form above only creates another
+                            administrator, and only for whoever holds the admin secret.{' '}
+                            <a href="/servers" className="text-(--accent-light) hover:underline">
+                                Back to the panel
+                            </a>
+                        </p>
+                    )}
+                    {frontendUrl && (
+                        <div className="text-[10px] font-mono text-(--base-06)">
+                            Platform URL: {frontendUrl}
+                        </div>
+                    )}
                 </footer>
             )}
         </div>

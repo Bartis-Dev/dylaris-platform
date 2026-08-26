@@ -110,7 +110,6 @@ const TAB_GROUPS: SettingsGroup[] = [
             { slug: 'usage', label: 'Usage', always: true },
             // Both act on Stripe subscriptions: hidden without the store.
             { slug: 'billing', label: 'Billing', always: true, requiresStore: true },
-            { slug: 'plans', label: 'Plans', always: true, requiresStore: true },
         ],
     },
 ];
@@ -218,9 +217,9 @@ function SettingsLayoutInner({
                     ))}
                 </nav>
 
-                {/* Content column. The save bar is mounted once for the whole
-                    panel in (authed)/layout.tsx - it was here, which is why the
-                    rule it enforces only applied inside Settings. */}
+                {/* Content column. Saving belongs to the cards inside it:
+                    see components/settings/SettingsCard.tsx for why a card is
+                    the only place a save control lives. */}
                 <div className="flex-1 min-w-0 flex flex-col min-h-0">
                     <div className="flex-1 overflow-y-auto">
                         {children}

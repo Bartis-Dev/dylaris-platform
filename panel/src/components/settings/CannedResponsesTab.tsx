@@ -9,6 +9,7 @@ import {
 } from '@/lib/api/tickets';
 import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import SettingsPage from '@/components/settings/SettingsPage';
 
 const TEMPLATE_VARS = ['{{user_name}}', '{{ticket_id}}', '{{server_name}}', '{{actor_name}}'];
 
@@ -103,23 +104,21 @@ export default function CannedResponsesTab() {
     );
 
     return (
-        <div className="space-y-6 max-w-4xl">
-            <header className="flex items-start justify-between gap-4">
-                <div>
-                    <h2 className="text-lg font-display flex items-center gap-2">
-                        <MessageSquareQuote size={18} className="text-(--accent-light)" /> Canned Responses
-                    </h2>
-                    <p className="text-sm text-(--base-06) mt-1">
-                        Pre-written snippets support staff can insert into ticket replies. Optional category binding limits each snippet to tickets in that category.
-                    </p>
-                    <p className="text-xs text-(--base-06) mt-1">
-                        Template variables: <span className="font-mono">{TEMPLATE_VARS.join(' · ')}</span>
-                    </p>
-                </div>
+        <SettingsPage
+            title="Canned responses"
+            icon={MessageSquareQuote}
+            width="4xl"
+            description={<>
+                Pre-written snippets support staff can insert into ticket replies. Optional
+                category binding limits each snippet to tickets in that category. Template
+                variables: <span className="font-mono">{TEMPLATE_VARS.join(' · ')}</span>
+            </>}
+            actions={
                 <button type="button" onClick={openCreate} className="btn btn-primary inline-flex items-center gap-2 shrink-0">
                     <Plus size={14} /> Add response
                 </button>
-            </header>
+            }
+        >
 
             <div className="card overflow-hidden">
                 <table className="w-full text-sm">
@@ -225,6 +224,6 @@ export default function CannedResponsesTab() {
                     </span>
                 </div>
             )}
-        </div>
+        </SettingsPage>
     );
 }

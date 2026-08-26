@@ -1,159 +1,115 @@
 "use client";
 
-import React, { useEffect, useState , useRef} from 'react';
-import { Wrench, Loader2 } from 'lucide-react';
+import { Wrench } from 'lucide-react';
 import { getMaintenance, saveMaintenance, MaintenanceState } from '@/lib/api';
-import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { toLocalInput, fromLocalInput } from '@/lib/localDateTime';
-import { toast } from '@/components/ui/Toast';
-import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import { useSettingsForm } from '@/lib/useSettingsForm';
+import SettingsPage from '@/components/settings/SettingsPage';
+import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
+import { SwitchRow } from '@/components/ui/Switch';
 
 const BLOCK_LEVELS: { value: MaintenanceState['blockLevel']; label: string; help: string }[] = [
-    { value: 'off',          label: 'Off',                help: 'Feature off entirely. Banner hidden, no blocking.' },
-    { value: 'banner_only',  label: 'Banner only',        help: 'Show the banner site-wide. Don\'t block any traffic.' },
-    { value: 'block_writes', label: 'Block writes',       help: 'Non-admins can still read (GET) but cannot create/update/delete.' },
-    { value: 'block_all',    label: 'Block everything',   help: 'Non-admins are fully locked out (admins always pass).' },
+    { value: 'off',          label: 'Off',              help: 'Feature off entirely. Banner hidden, no blocking.' },
+    { value: 'banner_only',  label: 'Banner only',      help: 'Show the banner site-wide. Do not block any traffic.' },
+    { value: 'block_writes', label: 'Block writes',     help: 'Non-admins can still read (GET) but cannot create, update or delete.' },
+    { value: 'block_all',    label: 'Block everything', help: 'Non-admins are fully locked out. Admins always pass.' },
 ];
 
 const defaultState: MaintenanceState = {
     active: false,
     title: 'Maintenance in progress',
-    message: 'We\'re performing scheduled maintenance and will be back shortly.',
+    message: 'We are performing scheduled maintenance and will be back shortly.',
     expectedEnd: '',
     blockLevel: 'banner_only',
 };
 
 export default function MaintenanceTab() {
-    const [state, setState] = useState<MaintenanceState>(defaultState);
-    // What was last loaded or saved. This large form tracked nothing, so
-    // clicking away from it dropped every edit in silence while the tab
-    // beside it prompted. A null snapshot also keeps `dirty` false after a
-    // failed load, which is the same guard loadFailed gives the button.
-    const snapshotRef = useRef<MaintenanceState | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
     // A failed load used to leave defaultState on screen looking exactly like a
     // stored config - maintenance OFF at banner_only - with Save enabled. This
     // is the one screen where writing that back is destructive: the DB migration
     // deliberately holds block_all for its whole run, and saving the default
-    // would lift it and let users write to a database being copied. Same
-    // mechanism BeamTab uses, and the same gate ConfigEditorModal uses.
-    const [loadFailed, setLoadFailed] = useState(false);
+    // would lift it and let users write to a database being copied. The hook's
+    // null snapshot is that guard, and it also drives the card's disabled Save.
+    const form = useSettingsForm<MaintenanceState>({
+        load: async () => {
+            const res = await getMaintenance();
+            return res.success && res.state ? res.state : null;
+        },
+        save: async value => {
+            const res = await saveMaintenance(value);
+            return { ok: res.success, message: res.message, value: res.state };
+        },
+        successMessage: 'Maintenance settings saved.',
+    });
 
-    useEffect(() => {
-        getMaintenance().then(res => {
-            if (res.success && res.state) { setState(res.state); snapshotRef.current = res.state; }
-            else setLoadFailed(true);
-            setLoading(false);
-        });
-    }, []);
-
-    const flash = (msg: string, ok = true) => toast(msg, ok);
-
-    const handleSave = async (): Promise<boolean> => {
-        setSaving(true);
-        try {
-            const res = await saveMaintenance(state);
-            if (res.success) {
-                const stored = res.state ?? state;
-                setState(stored);
-                snapshotRef.current = stored;
-                flash('Saved.');
-                return true;
-            }
-            flash(res.message || 'Save failed.', false);
-            return false;
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const dirty =
-        snapshotRef.current !== null &&
-        JSON.stringify(state) !== JSON.stringify(snapshotRef.current);
-
-    const handleDiscard = () => {
-        if (snapshotRef.current) setState(snapshotRef.current);
-    };
-
-    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
-
-    if (loading) {
-        return (
-            <div className="space-y-6 max-w-3xl">
-                <SkeletonHeader />
-                <SkeletonCard height="h-[28rem]" />
-            </div>
-        );
-    }
+    const state = form.value ?? defaultState;
+    const patch = form.patch;
 
     return (
-        <div className="space-y-6 max-w-3xl">
-            <header>
-                <h2 className="text-lg font-display flex items-center gap-2">
-                    <Wrench size={18} className="text-(--accent-light)" /> Maintenance Mode
-                </h2>
-                <p className="text-sm text-(--base-06) mt-1">
-                    Show a system-wide banner to logged-in users. Optionally block writes or all
-                    non-admin traffic while you work. Admins are never blocked — otherwise you couldn&apos;t
-                    turn this off again from the panel.
-                </p>
-            </header>
+        <SettingsPage
+            title="Maintenance mode"
+            icon={Wrench}
+            description="Show a system-wide banner to logged-in users, and optionally block writes or all non-admin traffic while you work. Admins are never blocked, otherwise you could not turn this off again from the panel."
+            loading={form.loading}
+        >
+            <SettingsCard
+                title="Maintenance"
+                form={form}
+                loadFailedMessage="The current maintenance settings could not be loaded, so the values below are defaults rather than what is stored. Saving is disabled until a reload succeeds: writing these back could lift a maintenance mode that is holding right now."
+            >
+                <SettingsGroup first>
+                    <SwitchRow
+                        label="Active"
+                        description="When on, the banner is shown and the configured block level applies."
+                        checked={state.active}
+                        onChange={v => patch({ active: v })}
+                    />
+                </SettingsGroup>
 
-            <section className="card p-5 border border-(--base-03) space-y-4">
-                <label className="flex items-start justify-between gap-4 cursor-pointer">
-                    <div>
-                        <p className="text-sm font-medium">Active</p>
-                        <p className="text-xs text-(--base-06) leading-snug mt-0.5">
-                            When on, the banner is shown and the configured block level applies.
+                <SettingsGroup title="What users see">
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label" htmlFor="maint-title">Title</label>
+                        <input
+                            id="maint-title"
+                            type="text"
+                            value={state.title}
+                            onChange={e => patch({ title: e.target.value })}
+                            maxLength={120}
+                            className="input-field w-full"
+                        />
+                    </div>
+
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label" htmlFor="maint-message">Message</label>
+                        <textarea
+                            id="maint-message"
+                            value={state.message}
+                            onChange={e => patch({ message: e.target.value })}
+                            rows={3}
+                            maxLength={500}
+                            className="input-field w-full"
+                        />
+                        <p className="text-xs text-(--base-06)">Plain text.</p>
+                    </div>
+
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label" htmlFor="maint-end">Expected end (optional)</label>
+                        <input
+                            id="maint-end"
+                            type="datetime-local"
+                            value={state.expectedEnd ? toLocalInput(state.expectedEnd) : ''}
+                            onChange={e => patch({ expectedEnd: e.target.value ? fromLocalInput(e.target.value) : '' })}
+                            style={{ colorScheme: 'dark' }}
+                            className="input-field datetime-field w-full"
+                        />
+                        <p className="text-xs text-(--base-06)">
+                            Used as a countdown in the banner and as a Retry-After hint on 503 responses.
                         </p>
                     </div>
-                    <input
-                        type="checkbox"
-                        checked={state.active}
-                        onChange={e => setState({ ...state, active: e.target.checked })}
-                        className="checkbox shrink-0 mt-1"
-                    />
-                </label>
+                </SettingsGroup>
 
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Title</label>
-                    <input
-                        type="text"
-                        value={state.title}
-                        onChange={e => setState({ ...state, title: e.target.value })}
-                        maxLength={120}
-                        className="input-field w-full"
-                    />
-                </div>
-
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Message</label>
-                    <textarea
-                        value={state.message}
-                        onChange={e => setState({ ...state, message: e.target.value })}
-                        rows={3}
-                        maxLength={500}
-                        className="input-field w-full"
-                    />
-                    <p className="text-xs text-(--base-06)">Plain text. Markdown rendering can be added later if needed.</p>
-                </div>
-
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Expected end (optional)</label>
-                    <input
-                        type="datetime-local"
-                        value={state.expectedEnd ? toLocalInput(state.expectedEnd) : ''}
-                        onChange={e => setState({ ...state, expectedEnd: e.target.value ? fromLocalInput(e.target.value) : '' })}
-                        style={{ colorScheme: 'dark' }}
-                        className="input-field datetime-field w-full"
-                    />
-                    <p className="text-xs text-(--base-06)">Used in the banner as a countdown + as a Retry-After hint on 503 responses.</p>
-                </div>
-
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Block level</label>
-                    <div className="grid grid-cols-1 gap-2">
+                <SettingsGroup title="Block level">
+                    <div className="grid grid-cols-1 gap-2" role="radiogroup" aria-label="Block level">
                         {BLOCK_LEVELS.map(opt => (
                             <label
                                 key={opt.value}
@@ -168,7 +124,7 @@ export default function MaintenanceTab() {
                                     name="blockLevel"
                                     value={opt.value}
                                     checked={state.blockLevel === opt.value}
-                                    onChange={() => setState({ ...state, blockLevel: opt.value })}
+                                    onChange={() => patch({ blockLevel: opt.value })}
                                     className="mt-0.5 accent-(--accent)"
                                 />
                                 <div>
@@ -178,34 +134,13 @@ export default function MaintenanceTab() {
                             </label>
                         ))}
                     </div>
-                </div>
+                </SettingsGroup>
+            </SettingsCard>
 
-                {loadFailed && (
-                    <div className="alert alert-error text-xs" role="alert">
-                        The current maintenance settings could not be loaded, so the values above are
-                        defaults rather than what is stored. Saving is disabled until a reload succeeds -
-                        writing these back could lift a maintenance mode that is holding right now.
-                    </div>
-                )}
-
-                <div className="flex justify-end pt-1">
-                    <button
-                        type="button"
-                        onClick={handleSave}
-                        disabled={saving || loadFailed}
-                        className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                        {saving && <Loader2 size={14} className="animate-spin" />}
-                        Save maintenance settings
-                    </button>
-                </div>
-
-            </section>
-
-            <p className="text-xs text-(--base-06) italic">
-                The maintenance banner is mounted globally in the authenticated layout — it polls{' '}
-                <span className="font-mono">/api/maintenance</span> every 30 seconds while you&apos;re signed in.
+            <p className="text-xs text-(--base-06)">
+                The banner is mounted globally in the authenticated layout and polls{' '}
+                <span className="font-mono">/api/maintenance</span> every 30 seconds while you are signed in.
             </p>
-        </div>
+        </SettingsPage>
     );
 }

@@ -255,7 +255,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
         if (res.success) {
             setActionError("");
             // These are row operations on a list, like deleting a user, so they
-            // apply straight away rather than waiting for the save bar. What
+            // apply straight away rather than waiting for a Save. What
             // they did NOT do was say so: this screen had no toast at all, so a
             // toggle, a role change and a drag all succeeded in silence and the
             // only way to know was that something moved.

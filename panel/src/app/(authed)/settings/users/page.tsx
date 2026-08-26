@@ -19,7 +19,7 @@ export default function SettingsUsersPage() {
         <div className="flex flex-col h-full min-h-0">
             <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
                 <div className="min-w-0">
-                    <h2 className="text-lg font-display text-(--base-09)">User settings</h2>
+                    <h2 className="h-section">User settings</h2>
                     <p className="text-sm text-(--base-06)">
                         How accounts behave here: registration, sign-in, email, password reset and renames.
                     </p>

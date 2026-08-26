@@ -42,12 +42,11 @@ type Entitlement struct {
 	GrantExpiresAt *time.Time `json:"grantExpiresAt,omitempty"`
 }
 
-// entitlementStore is the narrow store surface EffectiveEntitlement needs.
+// entitlementStore is the narrow store surface EffectiveEntitlement needs. It is
+// one lookup now: entitlement is what the store pushed onto the billing row plus
+// any manual grant, and plans no longer take part.
 type entitlementStore interface {
 	GetUserBilling(userID string) (*store.UserBilling, error)
-	GetUserPlanID(userID string) (*int, error)
-	GetPlan(id int) (*store.Plan, error)
-	GetDefaultPlan() (*store.Plan, error)
 }
 
 // kindGrants expands a kind into the two booleans. An unknown kind grants
@@ -65,6 +64,20 @@ func kindGrants(kind string) (byon, routeOnly bool) {
 	}
 }
 
+// purchasedKind names what the pushed overrides amount to, in the same
+// vocabulary a manual grant uses, so the panel renders one thing rather than two.
+func purchasedKind(byon, routeOnly bool) string {
+	switch {
+	case byon && routeOnly:
+		return EntitlementBoth
+	case byon:
+		return EntitlementByon
+	case routeOnly:
+		return EntitlementRouteOnly
+	}
+	return ""
+}
+
 // EffectiveEntitlement resolves what a tenant may use, at time `now`.
 //
 // The rules, in order:
@@ -74,17 +87,26 @@ func kindGrants(kind string) (byon, routeOnly bool) {
 //     (past_due is NOT a stop - that is what the grace window is for.)
 //  2. An ACTIVE manual grant contributes its kind. Active means a kind is set and
 //     the expiry is in the future; an expired row contributes nothing.
-//  3. The plan contributes its kind. With no plan at all the answer is
-//     "unlimited", which is what the platform does today: EffectiveLimits treats a
-//     missing plan as uncapped, so denying here would lock out every self-host
-//     install that never defined plans.
+//  3. What the STORE pushed contributes. A purchase arrives as per-user limit
+//     overrides (maxNodes / maxLinks), so a positive one is the record of having
+//     bought that thing.
+//  4. Only with NO store integration at all does "nothing configured" mean
+//     unlimited. That is the self-host case, where there is no billing plane and
+//     denying would lock out every install that never defined anything.
 //
-// The two contributions are a UNION, deliberately: "give them 14 days now, they
-// can subscribe later" must not have the subscription and the grant fight.
+// storeEnabled is what separates 3 from 4, and it is the whole point of this
+// function's shape. Before it, "no plan anywhere" meant unlimited unconditionally
+// - which on a hosted install handed every freshly registered account the run of
+// the platform, because an account that has bought nothing has nothing
+// configured. The one state meaning "paid for nothing" was read as "entitled to
+// everything".
+//
+// The contributions are a UNION, deliberately: "give them 14 days now, they can
+// subscribe later" must not have the subscription and the grant fight.
 //
 // Callers must gate this behind feature_byon_enabled; with BYON off none of it
 // is meaningful.
-func EffectiveEntitlement(st entitlementStore, userID string, now time.Time) (Entitlement, error) {
+func EffectiveEntitlement(st entitlementStore, userID string, now time.Time, storeEnabled bool) (Entitlement, error) {
 	billing, err := st.GetUserBilling(userID)
 	if err != nil {
 		return Entitlement{}, err
@@ -106,31 +128,35 @@ func EffectiveEntitlement(st entitlementStore, userID string, now time.Time) (En
 		}
 	}
 
-	// Plan.
-	var plan *store.Plan
-	pid, err := st.GetUserPlanID(userID)
-	if err != nil {
-		return Entitlement{}, err
-	}
-	if pid != nil {
-		// A deleted plan falls back to the default rather than erroring, matching
-		// EffectiveLimits.
-		if p, perr := st.GetPlan(*pid); perr == nil {
-			plan = p
+	// What was bought. The store pushes a purchase as per-user limit overrides,
+	// so a positive maxNodes is the record of a BYON purchase and a positive
+	// maxLinks the record of a route-only one. Nothing else in Core knows a
+	// subscription exists.
+	//
+	// nil and 0 are read differently on purpose. nil is "the store never said
+	// anything about this account". 0 is "the store said zero", which is what a
+	// cancellation pushes, and it must not read as unlimited the way a bare
+	// numeric cap check does.
+	planByon, planRoute := false, false
+	if billing != nil {
+		if billing.MaxNodes != nil && *billing.MaxNodes > 0 {
+			planByon = true
+		}
+		if billing.MaxLinks != nil && *billing.MaxLinks > 0 {
+			planRoute = true
 		}
 	}
-	if plan == nil {
-		plan, _ = st.GetDefaultPlan()
+	if planByon || planRoute {
+		out.PlanKind = purchasedKind(planByon, planRoute)
 	}
 
-	planByon, planRoute := false, false
-	if plan != nil {
-		out.PlanKind = plan.Kind
-		planByon, planRoute = kindGrants(plan.Kind)
-	} else {
-		// No plan anywhere: today's uncapped behaviour.
+	// Self-host: no store, no billing plane, nothing to buy. Everything is
+	// allowed, which is what this platform has always done for an install that
+	// configured none of this.
+	if !storeEnabled {
 		planByon, planRoute = true, true
 		out.Source = EntitlementSourceUnlimited
+		out.PlanKind = ""
 	}
 
 	out.Byon = grantByon || planByon

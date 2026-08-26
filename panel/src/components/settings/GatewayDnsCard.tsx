@@ -10,6 +10,7 @@ import {
     GatewayDnsProbe,
 } from '@/lib/api/gatewayDns';
 import { useSettingsForm } from '@/lib/useSettingsForm';
+import SettingsCard from '@/components/settings/SettingsCard';
 import Switch from '@/components/ui/Switch';
 import HelpTip from '@/components/ui/HelpTip';
 
@@ -126,20 +127,12 @@ export default function GatewayDnsCard() {
     const rows = Array.from(new Set([...detected, ...(v?.zones ?? [])])).sort();
 
     return (
-        <div className="card p-5 space-y-5">
-            <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                    <Globe size={18} className="text-(--accent-light)" />
-                </div>
-                <div>
-                    <div className="font-medium text-sm text-(--base-09)">Automatic DNS &amp; certificates</div>
-                    <div className="text-xs text-(--base-06)">
-                        One provider token: the gateway keeps the edge and beam records pointed at
-                        whatever is online, and gets the beam relay its TLS certificate
-                    </div>
-                </div>
-            </div>
-
+        <SettingsCard
+            title="Automatic DNS and certificates"
+            icon={Globe}
+            form={form}
+            description="One provider token: the gateway keeps the edge and beam records pointed at whatever is online, and gets the beam relay its TLS certificate."
+        >
             {form.loading && (
                 <div className="flex items-center gap-2 text-xs text-(--base-06)">
                     <Loader2 size={14} className="animate-spin" />
@@ -424,6 +417,6 @@ export default function GatewayDnsCard() {
                     )}
                 </>
             )}
-        </div>
+        </SettingsCard>
     );
 }

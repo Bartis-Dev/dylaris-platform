@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from 'react';
-import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink } from 'lucide-react';
+import Link from 'next/link';
+import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon } from 'lucide-react';
 import { nodeCompose, routeOnlyCompose, deployCli } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
@@ -161,19 +162,41 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
 }
 
 /** Shown in place of a tab's controls when the account does not include it. */
-export function NotIncluded({ what, storeUrl, suspended }: { what: string; storeUrl: string | null; suspended: boolean }) {
+export function NotIncluded({ what, storeUrl, suspended, storeLinked }: {
+    what: string;
+    storeUrl: string | null;
+    suspended: boolean;
+    /** null = not known yet. See below for why that is not the same as false. */
+    storeLinked?: boolean | null;
+}) {
+    // Three different problems with three different fixes, and telling someone
+    // to buy a plan they already bought because the ACCOUNTS are not joined is
+    // the worst of them: the store shows a paid subscription, the panel shows
+    // nothing, and neither screen mentions the join that is missing.
+    //
+    // storeLinked === null means we have not been told yet (or the storefront
+    // could not be reached). That falls through to the generic message rather
+    // than claiming a disconnection we cannot support.
+    const notLinked = storeLinked === false;
     return (
         <div className="rounded-md border border-(--base-03) bg-(--base-02) p-4 space-y-2.5">
             <div className="flex items-center gap-2 text-sm font-medium text-(--base-08)">
                 <Lock size={14} className="text-(--base-06)" />
-                Not on your account
+                {suspended ? 'Paused' : notLinked ? 'Connect your account first' : 'Not on your account'}
             </div>
             <p className="text-sm text-(--base-07)">
                 {suspended
                     ? 'Your account is suspended, which pauses this until it is reactivated.'
-                    : `Add ${what} to your plan, or ask an admin to enable it for you.`}
+                    : notLinked
+                      ? 'Your panel account is not connected to the Dylaris store yet. A subscription raises no limits here until it is, so connect it first and this unlocks on its own.'
+                      : `Add ${what} to your plan, or ask an admin to enable it for you.`}
             </p>
-            {!suspended && storeUrl && (
+            {!suspended && notLinked && (
+                <Link href="/account/store" className="btn btn-primary btn-sm inline-flex w-fit">
+                    <LinkIcon size={13} /> Connect the store
+                </Link>
+            )}
+            {!suspended && !notLinked && storeUrl && (
                 <a href={storeUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm inline-flex w-fit">
                     <ShoppingCart size={13} /> Get {what} <ExternalLink size={11} />
                 </a>

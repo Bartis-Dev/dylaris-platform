@@ -58,7 +58,6 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     { page: 'gateway', tab: 'gateway', label: 'Automatic DNS & certificates', where: 'Infrastructure → Gateway', keywords: ['dns', 'zone', 'cloudflare', 'acme', 'certificate', 'tls', 'lets encrypt', 'token'] },
     { page: 'gateway', tab: 'gateway', label: 'DNS check', where: 'Infrastructure → Gateway', keywords: ['dns', 'check', 'records', 'resolve', 'verify'] },
     { page: 'gateway', tab: 'xdp', label: 'DDoS protection', where: 'Infrastructure → Gateway', keywords: ['xdp', 'ddos', 'filter', 'attack', 'drop'] },
-    { page: 'gateway', tab: 'hub', label: 'Hub Redis access', where: 'Infrastructure → Gateway', keywords: ['hub', 'redis', 'acl', 'credential', 'gw-hub-admin'] },
     { page: 'warp', label: 'External node enrollment keys', where: 'Infrastructure → Warp', keywords: ['warp', 'wireguard', 'external', 'byon', 'overlay', 'tunnel', 'policy', 'max connections'] },
     { page: 'warp', label: 'Warp regions and leaders', where: 'Infrastructure → Warp', keywords: ['warp', 'leader', 'subnet', 'region', 'overlay'] },
     { page: 'beam', label: 'Beam relay address', where: 'Infrastructure → Beam', keywords: ['beam', 'relay', 'remote', 'desktop', 'override'] },
@@ -87,7 +86,6 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     // BYON
     { page: 'usage', label: 'Traffic usage', where: 'BYON', keywords: ['traffic', 'usage', 'bandwidth', 'meter', 'tb'] },
     { page: 'billing', label: 'Billing defaults', where: 'BYON', keywords: ['billing', 'stripe', 'subscription', 'suspend', 'grace'] },
-    { page: 'plans', label: 'Plans', where: 'BYON', keywords: ['plan', 'tier', 'limit', 'node count'] },
 ];
 
 export interface SettingsHit extends SettingsEntry {

@@ -32,11 +32,32 @@ func NewSetupHandler(state *AppState, auth *AuthHandler) *SetupHandler {
 	return &SetupHandler{state: state, auth: auth}
 }
 
+// setupGate builds the gate from live counts plus config. Both /setup endpoints
+// go through here so the page and the handler can never disagree about whether
+// the door is open.
+func (h *SetupHandler) setupGate(userCount, adminCount int) setupGate {
+	return setupGate{
+		UserCount:        userCount,
+		AdminCount:       adminCount,
+		SetupEnabled:     h.state.SetupEnabled,
+		SecretConfigured: h.state.AdminSecretConfigured(),
+	}
+}
+
 type setupStatusResp struct {
 	Success               bool   `json:"success"`
 	Mode                  string `json:"mode"`
 	AdminSecretConfigured bool   `json:"adminSecretConfigured"`
 	FrontendURL           string `json:"frontendUrl,omitempty"`
+	// SetupEnabled is env SETUP as configured. Reported separately from Open so
+	// the panel can say WHY the wizard is closed rather than only that it is.
+	SetupEnabled bool `json:"setupEnabled"`
+	// Open is the single answer the panel renders from: is there a working form
+	// here. Computed by the same gate the create endpoint uses.
+	Open bool `json:"open"`
+	// NeedsSecretWarning asks the panel for the red "no admin token configured"
+	// banner. See setupGate.NeedsSecretWarning.
+	NeedsSecretWarning bool `json:"needsSecretWarning"`
 }
 
 // Status GET /api/setup/status - open route. Always reachable (the setup-lock
@@ -45,10 +66,14 @@ type setupStatusResp struct {
 func (h *SetupHandler) Status(w http.ResponseWriter, r *http.Request) {
 	adminCount, _ := h.state.Store.CountAdmins()
 	userCount, _ := h.state.Store.CountUsers()
+	gate := h.setupGate(userCount, adminCount)
 	out := setupStatusResp{
 		Success:               true,
 		FrontendURL:           h.state.FrontendURL,
 		AdminSecretConfigured: h.state.AdminSecretConfigured(),
+		SetupEnabled:          h.state.SetupEnabled,
+		Open:                  gate.Open(),
+		NeedsSecretWarning:    gate.NeedsSecretWarning(),
 	}
 	switch {
 	case adminCount > 0:
@@ -108,10 +133,18 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !adminCreateAllowed(userCount, h.state.AdminSecret, req.AdminSecret) {
-		if h.state.AdminSecretConfigured() {
+	gate := h.setupGate(userCount, adminCount)
+	if !adminCreateAllowed(gate, h.state.AdminSecret, req.AdminSecret) {
+		switch {
+		case !gate.Open():
+			// Named separately from the secret failure on purpose: the operator
+			// who switched SETUP off needs to be told that, not sent hunting for
+			// a wrong secret. It reveals nothing an attacker can use - that this
+			// instance has an admin is already public from the login page.
+			sendSetupError(w, http.StatusForbidden, "setup_disabled", "Setup is switched off on this instance. Set SETUP=true in Core's environment and restart to create another admin.")
+		case h.state.AdminSecretConfigured():
 			sendSetupError(w, http.StatusForbidden, "invalid_admin_secret", "The admin secret is missing or incorrect.")
-		} else {
+		default:
 			sendSetupError(w, http.StatusForbidden, "admin_recovery_disabled", "Admin creation is closed. Set ADMIN_SECRET in Core's environment and restart to create a new admin.")
 		}
 		return

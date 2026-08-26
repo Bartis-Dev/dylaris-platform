@@ -7,10 +7,8 @@ import {
     bulkDeleteRoutesBySuffix,
     RoutingMode, FileAccessMode,
     API_URL,
-    getHubRedisAdminStatus, provisionHubRedisAdmin, rollHubRedisAdmin,
-    HubRedisAdminStatus, HubRedisProvisionResult, HubEnv,
 } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network, KeyRound, Database } from 'lucide-react';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skeleton';
 import Spinner from '@/components/Spinner';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
@@ -19,10 +17,12 @@ import { useTabParam } from '@/lib/useTabParam';
 import { toast } from '@/components/ui/Toast';
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
 import GatewayDnsCard from '@/components/settings/GatewayDnsCard';
+import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import { useAppData } from '@/lib/AppDataContext';
 import { useBusy } from '@/lib/useBusy';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
 import HelpTip from '@/components/ui/HelpTip';
+import SettingsPage from '@/components/settings/SettingsPage';
 
 // ─────────────────────────────────────────────
 // Gateway settings
@@ -30,11 +30,11 @@ import HelpTip from '@/components/ui/HelpTip';
 
 type LimitKey = 'global' | 'userDefault' | 'perServer' | 'portMc';
 type ModeOption<T extends string> = { value: T; label: string; desc: string };
-type SubTab = 'gateway' | 'xdp' | 'hub';
+type SubTab = 'gateway' | 'xdp';
 
 // Exported so the settings-index test can prove every tab the search points at
 // actually exists here.
-export const GATEWAY_TABS: readonly SubTab[] = ['gateway', 'xdp', 'hub'];
+export const GATEWAY_TABS: readonly SubTab[] = ['gateway', 'xdp'];
 
 const ROUTING_OPTIONS: ModeOption<RoutingMode>[] = [
     { value: 'ip_port', label: 'IP : Port', desc: 'Direct host port binding — players connect via Node IP + port' },
@@ -54,7 +54,6 @@ const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
     // Not the Hub's own web interface, which is off by default and stays off.
     // This mints the Redis ACL user the Hub needs to reach Core's Redis at all,
     // which is how a Hub deployed alongside the platform is bootstrapped.
-    { id: 'hub', label: 'Hub Redis access', icon: KeyRound },
 ];
 
 // ─────────────────────────────────────────────
@@ -502,10 +501,9 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         }));
         setRemoveBusy(false);
         setRemoveTarget(null);
-        // Nothing has been written yet - the removal is a local edit and the
-        // save bar at the bottom of the page commits it. The old wording named a
-        // Save button this card does not have.
-        showToast(`Removed ${removeTarget.domain}${cascadeMessage}. Save at the bottom of the page to apply it.`);
+        // Nothing has been written yet - the removal is a local edit, and the
+        // card's own Save commits it along with everything else in it.
+        showToast(`Removed ${removeTarget.domain}${cascadeMessage}. Save this card to apply it.`);
     };
     const updateHoster = (idx: number, patch: Partial<HosterDomain>) => {
         setSettings(prev => ({
@@ -542,12 +540,12 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
     );
 
     return (
-        <div className="space-y-6">
-            <div>
-                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Gateway Configuration</h2>
-                <p className="text-sm text-(--base-07)">Manage gateway routing, link defaults and route limits for gates and links.</p>
-            </div>
-
+        <SettingsPage
+            title="Gateway configuration"
+            icon={Router}
+            width="full"
+            description="Gateway routing, link defaults and route limits for gates and links."
+        >
             {/* Routing Mode */}
             <div className="card p-5 space-y-5">
                 <div className="flex items-center gap-3">
@@ -674,20 +672,19 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             {gatewayOff && <GatewayDisabledNotice here />}
             <fieldset disabled={gatewayOff} className="space-y-6 disabled:opacity-50 border-0 p-0 m-0">
 
-            {/* Hoster Domains + Custom Domains */}
-            <div className="card p-5 space-y-5">
-                <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                        <Globe size={18} className="text-(--accent-light)" />
-                    </div>
+            {/* Domains and route limits are ONE payload behind one endpoint, so
+                they are one card with one save. They used to be two cards with
+                the DNS diagnostics wedged between them, which read as three
+                separate things and left no way to tell what the single Save
+                button was about to write. */}
+            <SettingsCard
+                title="Domains and route limits"
+                icon={Globe}
+                form={{ dirty, saving, save: handleSave, discard: handleDiscard }}
+                description="The domains users pick from, and how many routes and ports they may take."
+            >
+                <SettingsGroup title="Hoster domains" first>
                     <div>
-                        <div className="font-medium text-sm text-(--base-09)">Domains</div>
-                        <div className="text-xs text-(--base-06)">Hoster domains users pick from + optional custom-domain support</div>
-                    </div>
-                </div>
-
-                <div>
-                    <h3 className="mono-label mb-3">Hoster Domains</h3>
                     <p className="text-xs text-(--base-06) mb-3">
                         Users only enter a subdomain — these base domains appear as a dropdown next to the input. Pick which characters are allowed in the subdomain per domain.
                     </p>
@@ -811,25 +808,9 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                         Leave empty to allow everything. Saving an empty list disables the built-in defaults.
                     </p>
                 </div>
-            </div>
+                </SettingsGroup>
 
-            {/* DNS & Domains check — verify the records derived from the
-                hoster domains / CNAME target / panel URL configured above. */}
-            <GatewayDnsCard />
-
-            <DnsCheckCard />
-
-            {/* Route Limits */}
-            <div className="card p-5 space-y-5">
-                <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                        <Router size={18} className="text-(--accent-light)" />
-                    </div>
-                    <div>
-                        <div className="font-medium text-sm text-(--base-09)">Route Limits</div>
-                        <div className="text-xs text-(--base-06)">Control maximum route allocations and port access</div>
-                    </div>
-                </div>
+                <SettingsGroup title="Route limits" description="Maximum route allocations and port access.">
 
                 <div>
                     <h3 className="mono-label mb-3">Route Allocation</h3>
@@ -899,7 +880,15 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     </div>
                     <p className="text-xs text-(--base-05) mt-2">Disabled ports block all route creation on that port.</p>
                 </div>
-            </div>
+                </SettingsGroup>
+            </SettingsCard>
+
+            {/* Diagnostics for the records derived from the hoster domains,
+                CNAME target and panel URL configured above. Each owns its own
+                state, so they sit after the settings rather than between them. */}
+            <GatewayDnsCard />
+
+            <DnsCheckCard />
 
             </fieldset>
 
@@ -1011,7 +1000,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     </div>
                 </div>
             )}
-        </div>
+        </SettingsPage>
     );
 }
 
@@ -1141,14 +1130,13 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
     );
 
     return (
-        <div className="space-y-6">
+        <SettingsPage
+            title="DDoS protection (XDP / eBPF)"
+            icon={Shield}
+            width="full"
+            description="Kernel-level packet filtering on every Edge replica. Changes are written to Redis and picked up by all Edges within about 30 seconds; saving triggers an automatic sidecar recreate, which is one to three seconds of downtime for the XDP shield while the Edge proxy itself stays up."
+        >
             <div>
-                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">DDoS Protection (XDP / eBPF)</h2>
-                <p className="text-sm text-(--base-07)">
-                    Kernel-level packet filtering on every Edge replica. Changes here are written to Redis and picked up
-                    by all Edges within ~30 seconds — saving triggers an automatic sidecar recreate (≈1-3s downtime of the
-                    XDP shield, the Edge proxy itself stays up).
-                </p>
                 {!present && !gatewayOff && (
                     <div className="mt-3 flex items-start gap-2 p-3 rounded-md bg-(--accent)/5 border border-(--accent-border)/40 text-xs text-(--base-08)">
                         <AlertTriangle size={14} className="text-(--accent-light) mt-0.5 shrink-0" />
@@ -1160,8 +1148,8 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
             {gatewayOff && <GatewayDisabledNotice />}
             <fieldset disabled={gatewayOff} className="space-y-6 disabled:opacity-50 border-0 p-0 m-0">
 
-            <div className="card p-5 space-y-4">
-                <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-2">General</h3>
+            <SettingsCard title="XDP shield" form={{ dirty, saving, save: handleSave, discard: handleDiscard }}>
+            <SettingsGroup title="General" first>
 
                 <div className="flex items-center justify-between">
                     <div>
@@ -1219,11 +1207,9 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                         className="input-field w-72"
                     />
                 </div>
-            </div>
+            </SettingsGroup>
 
-            <div className="card p-5 space-y-4">
-                <h3 className="text-sm font-display font-semibold text-(--base-08) mb-2">Per-IP Rate Limiting</h3>
-                <p className="text-xs text-(--base-06)">Drops packets from any source IP that exceeds the threshold within the window. Tripped IPs are blocked for the ban duration.</p>
+            <SettingsGroup title="Per-IP rate limiting" description="Drops packets from any source IP that exceeds the threshold within the window. Tripped IPs are blocked for the ban duration.">
 
                 <div className="grid grid-cols-3 gap-4">
                     <div className="flex flex-col gap-[5px]">
@@ -1245,11 +1231,12 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                             className="input-field" />
                     </div>
                 </div>
-            </div>
+            </SettingsGroup>
 
-            <div className="card p-5 space-y-4">
-                <h3 className="text-sm font-display font-semibold text-(--base-08) mb-2">Minecraft-Aware Filters</h3>
-                <p className="text-xs text-(--base-06)">Protocol-level filters intended to catch scanners and malformed-packet floods that pass plain rate-limiting.</p>
+            <SettingsGroup
+                title="Minecraft-aware filters"
+                description="Protocol-level filters intended to catch scanners and malformed-packet floods that pass plain rate-limiting."
+            >
                 {/* These values are stored and reach the edge, but nothing feeds
                     the counter that would act on them, so saving a limit here
                     grants no protection. Said plainly rather than left implied:
@@ -1298,13 +1285,12 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                             className="input-field w-48" />
                     </div>
                 </div>
-            </div>
+            </SettingsGroup>
 
-            <div className="card p-5 space-y-3">
-                <h3 className="text-sm font-display font-semibold text-(--base-08)">Whitelist</h3>
-                <p className="text-xs text-(--base-06)">
-                    IPs and CIDRs that bypass all checks. Comma-separated. Useful for monitoring services or known crawlers.
-                </p>
+            <SettingsGroup
+                title="Whitelist"
+                description="IPs and CIDRs that bypass all checks, comma-separated. Useful for monitoring services or known crawlers."
+            >
                 <textarea
                     value={cfg.whitelist || ''}
                     onChange={e => set('whitelist', e.target.value)}
@@ -1312,10 +1298,11 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
                     rows={3}
                     className="input-field font-mono text-xs resize-y"
                 />
-            </div>
+            </SettingsGroup>
+            </SettingsCard>
 
             </fieldset>
-        </div>
+        </SettingsPage>
     );
 }
 
@@ -1323,216 +1310,6 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
 // Hub Admin panel (TP2b)
 // ─────────────────────────────────────────────
 
-// buildHubEnvText renders the one-time Hub deploy ENV block. REDIS_ADDR is a
-// placeholder in manual mode (the operator runs the SETUSER wherever their
-// gateway Redis lives).
-function buildHubEnvText(e?: HubEnv): string {
-    if (!e) return '';
-    const addr = e.REDIS_ADDR && e.REDIS_ADDR.trim() !== '' ? e.REDIS_ADDR : '<your-redis-host:port>';
-    const lines = [
-        `REDIS_ADDR=${addr}`,
-        `REDIS_USER=${e.REDIS_USER}`,
-        `REDIS_PASS=${e.REDIS_PASS}`,
-    ];
-    if (e.REDIS_DB !== undefined) lines.push(`REDIS_DB=${e.REDIS_DB}`);
-    return lines.join('\n');
-}
-
-const HUB_MODES: { value: 'auto' | 'manual'; label: string; desc: string }[] = [
-    { value: 'auto', label: 'Provision now', desc: 'Core runs ACL SETUSER gw-hub-admin on the shared Redis.' },
-    { value: 'manual', label: 'Show Command Only', desc: 'Generate the password + ACL command to run yourself.' },
-];
-
-function HubAdminPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
-    const [loading, setLoading] = useState(true);
-    const [status, setStatus] = useState<HubRedisAdminStatus | null>(null);
-
-    const [mode, setMode] = useState<'auto' | 'manual'>('auto');
-    const [db, setDb] = useState(0);
-    // hubAddr only records how the Hub reaches the ONE shared Redis; Core never
-    // dials it. Empty in auto mode defaults to Core's own address.
-    const [hubAddr, setHubAddr] = useState('');
-    const [provisioning, setProvisioning] = useState(false);
-
-    const [revealed, setRevealed] = useState<HubRedisProvisionResult | null>(null);
-    const [rolling, setRolling] = useState(false);
-
-    const load = async () => {
-        setLoading(true);
-        const res = await getHubRedisAdminStatus();
-        if (res.success) setStatus(res);
-        setLoading(false);
-    };
-
-    useEffect(() => { load(); }, []);
-
-    const provision = async () => {
-        setProvisioning(true);
-        const res = await provisionHubRedisAdmin({ mode, db, hubAddr: hubAddr.trim() || undefined });
-        setProvisioning(false);
-        if (res.success && res.password) {
-            setRevealed(res);
-            load();
-        } else {
-            showToast(res.message || 'Provision failed.', false);
-        }
-    };
-
-    const doRoll = async () => {
-        setRolling(true);
-        const res = await rollHubRedisAdmin();
-        setRolling(false);
-        if (res.success && res.password) {
-            setRevealed(res);
-            load();
-        } else {
-            showToast(res.message || 'Roll failed.', false);
-        }
-    };
-
-    const copyEnv = (r: HubRedisProvisionResult) => {
-        navigator.clipboard.writeText(buildHubEnvText(r.hubEnv)).then(() => showToast('Hub ENV copied.', true)).catch(() => { /* clipboard blocked */ });
-    };
-
-    if (loading) {
-        return <div className="space-y-6"><div className="h-8 w-48 bg-(--base-03) rounded animate-pulse" /><div className="h-48 bg-(--base-02) rounded animate-pulse" /></div>;
-    }
-
-    return (
-        <div className="space-y-6">
-            <div>
-                <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Hub Redis access</h2>
-                <p className="text-sm text-(--base-07)">
-                    The gateway Hub reaches this platform through Redis, and needs its own account
-                    to do it. This creates that account (<span className="font-mono">gw-hub-admin</span>)
-                    and shows the password once, ready to paste into the Hub&apos;s deployment.
-                </p>
-                <p className="text-xs text-(--base-06) mt-1.5">
-                    Nothing to do with the Hub&apos;s own web interface, which is off by default and
-                    can stay off - this is the credential, not a login.
-                </p>
-            </div>
-
-            {/* Same-instance notice */}
-            <div className="flex items-start gap-3 p-3 rounded-md border border-(--base-04) bg-(--base-02)">
-                <Database size={15} className="text-(--base-06) shrink-0 mt-0.5" />
-                <p className="text-xs text-(--base-07)">
-                    The Hub uses the <span className="text-(--base-09) font-medium">same Redis instance as Core</span>. The
-                    address below only tells the Hub how to reach it (it may see an overlay address that differs from
-                    Core&apos;s); Core always provisions the user on its own Redis client and never dials the address you enter.
-                </p>
-            </div>
-
-            {/* Status card */}
-            <div className="card p-5 space-y-4">
-                <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                        <KeyRound size={18} className="text-(--accent-light)" />
-                    </div>
-                    <div className="flex-1">
-                        <div className="font-medium text-sm text-(--base-09)">Provisioning Status</div>
-                        <div className="text-xs text-(--base-06)">The generated password is never stored and shown only once.</div>
-                    </div>
-                    {status?.provisioned && (
-                        <button onClick={doRoll} disabled={rolling} className="btn btn-secondary btn-sm disabled:opacity-40">
-                            {rolling ? <Spinner size="xs" /> : <RefreshCw size={12} />} Roll password
-                        </button>
-                    )}
-                </div>
-
-                {status?.provisioned ? (
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                        <div className="flex justify-between"><span className="text-(--base-06)">User</span><span className="font-mono text-(--base-09)">gw-hub-admin</span></div>
-                        <div className="flex justify-between"><span className="text-(--base-06)">Mode</span><span className="text-(--base-09)">{status.mode}</span></div>
-                        <div className="flex justify-between"><span className="text-(--base-06)">Hub address</span><span className="font-mono text-(--base-09)">{status.addr || 'not set'}</span></div>
-                        <div className="flex justify-between"><span className="text-(--base-06)">DB</span><span className="text-(--base-09)">{status.db ?? 0}</span></div>
-                        {status.provisionedAt && <div className="flex justify-between"><span className="text-(--base-06)">Provisioned</span><span className="text-(--base-09)">{new Date(status.provisionedAt).toLocaleString()}</span></div>}
-                        {status.lastRolledAt && <div className="flex justify-between"><span className="text-(--base-06)">Last rolled</span><span className="text-(--base-09)">{new Date(status.lastRolledAt).toLocaleString()}</span></div>}
-                    </div>
-                ) : (
-                    <div className="flex items-center gap-2 text-sm text-(--base-06) py-2">
-                        <Database size={15} /> Not provisioned yet. Configure below.
-                    </div>
-                )}
-            </div>
-
-            {/* Configure card */}
-            <div className="card p-5 space-y-5">
-                <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                        <Database size={18} className="text-(--accent-light)" />
-                    </div>
-                    <div>
-                        <div className="font-medium text-sm text-(--base-09)">Provision</div>
-                        <div className="text-xs text-(--base-06)">Create gw-hub-admin on Core&apos;s Redis, or just show the command.</div>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                    {HUB_MODES.map(opt => (
-                        <button key={opt.value} type="button" onClick={() => setMode(opt.value)}
-                            className={`p-3 rounded-md border text-left transition-colors ${mode === opt.value ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
-                            <div className={`text-sm font-medium ${mode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
-                            <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
-                        </button>
-                    ))}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label className="input-label">Hub Redis address (optional)</label>
-                        <input className="input-field" value={hubAddr} onChange={e => setHubAddr(e.target.value)} placeholder="auto: Core's own address" />
-                        <p className="text-xs text-(--base-06) mt-1">How the Hub reaches the shared Redis. Leave blank to reuse Core&apos;s address.</p>
-                    </div>
-                    <div>
-                        <label className="input-label">Hub DB number (advanced)</label>
-                        <input type="number" min={0} max={15} className="input-field" value={db} onChange={e => setDb(parseInt(e.target.value) || 0)} />
-                        <p className="text-xs text-(--base-06) mt-1">ACL users are instance-wide; this only becomes the Hub&apos;s REDIS_DB.</p>
-                    </div>
-                </div>
-
-                <div className="flex items-center gap-3 border-t border-(--base-04) pt-4">
-                    <button onClick={provision} disabled={provisioning} className="btn btn-primary disabled:opacity-40">
-                        {provisioning ? <Spinner size="xs" /> : <KeyRound size={14} />} {mode === 'manual' ? 'Generate Command' : 'Provision gw-hub-admin'}
-                    </button>
-                    <p className="text-xs text-(--base-06)">The password is displayed once. If you lose it, roll a new one.</p>
-                </div>
-            </div>
-
-            {/* One-time reveal modal */}
-            {revealed && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setRevealed(null)}>
-                    <div className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">gw-hub-admin: copy now</h3></div>
-                        <div className="modal-body space-y-4">
-                            <p className="text-sm text-(--base-07) flex items-start gap-2">
-                                <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
-                                This password is shown once and never stored. Put the Hub ENV below into your gateway Hub deployment. If you lose it, roll a new one.
-                            </p>
-                            <div className="space-y-1">
-                                <label className="mono-label">Password</label>
-                                <CopyValue value={revealed.password || ''} />
-                            </div>
-                            <div className="space-y-1">
-                                <label className="mono-label">Hub deploy ENV</label>
-                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{buildHubEnvText(revealed.hubEnv)}</pre>
-                                <button onClick={() => copyEnv(revealed)} className="btn btn-secondary btn-sm mt-1"><Copy size={12} /> Copy ENV</button>
-                            </div>
-                            {revealed.aclCommand && (
-                                <div className="space-y-1">
-                                    <label className="mono-label">Run this on your Redis</label>
-                                    <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{revealed.aclCommand}</pre>
-                                    <button onClick={() => { navigator.clipboard.writeText(revealed.aclCommand || ''); showToast('Command copied.', true); }} className="btn btn-secondary btn-sm mt-1"><Copy size={12} /> Copy command</button>
-                                </div>
-                            )}
-                        </div>
-                        <div className="modal-footer"><button onClick={() => setRevealed(null)} className="btn btn-primary"><EyeOff size={12} /> Done</button></div>
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-}
 
 // ─────────────────────────────────────────────
 // Main export: Gateway with left-nav
@@ -1557,7 +1334,6 @@ export default function GatewayTab() {
             <div className="flex-1 overflow-y-auto pt-5">
                 {subTab === 'gateway' && <GatewayPanel showToast={showToast} />}
                 {subTab === 'xdp' && <XDPPanel showToast={showToast} />}
-                {subTab === 'hub' && <HubAdminPanel showToast={showToast} />}
             </div>
 
 

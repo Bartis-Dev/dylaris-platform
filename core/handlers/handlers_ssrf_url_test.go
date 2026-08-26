@@ -142,35 +142,6 @@ func TestValidateTabURL(t *testing.T) {
 	}
 }
 
-// TestValidAddr pins the host:port + numeric-1..65535-port shape check
-// (hub_redis_admin.go).
-func TestValidAddr(t *testing.T) {
-	cases := []struct {
-		name string
-		addr string
-		want bool
-	}{
-		{"valid host:port", "example.com:25565", true},
-		{"valid ip:port", "127.0.0.1:6379", true},
-		{"valid IPv6 bracket form", "[::1]:6379", true},
-		{"port 0 rejected (not > 0)", "example.com:0", false},
-		{"port above 65535 rejected", "example.com:70000", false},
-		{"port exactly 65535 accepted (boundary)", "example.com:65535", true},
-		{"port exactly 1 accepted (boundary)", "example.com:1", true},
-		{"missing port rejected", "example.com", false},
-		{"empty host rejected", ":6379", false},
-		{"non-numeric port rejected", "example.com:redis", false},
-		{"empty string rejected", "", false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := validAddr(c.addr); got != c.want {
-				t.Errorf("validAddr(%q) = %v, want %v", c.addr, got, c.want)
-			}
-		})
-	}
-}
-
 // TestValidateSubdomain pins the per-hoster-domain subdomain validator
 // (gateway.go): len 1..63, plus a mode-specific charset regex. Unknown mode
 // always rejects (fail closed).

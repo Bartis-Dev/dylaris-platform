@@ -27,7 +27,7 @@ import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 // snippet on one page and the address form on the other. It is one tab now, and
 // the whole sequence - create a link, deploy it, point an address at it - reads
 // top to bottom in one place.
-export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, entitlementKnown, suspended }: {
+export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, entitlementKnown, suspended, storeLinked }: {
     enrollUrl: string;
     config: WarpDeployConfig | null;
     storeUrl: string | null;
@@ -39,6 +39,8 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     allowed: boolean;
     entitlementKnown: boolean;
     suspended: boolean;
+    /** null = not known yet; see NotIncluded for why that differs from false. */
+    storeLinked?: boolean | null;
 }) {
     const [kits, setKits] = useState<LinkKit[]>([]);
     const [used, setUsed] = useState(0);
@@ -156,7 +158,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     // null means "not fetched yet". Rendering a refusal during that window tells
     // an entitled tenant they have nothing and then takes it back.
     if (!entitlementKnown) return <SkeletonCard height="h-24" />;
-    if (!allowed) return <NotIncluded what="route only" storeUrl={storeUrl} suspended={suspended} />;
+    if (!allowed) return <NotIncluded what="route only" storeUrl={storeUrl} suspended={suspended} storeLinked={storeLinked} />;
 
     return (
         <div className="space-y-6">

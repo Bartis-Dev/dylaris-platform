@@ -19,6 +19,8 @@ import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { MODE_LABELS, MODE_HELP } from '@/lib/access/accessMode';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
+import SettingsPage from '@/components/settings/SettingsPage';
+import SettingsCard from '@/components/settings/SettingsCard';
 
 // Panel-admin Settings tab (F6): (A) the global permissions_mode 3-state
 // switch, (B) panel-role CRUD, (C) assigning a panel role + grant/deny
@@ -111,14 +113,16 @@ export default function RolesTab() {
     }
 
     return (
-        <div className="max-w-3xl space-y-8">
+        <SettingsPage
+            title="Roles and permissions"
+            icon={ShieldCheck}
+            description="Who may delegate access on their own servers, which capability bundles panel staff can hold, and who holds them."
+        >
             {/* Section A - permissions_mode */}
-            <section>
-                <div className="mb-3">
-                    <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Permissions Mode</h2>
-                    <p className="text-sm text-(--base-07)">Controls whether and how server owners can delegate access to invited friends on their Access page. Panel roles and per-user overrides below are unaffected and always enforced.</p>
-                </div>
-                <div className="card p-5 space-y-4">
+            <SettingsCard
+                title="Permissions mode"
+                description="Whether and how server owners can delegate access to invited friends on their Access page. Panel roles and per-user overrides below are unaffected and always enforced."
+            >
                     <div className="flex items-center gap-2">
                         {MODE_OPTIONS.map(opt => (
                             <button
@@ -137,21 +141,20 @@ export default function RolesTab() {
                         ))}
                     </div>
                     <p className="text-xs text-(--base-06)">{MODE_HELP[mode]}</p>
-                </div>
-            </section>
+            </SettingsCard>
 
             {/* Section B - panel roles CRUD */}
-            <section>
-                <div className="flex items-center justify-between mb-3">
-                    <div>
-                        <h2 className="text-base font-display font-bold text-(--base-09) mb-1">Panel Roles</h2>
-                        <p className="text-sm text-(--base-07)">Capability bundles for panel staff. Always available to admins, independent of the permissions mode above.</p>
-                    </div>
+            <SettingsCard
+                title="Panel roles"
+                bodySpacing="none"
+                description="Capability bundles for panel staff. Always available to admins, independent of the permissions mode above."
+                actions={
                     <button type="button" onClick={() => setRoleModal({ role: null })} className="btn btn-primary btn-sm shrink-0">
                         <Plus size={13} />
-                        New Role
+                        New role
                     </button>
-                </div>
+                }
+            >
 
                 {roles.length === 0 ? (
                     <div className="card p-6 flex flex-col items-center text-center gap-2">
@@ -206,14 +209,14 @@ export default function RolesTab() {
                         ))}
                     </div>
                 )}
-            </section>
+            </SettingsCard>
 
             {/* Section C - assign a panel role to a user */}
-            <section>
-                <div className="mb-3">
-                    <h2 className="text-base font-display font-bold text-(--base-09) mb-1">User Assignment</h2>
-                    <p className="text-sm text-(--base-07)">Assign a panel role, plus optional per-user grant/deny overrides, to a user.</p>
-                </div>
+            <SettingsCard
+                title="User assignment"
+                bodySpacing="none"
+                description="Assign a panel role, plus optional per-user grant and deny overrides, to a user."
+            >
                 <div className="table-wrapper">
                     <table className="w-full">
                         <thead>
@@ -247,7 +250,7 @@ export default function RolesTab() {
                         </tbody>
                     </table>
                 </div>
-            </section>
+            </SettingsCard>
 
             {/* Create/Edit role modal */}
             {roleModal && (
@@ -299,7 +302,7 @@ export default function RolesTab() {
                 />
             )}
 
-        </div>
+        </SettingsPage>
     );
 }
 

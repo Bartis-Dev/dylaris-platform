@@ -44,6 +44,13 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// May they at all, before how many. The cap below is a ceiling and skips
+	// itself at zero, which is exactly the value an account that bought nothing
+	// carries; without this a fresh registration could mint enroll tokens
+	// forever. See entitlement_gate.go.
+	if !h.state.requireEntitlement(r.Context(), w, userID, services.EntitlementByon) {
+		return
+	}
 	var req struct {
 		Label       string `json:"label"`
 		ExpiresDays int    `json:"expiresDays"`

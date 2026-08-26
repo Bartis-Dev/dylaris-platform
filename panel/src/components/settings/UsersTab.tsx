@@ -16,7 +16,7 @@ import {
     type BillingStatus,
     type UserBillingAdmin,
 } from '@/lib/api/billing';
-import { getPlans, setUserPlan, setUserLimitOverrides, type Plan } from '@/lib/api/plans';
+import { setUserLimitOverrides } from '@/lib/api/plans';
 import { getUserEntitlement, grantEntitlement, revokeEntitlement, type Entitlement } from '@/lib/api/entitlement';
 import { entitlementExplanation } from '@/lib/entitlementText';
 import UserRegionPicker from '@/components/admin/UserRegionPicker';
@@ -957,15 +957,14 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const [savingOverrides, setSavingOverrides] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    // Plan + per-user limit overrides ('' = use the plan value).
-    const [plans, setPlans] = useState<Plan[]>([]);
-    const [planId, setPlanId] = useState<number | null>(null);
+    // Per-user limit overrides ('' = leave unset, which means unlimited).
+    // There is no plan to fall back to any more; these ARE the caps.
     const [maxNodes, setMaxNodes] = useState('');
     const [maxLinks, setMaxLinks] = useState('');
     const [tEdge, setTEdge] = useState('');
     const [tRelay, setTRelay] = useState('');
     const [tCombined, setTCombined] = useState('');
-    const [savingPlan, setSavingPlan] = useState(false);
+    const [savingLimits, setSavingLimits] = useState(false);
 
     // Entitlement: WHAT the tenant may use, as opposed to the status and caps
     // below. Shown first because it is the question an operator actually opens
@@ -977,7 +976,6 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const [savingGrant, setSavingGrant] = useState(false);
 
     useEffect(() => {
-        getPlans().then(r => { if (r.success) setPlans(r.plans || []); });
         getUserEntitlement(user.id).then(e => {
             if (e.success) {
                 setEnt({
@@ -994,7 +992,6 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                 setR2(d.overrides.r2Retention || '');
                 setNr(d.overrides.nodeRetention || '');
                 setQuota(d.overrides.r2QuotaGb == null ? '' : String(d.overrides.r2QuotaGb));
-                setPlanId(d.planId ?? null);
                 setMaxNodes(d.overrides.maxNodes == null ? '' : String(d.overrides.maxNodes));
                 setMaxLinks(d.overrides.maxLinks == null ? '' : String(d.overrides.maxLinks));
                 setTEdge(d.overrides.trafficEdgeGb == null ? '' : String(d.overrides.trafficEdgeGb));
@@ -1066,20 +1063,18 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const limitsValid = numOk(maxNodes) && numOk(maxLinks) && numOk(tEdge) && numOk(tRelay) && numOk(tCombined);
     const toNum = (v: string) => (v === '' ? null : parseInt(v, 10));
 
-    const savePlan = async () => {
-        if (!limitsValid) { show('Limits are whole numbers (empty = use plan, 0 = unlimited).', false); return; }
-        setSavingPlan(true);
-        const r1 = await setUserPlan(user.id, planId);
-        const r2res = await setUserLimitOverrides(user.id, {
+    const saveLimits = async () => {
+        if (!limitsValid) { show('Limits are whole numbers (empty = unset, 0 = unlimited).', false); return; }
+        setSavingLimits(true);
+        const res = await setUserLimitOverrides(user.id, {
             maxNodes: toNum(maxNodes),
             maxLinks: toNum(maxLinks),
             trafficEdgeGb: toNum(tEdge),
             trafficRelayGb: toNum(tRelay),
             trafficCombinedGb: toNum(tCombined),
         });
-        setSavingPlan(false);
-        const ok = r1.success && r2res.success;
-        show(ok ? 'Plan & limits saved.' : (r1.message || r2res.message || 'Failed.'), ok);
+        setSavingLimits(false);
+        show(res.success ? 'Limits saved.' : (res.message || 'Failed.'), res.success);
     };
 
     return (
@@ -1245,22 +1240,18 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                 </div>
                             </section>
 
-                            {/* Plan + per-user limit overrides */}
+                            {/* Per-user limit overrides. The plan selector that
+                                used to head this section is gone with plans
+                                themselves: these values ARE the tenant's caps,
+                                and the store writes the same ones on purchase. */}
                             <section className="space-y-3 border-t border-(--base-04) pt-4">
                                 <div>
-                                    <label className="input-label">Plan &amp; limit overrides</label>
-                                    <p className="text-xs text-(--base-06) mt-0.5">The plan sets the baseline; an override here wins. Empty = use the plan. 0 = unlimited.</p>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <label className="input-label w-48 shrink-0">Plan</label>
-                                    <select
-                                        className="input-field w-56"
-                                        value={planId ?? ''}
-                                        onChange={e => setPlanId(e.target.value === '' ? null : parseInt(e.target.value, 10))}
-                                    >
-                                        <option value="">Default plan</option>
-                                        {plans.map(p => <option key={p.id} value={p.id}>{p.name}{p.isDefault ? ' (default)' : ''}</option>)}
-                                    </select>
+                                    <label className="input-label">Limits</label>
+                                    <p className="text-xs text-(--base-06) mt-0.5">
+                                        What this tenant may hold. A purchase writes these too, so an edit here
+                                        is overwritten the next time their subscription changes. Empty = unset.
+                                        0 = unlimited.
+                                    </p>
                                 </div>
                                 <LimitField label="Max nodes" value={maxNodes} onChange={setMaxNodes} />
                                 <LimitField label="Max links" value={maxLinks} onChange={setMaxLinks} />
@@ -1270,11 +1261,11 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                 <div className="flex items-center justify-end">
                                     <button
                                         type="button"
-                                        onClick={savePlan}
-                                        disabled={savingPlan || !limitsValid}
+                                        onClick={saveLimits}
+                                        disabled={savingLimits || !limitsValid}
                                         className="btn btn-primary btn-sm disabled:opacity-40"
                                     >
-                                        {savingPlan ? 'Saving…' : 'Save plan & limits'}
+                                        {savingLimits ? 'Saving…' : 'Save limits'}
                                     </button>
                                 </div>
                             </section>

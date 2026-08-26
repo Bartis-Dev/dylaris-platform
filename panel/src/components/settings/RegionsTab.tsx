@@ -5,6 +5,7 @@ import { adminListRegions, createRegion, updateRegion, deleteRegion, Region } fr
 import { Globe, Plus, Pencil, Trash2, X, CircleCheck, CircleAlert, Loader2 } from 'lucide-react';
 import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import SettingsPage from '@/components/settings/SettingsPage';
 
 interface RegionFormState {
     id: string;
@@ -106,22 +107,23 @@ export default function RegionsTab() {
     );
 
     return (
-        <div className="space-y-6 max-w-4xl">
-            <div className="flex items-start justify-between gap-4">
-                <div>
-                    <h2 className="text-lg font-display flex items-center gap-2">
-                        <Globe size={18} className="text-(--accent-light)" /> Regions
-                    </h2>
-                    <p className="text-sm text-(--base-06) mt-1">
-                        Geographic deployment regions. Single-region setups have one region called <span className="font-mono">default</span>.
-                        Multi-region setups add regions like <span className="font-mono">eu</span>, <span className="font-mono">us-east</span> — used as the value of <span className="font-mono">nodes.region</span> and <span className="font-mono">servers.region</span>.
-                    </p>
-                </div>
+        <SettingsPage
+            title="Regions"
+            icon={Globe}
+            width="4xl"
+            description={<>
+                Geographic deployment regions. Single-region setups have one region called{' '}
+                <span className="font-mono">default</span>. Multi-region setups add regions like{' '}
+                <span className="font-mono">eu</span> or <span className="font-mono">us-east</span>,
+                used as the value of <span className="font-mono">nodes.region</span> and{' '}
+                <span className="font-mono">servers.region</span>.
+            </>}
+            actions={
                 <button type="button" onClick={openCreate} className="btn btn-primary inline-flex items-center gap-2 shrink-0">
                     <Plus size={14} /> Add Region
                 </button>
-            </div>
-
+            }
+        >
             <div className="card overflow-hidden">
                 <table className="w-full text-sm">
                     <thead className="bg-(--base-03) text-(--base-06)">
@@ -281,6 +283,6 @@ export default function RegionsTab() {
                     {toast.msg}
                 </div>
             )}
-        </div>
+        </SettingsPage>
     );
 }

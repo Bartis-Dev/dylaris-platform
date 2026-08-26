@@ -11,6 +11,18 @@ import { HelpCircle, X } from 'lucide-react';
  * connection is six fields, and the right answer for four of them depends on
  * which provider you are pointing at. That is a page of explanation, not a
  * tooltip, and it belongs next to the form rather than on top of it.
+ *
+ * LAYOUT: put the dialog and this panel in a `.modal-with-help` row inside the
+ * overlay, and give the dialog `w-full lg:max-w-lg`:
+ *
+ *   <div className="modal-overlay"><div className="modal-with-help">
+ *     <div className="modal-panel w-full lg:max-w-lg ...">...</div>
+ *     <HelpPanel ... />
+ *   </div></div>
+ *
+ * That class is what keeps the pair centred as a unit. A plain flex row leaves
+ * the dialog at its left edge, so the dialog hangs left of centre while the
+ * help is closed and moves when it opens.
  */
 
 export interface HelpEntry {

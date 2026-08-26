@@ -4,8 +4,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"dylaris-core/store"
 )
 
 // TestCannedRequestValidate pins the name/body boundary checks (1..128,
@@ -62,54 +60,6 @@ func TestCannedRequestValidate(t *testing.T) {
 			t.Fatalf("got CategoryID=%v, want %d", got.CategoryID, catID)
 		}
 	})
-}
-
-// TestPlanBodyValid pins the limits->=0 + name-required guard (plans.go).
-// Limits are 0=unlimited, so zero is valid; only negative values are rejected.
-func TestPlanBodyValid(t *testing.T) {
-	base := planBody{Name: "Starter", MaxNodes: 1, MaxLinks: 1, R2QuotaGb: 10, TrafficEdgeGb: 10, TrafficRelayGb: 10, TrafficCombinedGb: 10}
-
-	cases := []struct {
-		name string
-		b    planBody
-		want bool
-	}{
-		{"valid full plan", base, true},
-		{"zero limits (unlimited) accepted", planBody{Name: "Unlimited"}, true},
-		{"empty name rejected", func() planBody { b := base; b.Name = ""; return b }(), false},
-		{"negative MaxNodes rejected", func() planBody { b := base; b.MaxNodes = -1; return b }(), false},
-		{"negative MaxLinks rejected", func() planBody { b := base; b.MaxLinks = -1; return b }(), false},
-		{"negative R2QuotaGb rejected", func() planBody { b := base; b.R2QuotaGb = -1; return b }(), false},
-		{"negative TrafficEdgeGb rejected", func() planBody { b := base; b.TrafficEdgeGb = -1; return b }(), false},
-		{"negative TrafficRelayGb rejected", func() planBody { b := base; b.TrafficRelayGb = -1; return b }(), false},
-		{"negative TrafficCombinedGb rejected", func() planBody { b := base; b.TrafficCombinedGb = -1; return b }(), false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := c.b.valid(); got != c.want {
-				t.Errorf("planBody.valid() = %v, want %v", got, c.want)
-			}
-		})
-	}
-}
-
-// TestPlanBodyToPlan pins the field-by-field mapping into store.Plan so a
-// future field-shuffle regresses loudly instead of silently swapping values.
-func TestPlanBodyToPlan(t *testing.T) {
-	b := planBody{
-		Name: "Pro", PriceLabel: "$10/mo", MaxNodes: 5, MaxLinks: 3,
-		R2QuotaGb: 100, TrafficEdgeGb: 50, TrafficRelayGb: 20, TrafficCombinedGb: 70,
-		IsDefault: true,
-	}
-	got := b.toPlan(42)
-	want := store.Plan{
-		ID: 42, Name: "Pro", PriceLabel: "$10/mo", MaxNodes: 5, MaxLinks: 3,
-		R2QuotaGB: 100, TrafficEdgeGB: 50, TrafficRelayGB: 20, TrafficCombinedGB: 70,
-		IsDefault: true,
-	}
-	if got != want {
-		t.Errorf("toPlan() = %+v, want %+v", got, want)
-	}
 }
 
 func TestNormalizeLibraryPath(t *testing.T) {

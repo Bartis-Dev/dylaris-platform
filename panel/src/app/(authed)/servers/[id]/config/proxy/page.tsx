@@ -7,6 +7,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { getFileContent, saveFile } from '@/lib/api';
 import { proxyConfigFilename, backendAddress, proxyPrereqHint } from '@/lib/proxyConfig';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import { SettingsCardSave } from '@/components/settings/SettingsCard';
 
 // Proxy Config tab: a raw text editor for the proxy's own config file
 // (config.yml for BungeeCord/Waterfall, velocity.toml for Velocity) plus a
@@ -97,7 +98,7 @@ export default function ServerConfigProxyPage() {
     }, [serverUuid, filePath, text, filename, showToast]);
 
     // Editing a raw config file is the same kind of change as everything else
-    // in the panel now: the bar at the bottom commits it, and leaving the page
+    // in the panel now: the Save above the editor commits it, and leaving the page
     // with an unsaved edit prompts rather than dropping it.
     useUnsavedChanges({
         dirty: dirty && !notFound,
@@ -125,7 +126,19 @@ export default function ServerConfigProxyPage() {
                         <span className="truncate">
                             Raw <code className="font-mono text-(--base-08)">{filename}</code>. Changes are not applied until you save and restart the proxy.
                         </span>
-                        {dirty && <span className="mono-label text-(--warning-light) shrink-0">unsaved</span>}
+                    </div>
+                    {/* A file editor rather than a card, so the pair sits in
+                        this column's own header. Refused while the file does
+                        not exist: there is nothing to write it into. */}
+                    <div className="flex items-center gap-2 shrink-0">
+                        <SettingsCardSave
+                            form={{
+                                dirty: dirty && !notFound,
+                                saving,
+                                save,
+                                discard: () => { void reload(); },
+                            }}
+                        />
                     </div>
                 </div>
 

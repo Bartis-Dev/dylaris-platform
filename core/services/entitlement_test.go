@@ -7,25 +7,30 @@ import (
 	"dylaris-core/store"
 )
 
-// entFakeStore serves the four lookups EffectiveEntitlement makes.
+// entFakeStore serves the lookups EffectiveEntitlement makes. The plan lookups
+// remain on the interface for now but are no longer consulted: entitlement comes
+// from what the store pushed, plus manual grants.
 type entFakeStore struct {
 	billing *store.UserBilling
-	planID  *int
-	plan    *store.Plan
-	def     *store.Plan
 }
 
 func (f *entFakeStore) GetUserBilling(string) (*store.UserBilling, error) { return f.billing, nil }
-func (f *entFakeStore) GetUserPlanID(string) (*int, error)                { return f.planID, nil }
-func (f *entFakeStore) GetPlan(int) (*store.Plan, error)                  { return f.plan, nil }
-func (f *entFakeStore) GetDefaultPlan() (*store.Plan, error)              { return f.def, nil }
 
-func ptrInt(i int) *int              { return &i }
+func ptrInt64(i int64) *int64        { return &i }
 func ptrTime(t time.Time) *time.Time { return &t }
 
 var entNow = time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 
-func TestEffectiveEntitlement(t *testing.T) {
+// The rule these decide: a hosted tenant may use exactly what they bought, and
+// a self-host install may use everything.
+//
+// The bug they pin is the one that made this function worth rewriting. It used
+// to answer "unlimited" whenever no plan was configured, unconditionally. On a
+// hosted install an account that has bought nothing configures nothing, so every
+// freshly registered user resolved to unlimited and could mint node enroll
+// tokens, warp keys and link kits. The one state meaning "paid for nothing" was
+// read as "entitled to everything".
+func TestEffectiveEntitlement_Hosted(t *testing.T) {
 	tests := []struct {
 		name          string
 		fake          *entFakeStore
@@ -34,145 +39,116 @@ func TestEffectiveEntitlement(t *testing.T) {
 		wantSource    string
 	}{
 		{
-			// Today's behaviour for every self-host install that never defined
-			// plans. Denying here would lock them out on upgrade.
-			name:          "no plan and no billing row is unlimited",
+			// The headline case. A registered account that never touched the
+			// store has no billing row at all.
+			name:          "nothing bought grants nothing",
 			fake:          &entFakeStore{},
-			wantByon:      true,
-			wantRouteOnly: true,
-			wantSource:    EntitlementSourceUnlimited,
-		},
-		{
-			name:          "plan kind both grants both",
-			fake:          &entFakeStore{planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: EntitlementBoth}},
-			wantByon:      true,
-			wantRouteOnly: true,
-			wantSource:    EntitlementSourcePlan,
-		},
-		{
-			name:          "plan kind byon grants only byon",
-			fake:          &entFakeStore{planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: EntitlementByon}},
-			wantByon:      true,
-			wantRouteOnly: false,
-			wantSource:    EntitlementSourcePlan,
-		},
-		{
-			name:          "plan kind route_only grants only routes",
-			fake:          &entFakeStore{planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: EntitlementRouteOnly}},
-			wantByon:      false,
-			wantRouteOnly: true,
-			wantSource:    EntitlementSourcePlan,
-		},
-		{
-			// Fail CLOSED on a value nobody recognises. A typo in a plan row must
-			// not silently hand out everything.
-			name:          "unknown plan kind grants nothing",
-			fake:          &entFakeStore{planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: "premium"}},
 			wantByon:      false,
 			wantRouteOnly: false,
 			wantSource:    EntitlementSourceNone,
 		},
 		{
-			name: "active grant alone grants its kind",
-			fake: &entFakeStore{
-				planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: "premium"}, // grants nothing
-				billing: &store.UserBilling{
-					Status:                     "active",
-					ManualEntitlement:          EntitlementByon,
-					ManualEntitlementExpiresAt: ptrTime(entNow.Add(14 * 24 * time.Hour)),
-				},
-			},
-			wantByon:      true,
+			// A cancellation pushes zeroes rather than deleting the row. A bare
+			// numeric cap check reads 0 as "no limit"; here it must read as
+			// "nothing".
+			name: "an explicit zero grants nothing",
+			fake: &entFakeStore{billing: &store.UserBilling{
+				Status: "active", MaxNodes: ptrInt64(0), MaxLinks: ptrInt64(0),
+			}},
+			wantByon:      false,
 			wantRouteOnly: false,
-			wantSource:    EntitlementSourceGrant,
+			wantSource:    EntitlementSourceNone,
 		},
 		{
-			// The point of the whole design: a grant and a subscription add up
-			// rather than fight, so "14 days now, subscribe later" works.
-			name: "grant and plan are a union",
-			fake: &entFakeStore{
-				planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: EntitlementRouteOnly},
-				billing: &store.UserBilling{
-					Status:                     "active",
-					ManualEntitlement:          EntitlementByon,
-					ManualEntitlementExpiresAt: ptrTime(entNow.Add(time.Hour)),
-				},
-			},
+			name: "a purchased node grants byon only",
+			fake: &entFakeStore{billing: &store.UserBilling{
+				Status: "active", MaxNodes: ptrInt64(1),
+			}},
+			wantByon:      true,
+			wantRouteOnly: false,
+			wantSource:    EntitlementSourcePlan,
+		},
+		{
+			name: "a purchased route-only location grants routes only",
+			fake: &entFakeStore{billing: &store.UserBilling{
+				Status: "active", MaxLinks: ptrInt64(1),
+			}},
+			wantByon:      false,
+			wantRouteOnly: true,
+			wantSource:    EntitlementSourcePlan,
+		},
+		{
+			name: "both purchased grants both",
+			fake: &entFakeStore{billing: &store.UserBilling{
+				Status: "active", MaxNodes: ptrInt64(1), MaxLinks: ptrInt64(1),
+			}},
 			wantByon:      true,
 			wantRouteOnly: true,
-			wantSource:    EntitlementSourceBoth,
+			wantSource:    EntitlementSourcePlan,
 		},
 		{
-			name: "expired grant contributes nothing",
-			fake: &entFakeStore{
-				planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: "premium"},
-				billing: &store.UserBilling{
-					Status:                     "active",
-					ManualEntitlement:          EntitlementBoth,
-					ManualEntitlementExpiresAt: ptrTime(entNow.Add(-time.Second)),
-				},
-			},
-			wantByon:      false,
-			wantRouteOnly: false,
-			wantSource:    EntitlementSourceNone,
-		},
-		{
-			// A kind with no expiry is a malformed row, not an unlimited grant.
-			name: "grant with no expiry contributes nothing",
-			fake: &entFakeStore{
-				planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: "premium"},
-				billing: &store.UserBilling{
-					Status:            "active",
-					ManualEntitlement: EntitlementBoth,
-				},
-			},
-			wantByon:      false,
-			wantRouteOnly: false,
-			wantSource:    EntitlementSourceNone,
-		},
-		{
-			// Suspension is a hard stop and outranks everything, including a live
-			// grant. Restoring access is a status change, not a grant.
-			name: "suspended overrides an active grant",
-			fake: &entFakeStore{
-				planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: EntitlementBoth},
-				billing: &store.UserBilling{
-					Status:                     "suspended",
-					ManualEntitlement:          EntitlementBoth,
-					ManualEntitlementExpiresAt: ptrTime(entNow.Add(time.Hour)),
-				},
-			},
+			// Suspension is a hard stop whatever they hold.
+			name: "suspended grants nothing even with a purchase",
+			fake: &entFakeStore{billing: &store.UserBilling{
+				Status: "suspended", MaxNodes: ptrInt64(5), MaxLinks: ptrInt64(5),
+			}},
 			wantByon:      false,
 			wantRouteOnly: false,
 			wantSource:    EntitlementSourceSuspended,
 		},
 		{
-			// past_due is what the grace window is for; cutting access there would
-			// defeat it.
+			// past_due is what the grace window is for; cutting access there
+			// would defeat it.
 			name: "past_due still grants",
-			fake: &entFakeStore{
-				planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: EntitlementBoth},
-				billing: &store.UserBilling{Status: "past_due"},
-			},
+			fake: &entFakeStore{billing: &store.UserBilling{
+				Status: "past_due", MaxNodes: ptrInt64(1), MaxLinks: ptrInt64(1),
+			}},
 			wantByon:      true,
 			wantRouteOnly: true,
 			wantSource:    EntitlementSourcePlan,
 		},
 		{
-			name: "a deleted plan falls back to the default plan",
-			fake: &entFakeStore{
-				planID: ptrInt(99), plan: nil,
-				def: &store.Plan{ID: 1, Kind: EntitlementRouteOnly},
-			},
-			wantByon:      false,
+			name: "an active grant alone grants its kind",
+			fake: &entFakeStore{billing: &store.UserBilling{
+				Status:                     "active",
+				ManualEntitlement:          EntitlementByon,
+				ManualEntitlementExpiresAt: ptrTime(entNow.Add(24 * time.Hour)),
+			}},
+			wantByon:      true,
+			wantRouteOnly: false,
+			wantSource:    EntitlementSourceGrant,
+		},
+		{
+			// Union, deliberately: "here are 14 days now, subscribe later" must
+			// not have the grant and the subscription fight.
+			name: "a grant and a purchase union",
+			fake: &entFakeStore{billing: &store.UserBilling{
+				Status:                     "active",
+				MaxLinks:                   ptrInt64(1),
+				ManualEntitlement:          EntitlementByon,
+				ManualEntitlementExpiresAt: ptrTime(entNow.Add(24 * time.Hour)),
+			}},
+			wantByon:      true,
 			wantRouteOnly: true,
-			wantSource:    EntitlementSourcePlan,
+			wantSource:    EntitlementSourceBoth,
+		},
+		{
+			// Fail CLOSED on a kind nobody recognises.
+			name: "an unknown grant kind grants nothing",
+			fake: &entFakeStore{billing: &store.UserBilling{
+				Status:                     "active",
+				ManualEntitlement:          "premium",
+				ManualEntitlementExpiresAt: ptrTime(entNow.Add(24 * time.Hour)),
+			}},
+			wantByon:      false,
+			wantRouteOnly: false,
+			wantSource:    EntitlementSourceNone,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := EffectiveEntitlement(tt.fake, "u1", entNow)
+			got, err := EffectiveEntitlement(tt.fake, "u1", entNow, true)
 			if err != nil {
 				t.Fatalf("EffectiveEntitlement: %v", err)
 			}
@@ -189,9 +165,51 @@ func TestEffectiveEntitlement(t *testing.T) {
 	}
 }
 
-// TestEffectiveEntitlement_ExpiredGrantIsNotReported: an expired grant must not
-// appear in the response at all, or the admin UI would show "granted until
-// <past date>" as if it were live.
+// The rule this decides: a self-host install, which has no store and therefore
+// nothing to buy, keeps the uncapped behaviour it has always had. Denying there
+// would lock out every install that never configured any of this.
+func TestEffectiveEntitlement_SelfHostIsUnlimited(t *testing.T) {
+	cases := []struct {
+		name string
+		fake *entFakeStore
+	}{
+		{"no billing row at all", &entFakeStore{}},
+		{"a billing row with nothing set", &entFakeStore{billing: &store.UserBilling{Status: "active"}}},
+		{"explicit zeroes", &entFakeStore{billing: &store.UserBilling{
+			Status: "active", MaxNodes: ptrInt64(0), MaxLinks: ptrInt64(0),
+		}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := EffectiveEntitlement(tc.fake, "u1", entNow, false)
+			if err != nil {
+				t.Fatalf("EffectiveEntitlement: %v", err)
+			}
+			if !got.Byon || !got.RouteOnly {
+				t.Errorf("byon=%v routeOnly=%v, want both true on a self-host install", got.Byon, got.RouteOnly)
+			}
+			if got.Source != EntitlementSourceUnlimited {
+				t.Errorf("Source = %q, want %q", got.Source, EntitlementSourceUnlimited)
+			}
+		})
+	}
+}
+
+// Suspension outranks the self-host shortcut. An operator who suspended an
+// account on a self-host install means it.
+func TestEffectiveEntitlement_SelfHostStillHonoursSuspension(t *testing.T) {
+	fake := &entFakeStore{billing: &store.UserBilling{Status: "suspended"}}
+	got, err := EffectiveEntitlement(fake, "u1", entNow, false)
+	if err != nil {
+		t.Fatalf("EffectiveEntitlement: %v", err)
+	}
+	if got.Byon || got.RouteOnly {
+		t.Errorf("a suspended account got byon=%v routeOnly=%v", got.Byon, got.RouteOnly)
+	}
+}
+
+// An expired grant must not appear in the response at all, or the admin UI shows
+// "granted until <past date>" as if it were live.
 func TestEffectiveEntitlement_ExpiredGrantIsNotReported(t *testing.T) {
 	fake := &entFakeStore{
 		billing: &store.UserBilling{
@@ -200,22 +218,23 @@ func TestEffectiveEntitlement_ExpiredGrantIsNotReported(t *testing.T) {
 			ManualEntitlementExpiresAt: ptrTime(entNow.Add(-24 * time.Hour)),
 		},
 	}
-	got, err := EffectiveEntitlement(fake, "u1", entNow)
+	got, err := EffectiveEntitlement(fake, "u1", entNow, true)
 	if err != nil {
 		t.Fatalf("EffectiveEntitlement: %v", err)
 	}
 	if got.GrantKind != "" || got.GrantExpiresAt != nil {
 		t.Errorf("expired grant reported as %q until %v, want it absent", got.GrantKind, got.GrantExpiresAt)
 	}
+	if got.Byon {
+		t.Error("an expired grant still granted byon")
+	}
 }
 
-// TestEffectiveEntitlement_GrantBoundary: the expiry is exclusive, so the exact
-// instant it lapses is already lapsed. Pinned because an off-by-one here means a
-// grant that outlives its own date.
+// The expiry is exclusive, so the exact instant it lapses is already lapsed.
+// Pinned because an off-by-one here means a grant that outlives its own date.
 func TestEffectiveEntitlement_GrantBoundary(t *testing.T) {
 	mk := func(exp time.Time) *entFakeStore {
 		return &entFakeStore{
-			planID: ptrInt(1), plan: &store.Plan{ID: 1, Kind: "premium"},
 			billing: &store.UserBilling{
 				Status:                     "active",
 				ManualEntitlement:          EntitlementByon,
@@ -223,10 +242,10 @@ func TestEffectiveEntitlement_GrantBoundary(t *testing.T) {
 			},
 		}
 	}
-	if got, _ := EffectiveEntitlement(mk(entNow), "u1", entNow); got.Byon {
+	if got, _ := EffectiveEntitlement(mk(entNow), "u1", entNow, true); got.Byon {
 		t.Error("a grant expiring exactly now still granted")
 	}
-	if got, _ := EffectiveEntitlement(mk(entNow.Add(time.Nanosecond)), "u1", entNow); !got.Byon {
+	if got, _ := EffectiveEntitlement(mk(entNow.Add(time.Nanosecond)), "u1", entNow, true); !got.Byon {
 		t.Error("a grant expiring a moment from now did not grant")
 	}
 }

@@ -6,6 +6,7 @@ import { AlertTriangle, RotateCcw, Code2, ListChecks, Search, ChevronDown, FileQ
 import { useAppData } from '@/lib/AppDataContext';
 import { toast } from '@/components/ui/Toast';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import { SettingsCardSave } from '@/components/settings/SettingsCard';
 import { getFileContent, saveFile } from '@/lib/api';
 import {
     VANILLA_SCHEMA, GROUP_LABELS, groupedSchema,
@@ -306,8 +307,8 @@ export default function ServerPropertiesView() {
     const pendingRef = useRef(pending);
     useEffect(() => { pendingRef.current = pending; }, [pending]);
 
-    // An edit. Nothing leaves the browser: it lands in `pending` and the save
-    // bar at the bottom of the screen commits the lot in one write.
+    // An edit. Nothing leaves the browser: it lands in `pending` and the Save
+    // in this page's header commits the lot in one write.
     const editProperty = useCallback((key: string, newRaw: string) => {
         setPending(prev => ({ ...prev, [key]: newRaw }));
     }, []);
@@ -506,6 +507,17 @@ export default function ServerPropertiesView() {
                             <Code2 size={12} /> Advanced
                         </button>
                     </div>
+                    {/* This editor is a page, not a card, so its save lives in
+                        its own header - beside the mode switch that decides
+                        which of the two forms is being written. */}
+                    <SettingsCardSave
+                        form={{
+                            dirty: mode === 'advanced' ? advancedDirty : simpleDirty,
+                            saving: mode === 'advanced' ? savingAdvanced : savingSimple,
+                            save: mode === 'advanced' ? saveAdvanced : saveSimple,
+                            discard: mode === 'advanced' ? discardAdvanced : discardSimple,
+                        }}
+                    />
                 </div>
             </div>
 

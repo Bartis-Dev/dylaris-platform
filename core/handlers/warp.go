@@ -437,6 +437,11 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// A link kit is the route-only product. See entitlement_gate.go for why the
+	// cap below cannot carry this on its own.
+	if !h.state.requireEntitlement(r.Context(), w, userID, services.EntitlementRouteOnly) {
+		return
+	}
 	// Enforce the tenant's link cap (0 = unlimited, mirrors max_nodes).
 	lim, lerr := services.EffectiveLimits(h.state.Store, userID)
 	if lerr != nil {
@@ -823,6 +828,10 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	userID := byonCallerID(r)
 	if userID == "" {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// A warp key attaches a machine of their own, which is the BYON product.
+	if !h.state.requireEntitlement(r.Context(), w, userID, services.EntitlementByon) {
 		return
 	}
 

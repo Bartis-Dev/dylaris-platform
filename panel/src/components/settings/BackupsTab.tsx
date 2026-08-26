@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Pencil, X, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2, Archive } from 'lucide-react';
 import {
     BackupStorage,
     BackupConfig,
@@ -16,6 +16,8 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import SettingsPage from '@/components/settings/SettingsPage';
+import SettingsCard, { type SavableForm } from '@/components/settings/SettingsCard';
 
 interface LocalConfig {
     basePath: string;
@@ -58,19 +60,20 @@ const PROVIDER_FOR_MODE: Record<BackupConfig['mode'], BackupProvider> = {
 function StorageModeCard({
     config,
     onChange,
+    form,
 }: {
     config: BackupConfig;
     onChange: (next: BackupConfig) => void;
+    form: SavableForm;
 }) {
     const setMode = (mode: BackupConfig['mode']) => onChange({ ...config, mode });
 
     return (
-        <div className="card card-pad space-y-4">
-            <div>
-                <h3 className="text-sm font-display font-semibold text-(--accent-light) mb-1">Storage Mode</h3>
-                <p className="text-xs text-(--base-06)">Pick where backup archives live. Per-job credentials (S3 keys, NFS paths) still come from the Storages list below.</p>
-            </div>
-
+        <SettingsCard
+            title="Storage mode"
+            description="Where backup archives live. Per-job credentials (S3 keys, NFS paths) still come from the storages list below."
+            form={form}
+        >
             <div className="space-y-2">
                 <ModeOption
                     selected={config.mode === 's3'}
@@ -98,7 +101,7 @@ function StorageModeCard({
             {config.mode === 'node-local' && (
                 <NodeLocalQuotaPanel config={config} onChange={onChange} />
             )}
-        </div>
+        </SettingsCard>
     );
 }
 
@@ -303,9 +306,9 @@ export default function BackupsTab() {
         );
     };
 
-    // This card had its own Discard/Save pair, hand-rolled from the same idea as
-    // the shared bar but without registering - so it had no navigation guard and
-    // no beforeunload, while the tab beside it prompted. Same mechanism now.
+    // This card had its own Discard/Save pair, hand-rolled and unregistered -
+    // so it had no navigation guard and no beforeunload, while the tab beside
+    // it prompted. It has a pair again, but a registered one.
     const configDirty = !!savedConfig && JSON.stringify(savedConfig) !== JSON.stringify(config);
 
     const handleConfigDiscard = () => {
@@ -344,22 +347,24 @@ export default function BackupsTab() {
 
     const activeProvider = PROVIDER_FOR_MODE[config.mode];
 
+    const modeForm = { dirty: configDirty, saving, save: handleConfigSave, discard: handleConfigDiscard };
+
     return (
-        <div className="max-w-3xl space-y-6">
-            <div>
-                <h2 className="h-section mb-1">Backups</h2>
-                <p className="text-sm text-(--base-07)">Choose how backup archives are stored, then configure per-instance credentials (S3 keys, NFS paths) below.</p>
-            </div>
+        <SettingsPage
+            title="Backups"
+            icon={Archive}
+            description="Choose how backup archives are stored, then configure per-instance credentials (S3 keys, NFS paths) below."
+        >
+            <StorageModeCard config={config} onChange={setConfig} form={modeForm} />
 
-            <StorageModeCard config={config} onChange={setConfig} />
-
-            <div className="card card-pad">
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-display font-semibold text-(--accent-light)">Configured Storages</h3>
+            <SettingsCard
+                title="Configured storages"
+                bodySpacing="none"
+                actions={
                     <div className="flex gap-2">
                         {activeProvider === 'local' && (
                             <button onClick={() => handleNew('shared')} className="btn btn-secondary btn-sm">
-                                <HardDrive size={12} /> Add Shared
+                                <HardDrive size={12} /> Add shared
                             </button>
                         )}
                         {activeProvider === 's3' && (
@@ -394,12 +399,12 @@ export default function BackupsTab() {
                         )}
                         {activeProvider === 'node-local' && (
                             <button onClick={() => handleNew('node-local')} className="btn btn-primary btn-sm">
-                                <Plus size={12} /> Add Node-local
+                                <Plus size={12} /> Add node-local
                             </button>
                         )}
                     </div>
-                </div>
-
+                }
+            >
                 {storages.length === 0 ? (
                     <p className="alert alert-info text-xs">No backup storages configured yet. Add one to start scheduling backups.</p>
                 ) : (
@@ -447,7 +452,7 @@ export default function BackupsTab() {
                         ))}
                     </div>
                 )}
-            </div>
+            </SettingsCard>
 
             {editing && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setEditing(null)}>
@@ -590,7 +595,6 @@ export default function BackupsTab() {
                     </div>
                 </div>
             )}
-
-        </div>
+        </SettingsPage>
     );
 }

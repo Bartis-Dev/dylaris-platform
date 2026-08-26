@@ -14,6 +14,7 @@ import {
 } from '@/lib/api/ticketMigration';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import SettingsPage from '@/components/settings/SettingsPage';
 
 export default function TicketDBTab() {
     const [status, setStatus] = useState<{ mainCounts: Record<string, number>; externalConfigured: boolean } | null>(null);
@@ -45,16 +46,12 @@ export default function TicketDBTab() {
     );
 
     return (
-        <div className="space-y-8 max-w-4xl">
-            <header>
-                <h2 className="text-lg font-display flex items-center gap-2">
-                    <Database size={18} className="text-(--accent-light)" /> Ticket DB Management
-                </h2>
-                <p className="text-sm text-(--base-06) mt-1">
-                    Migrate the ticket store to an external Postgres instance, take JSON backups, and restore from one
-                    under a Danger Zone gate.
-                </p>
-            </header>
+        <SettingsPage
+            title="Ticket DB management"
+            icon={Database}
+            width="4xl"
+            description="Migrate the ticket store to an external Postgres instance, take JSON backups, and restore from one under a danger-zone gate."
+        >
 
             {status && (
                 <section className="card p-5 border border-(--base-03) space-y-3">
@@ -88,7 +85,7 @@ export default function TicketDBTab() {
                     </span>
                 </div>
             )}
-        </div>
+        </SettingsPage>
     );
 }
 

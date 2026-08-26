@@ -269,9 +269,6 @@ var requiredCaps = map[string]string{
 	// Phase 4 Task 16: plans + billing admin (PANEL plans.*). "/api/me/usage"
 	// and "/api/me/billing" are the caller's OWN data and stay authed-exempt
 	// (deliberately NOT listed here).
-	"/api/admin/plans":                                      "plans.read",
-	"/api/admin/plans/{id:[0-9]+}":                          "plans.write",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/plan":              "plans.write",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides":   "plans.write",
 	"/api/admin/settings/billing":                           "plans.read",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/billing":           "plans.read",
@@ -332,8 +329,6 @@ var requiredCaps = map[string]string{
 	// settings.write, not read: it sends an operator-supplied credential to a
 	// third-party DNS API.
 	"/api/settings/gateway/dns/probe":             "settings.write",
-	"/api/settings/gateway/hub-redis-admin":       "settings.read",
-	"/api/settings/gateway/hub-redis-admin/roll":  "settings.write",
 	"/api/settings/placement":                     "settings.read",
 	"/api/admin/servers/{id:[0-9]+}/demo":         "settings.write",
 	"/api/admin/settings/demo-account":            "settings.read",
@@ -551,7 +546,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
 	nodeEnrollHandler := handlers.NewNodeEnrollHandler(appState)
 	nodeAdmissionHandler := handlers.NewNodeAdmissionHandler(appState)
-	hubRedisAdminHandler := handlers.NewHubRedisAdminHandler(appState)
 	gatewayDNSHandler := handlers.NewGatewayDNSHandler(appState)
 	gatewayBandwidthHandler := handlers.NewGatewayBandwidthHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
@@ -922,11 +916,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(entitlementHandler.Revoke)))).Methods("DELETE")
 
 	// --- BYON plans + per-user plan/limit overrides (admin, PANEL plans.*) ---
-	api.HandleFunc("/admin/plans", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(plansHandler.List)))).Methods("GET")
-	api.HandleFunc("/admin/plans", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(plansHandler.Create)))).Methods("POST")
-	api.HandleFunc("/admin/plans/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(plansHandler.Update)))).Methods("PUT")
-	api.HandleFunc("/admin/plans/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.delete")(appState.RequireBYONEnabled(plansHandler.Delete)))).Methods("DELETE")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/plan", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(plansHandler.SetUserPlan)))).Methods("PATCH")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/limit-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(plansHandler.SetUserLimitOverrides)))).Methods("PATCH")
 
 	// /me/username-history is the caller's OWN history: EXEMPT-authed, no
@@ -1439,9 +1428,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayDNSHandler.Get))).Methods("GET")
 	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayDNSHandler.Save))).Methods("PUT")
 	api.HandleFunc("/settings/gateway/dns/probe", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayDNSHandler.Probe))).Methods("POST")
-	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(hubRedisAdminHandler.GetStatus))).Methods("GET")
-	api.HandleFunc("/settings/gateway/hub-redis-admin", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Provision))).Methods("POST")
-	api.HandleFunc("/settings/gateway/hub-redis-admin/roll", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(hubRedisAdminHandler.Roll))).Methods("POST")
 	api.HandleFunc("/gateway-bandwidth/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetOverview))).Methods("GET")
 	api.HandleFunc("/gateway-bandwidth/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetHistory))).Methods("GET")
 	api.HandleFunc("/gateway-bandwidth/rebalance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetRebalance))).Methods("GET")

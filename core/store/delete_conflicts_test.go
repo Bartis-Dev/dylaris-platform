@@ -63,7 +63,8 @@ func TestDeleteConflictsAnswer409(t *testing.T) {
 	}{
 		{"users", "../handlers/users.go", "ErrUserOwnsServers"},
 		{"nodes", "../handlers/nodes.go", "ErrNodeHasServers"},
-		{"plans", "../handlers/plans.go", "ErrPlanInUse"},
+		// The plans case lived here until plan CRUD was removed. There is no
+		// delete endpoint left to answer 409, so there is nothing to assert.
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

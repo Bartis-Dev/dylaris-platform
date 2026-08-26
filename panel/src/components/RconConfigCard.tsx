@@ -6,6 +6,8 @@ import { getRconConfig, setRconConfig, execRcon, friendlyRconError } from '@/lib
 import { serverPower } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import SettingsCard from '@/components/settings/SettingsCard';
+import { SwitchRow } from '@/components/ui/Switch';
 
 // RCON enable/password card. Lives as the RCON sub-section of the Players
 // tab. Generates a 24-byte hex password on first enable, supports manual
@@ -102,9 +104,9 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
         return true;
     }, [serverId, enabled, port, showToast, onEnabledChange]);
 
-    // The port and the enable switch go through the shared bar, like every
-    // other form in the panel. The regenerate button below is an ACTION and
-    // stays immediate: it mints a new password and shows it once.
+    // The port and the enable switch go through this card's own Save, like
+    // every other form in the panel. The regenerate button below is an ACTION
+    // and stays immediate: it mints a new password and shows it once.
     useUnsavedChanges({
         dirty,
         saving,
@@ -187,37 +189,27 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
     };
 
     return (
-        <section className="card p-5 space-y-4">
-            <header className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
-                    <Terminal size={16} className="text-(--accent-light)" />
-                </div>
-                <div className="min-w-0 flex-1">
-                    <h2 className="text-base font-display font-semibold text-(--base-09)">RCON</h2>
-                    <p className="text-xs text-(--base-06) mt-0.5">
-                        {/* Scheduled Tasks used to be named here too. They do not use RCON:
-                            a "say" job is pushed onto the server's stdin queue and runs with
-                            RCON off, so the sentence was talking people into opening a
-                            password-authenticated port they did not need. */}
-                        Remote console. Powers live player management — the online list, kick / ban / op,
-                        the whitelist and the operators list.
-                        Enabling writes <code className="font-mono">enable-rcon=true</code> + this password into server.properties for you — restart the server to apply.
-                    </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs text-(--base-06)">{enabled ? 'Enabled' : 'Disabled'}</span>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
-                        onClick={() => { setEnabled(e => !e); setDirty(true); }}
-                        className={`toggle-track ${enabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                        disabled={!loaded}
-                    >
-                        <span className={`toggle-knob ${enabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-            </header>
+        <SettingsCard
+            title="RCON"
+            icon={Terminal}
+            form={{ dirty, saving, save: () => handleSave(), discard: () => { void refresh(); } }}
+            /* Scheduled Tasks used to be named here too. They do not use RCON:
+               a "say" job is pushed onto the server's stdin queue and runs with
+               RCON off, so the sentence was talking people into opening a
+               password-authenticated port they did not need. */
+            description={<>
+                Remote console. Powers live player management: the online list, kick, ban and op,
+                the whitelist and the operators list. Enabling writes{' '}
+                <code className="font-mono">enable-rcon=true</code> and this password into
+                server.properties for you, and the server needs a restart to apply it.
+            </>}
+        >
+            <SwitchRow
+                label="RCON enabled"
+                checked={enabled}
+                disabled={!loaded}
+                onChange={() => { setEnabled(e => !e); setDirty(true); }}
+            />
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
@@ -343,7 +335,6 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
                     }`}>{testOutput.text}</pre>
                 )}
             </div>
-
-        </section>
+        </SettingsCard>
     );
 }

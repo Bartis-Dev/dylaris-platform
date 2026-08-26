@@ -7,50 +7,70 @@ import { join } from 'node:path';
 // look exactly like a stored configuration - and one click writes them over the
 // real one.
 //
-// Most tabs are already safe, by one of two mechanisms:
+// This used to be checked per tab, because each tab carried its own copy of the
+// guard: its own loadFailed flag, its own disabled= expression, its own
+// explanation. That is exactly the duplication SettingsCard and useSettingsForm
+// were introduced to end, so the guard now lives in those two files and the
+// tabs inherit it. The test follows it there.
 //
-//   null-initialised state + an early return
-//     UserManagementTab (auth policy, SMTP), UsersTab (account policy):
-//     `useState<T | null>(null)` and `if (!policy) return`, so there is nothing
-//     to submit.
+// The mechanism, in two halves:
 //
-//   a null-gated snapshot
-//     ServersTab, FileManagerTab, ModpacksTab, BeamTab, FeaturesTab:
-//     `dirty = snapshotRef.current !== null && ...` and the save bar is driven
-//     by `dirty`, so a failed load never shows one: the save bar never
-//     appears, so unconfirmed values cannot be written back. Only the display
-//     was ever lying.
+//   useSettingsForm: a load that resolves null leaves the snapshot null, and
+//   `dirty` is computed against the snapshot - so a failed load is never dirty
+//   and there is nothing to submit.
 //
-// These three had neither: a non-null default, a plain always-enabled Save
-// button, and a load whose failure branch did not exist at all. They now use
-// the third mechanism, the one ConfigEditorModal already uses - a loadFailed
-// flag that both explains itself and disables Save.
+//   SettingsCard: `loadFailed` refuses the save outright AND renders a banner
+//   saying why, so the inert button is not read as a broken page.
 //
 // The suite is logic-only (no jsdom), so this reads the source: it guards
 // against the pattern returning, not against a render.
 
-const FILES = ['MaintenanceTab.tsx', 'TicketSettingsTab.tsx', 'RolesTab.tsx'];
+const read = (f: string) => readFileSync(join(__dirname, f), 'utf8');
 
-describe('a settings form whose pre-fill failed cannot be saved', () => {
-    for (const file of FILES) {
-        const source = readFileSync(join(__dirname, file), 'utf8');
+describe('the shared pre-fill guard', () => {
+    const hook = readFileSync(join(__dirname, '..', '..', 'lib', 'useSettingsForm.ts'), 'utf8');
+    const card = read('SettingsCard.tsx');
 
-        it(`${file} tracks a failed pre-fill`, () => {
-            expect(source).toContain('loadFailed');
-            // The failure branch is the whole point: `if (res.success)` with no
-            // else is what left the defaults on screen looking authoritative.
-            expect(source).toMatch(/setLoadFailed\(true\)/);
+    it('a load that fails leaves no snapshot to be dirty against', () => {
+        // The failure branch is the whole point: `if (res.success)` with no
+        // else is what left the defaults on screen looking authoritative.
+        expect(hook).toMatch(/setLoadFailed\(true\)/);
+        expect(hook).toMatch(/setSnapshot\(null\)/);
+        expect(hook).toMatch(/const dirty = snapshot !== null &&/);
+    });
+
+    it('a card whose form failed to load refuses to save', () => {
+        // The state machine is covered properly in settingsCardSave.test.ts;
+        // this only pins that the card asks it rather than deciding again.
+        expect(card).toMatch(/if \(form\.loadFailed \|\| blockedReason\) return 'blocked';/);
+        expect(card).toMatch(/const canSave = saveState\(form, blockedReason\) === 'ready';/);
+    });
+
+    it('and says why, rather than showing a dead button', () => {
+        // A disabled button with no explanation reads as a broken page.
+        expect(card).toMatch(/\{loadFailed && \(/);
+        expect(card).toContain('could not be loaded');
+    });
+});
+
+// These two had neither guard once: a non-null default, a plain always-enabled
+// Save button, and a load whose failure branch did not exist at all. Pinning
+// that they route through the hook is what keeps them covered, because the hook
+// is where the guard now is.
+describe('the tabs that were missing the guard still inherit it', () => {
+    for (const file of ['MaintenanceTab.tsx', 'TicketSettingsTab.tsx']) {
+        const source = read(file);
+
+        it(`${file} drives its form through useSettingsForm`, () => {
+            expect(source).toContain('useSettingsForm<');
+            // Resolving null on failure is what arms the guard. A tab that
+            // returned its defaults here instead would look identical and be
+            // saveable.
+            expect(source).toMatch(/return null;|\? res\.\w+ : null/);
         });
 
-        it(`${file} disables Save while the pre-fill is unconfirmed`, () => {
-            const guards = source.match(/disabled=\{[^}]*loadFailed[^}]*\}/g) ?? [];
-            expect(guards.length).toBeGreaterThan(0);
-        });
-
-        it(`${file} says why saving is blocked`, () => {
-            // A disabled button with no explanation reads as a broken page.
-            expect(source).toMatch(/loadFailed &&|loadFailed \?/);
-            expect(source).toContain('could not be loaded');
+        it(`${file} hands that form to the card that owns the Save`, () => {
+            expect(source).toMatch(/<SettingsCard[\s\S]{0,400}?form=\{form\}/);
         });
     }
 
@@ -59,17 +79,37 @@ describe('a settings form whose pre-fill failed cannot be saved', () => {
     // default is banner_only. If that default ever stops being weaker than
     // block_all this test should be revisited, so pin it.
     it('MaintenanceTab still defaults to a weaker block level than the migration relies on', () => {
-        const source = readFileSync(join(__dirname, 'MaintenanceTab.tsx'), 'utf8');
+        const source = read('MaintenanceTab.tsx');
         expect(source).toMatch(/const defaultState[\s\S]*?blockLevel:\s*'banner_only'/);
         expect(source).toMatch(/const defaultState[\s\S]*?active:\s*false/);
     });
 
-    // The RolesTab editor is the sharpest case: its PUT replaces the panel role
-    // AND both override sets, so a failed read could drop deny overrides and
-    // thereby GRANT capabilities. Its guard must gate the body, not just the
-    // button, so an empty assignment is never displayed as if it were real.
-    it('RolesTab does not render an assignment it could not load', () => {
-        const source = readFileSync(join(__dirname, 'RolesTab.tsx'), 'utf8');
+    // It also keeps its own wording, because "saving this would lift a
+    // maintenance mode that is holding right now" is not something the generic
+    // banner can say.
+    it('MaintenanceTab explains its own load failure rather than taking the generic one', () => {
+        expect(read('MaintenanceTab.tsx')).toMatch(/loadFailedMessage=/);
+    });
+});
+
+// The RolesTab editor is the sharpest case: its PUT replaces the panel role AND
+// both override sets, so a failed read could drop deny overrides and thereby
+// GRANT capabilities. Its guard must gate the body, not just the button, so an
+// empty assignment is never displayed as if it were real. It is hand-rolled and
+// stays that way - the card guard disables a save; this one refuses to render.
+describe('RolesTab guards the body, not just the button', () => {
+    const source = read('RolesTab.tsx');
+
+    it('tracks a failed pre-fill', () => {
+        expect(source).toContain('loadFailed');
+        expect(source).toMatch(/setLoadFailed\(true\)/);
+    });
+
+    it('does not render an assignment it could not load', () => {
         expect(source).toMatch(/loadFailed \?/);
+    });
+
+    it('says why', () => {
+        expect(source).toContain('could not be loaded');
     });
 });

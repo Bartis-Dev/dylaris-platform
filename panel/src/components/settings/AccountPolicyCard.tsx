@@ -2,7 +2,8 @@
 
 import { getAccountPolicy, setAccountPolicy, type AccountPolicy } from '@/lib/api/accountPolicy';
 import { useSettingsForm } from '@/lib/useSettingsForm';
-import Switch from '@/components/ui/Switch';
+import { SwitchRow } from '@/components/ui/Switch';
+import SettingsCard, { SettingsRow } from '@/components/settings/SettingsCard';
 import { SkeletonFormRow } from '@/components/Skeleton';
 
 // Platform-wide rules about accounts, not a property of any one of them. It
@@ -25,26 +26,23 @@ export default function AccountPolicyCard() {
     const policy = form.value;
 
     return (
-        <section className="card p-5 space-y-4">
-            <h2 className="text-base font-display font-semibold text-(--base-09)">Account policy</h2>
+        <SettingsCard title="Account policy" form={form}>
             {form.loading || !policy ? (
                 <SkeletonFormRow />
             ) : (
                 <>
-                    <div className="flex items-center justify-between gap-4">
-                        <div>
-                            <div className="text-sm font-medium text-(--base-09)">Allow username changes</div>
-                            <p className="text-xs text-(--base-06)">When off, only admins can rename users.</p>
-                        </div>
-                        <Switch
-                            checked={policy.allowNameChange}
-                            onChange={v => form.patch({ allowNameChange: v })}
-                            ariaLabel="Allow username changes"
-                        />
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <label className="input-label mb-0 shrink-0">Cooldown between user renames (days)</label>
+                    <SwitchRow
+                        label="Allow username changes"
+                        description="When off, only admins can rename users."
+                        checked={policy.allowNameChange}
+                        onChange={v => form.patch({ allowNameChange: v })}
+                    />
+                    <SettingsRow
+                        label="Cooldown between user renames"
+                        htmlFor="account-rename-cooldown"
+                    >
                         <input
+                            id="account-rename-cooldown"
                             type="number"
                             min={0}
                             max={3650}
@@ -52,9 +50,10 @@ export default function AccountPolicyCard() {
                             onChange={e => form.patch({ nameChangeCooldownDays: parseInt(e.target.value || '0', 10) })}
                             className="input-field input-mono w-24"
                         />
-                    </div>
+                        <span className="text-sm text-(--base-07)">days</span>
+                    </SettingsRow>
                 </>
             )}
-        </section>
+        </SettingsCard>
     );
 }
