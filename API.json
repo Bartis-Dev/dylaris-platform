@@ -362,6 +362,24 @@
     },
     {
       "method": "GET",
+      "path": "/api/admin/settings/mod-cache",
+      "auth": "session",
+      "authorization": "settings.read",
+      "handler": "ModCacheSettingsHandler.Get",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/mod-cache",
+      "auth": "session",
+      "authorization": "settings.write",
+      "handler": "ModCacheSettingsHandler.Set",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/admin/settings/modpacks",
       "auth": "session",
       "authorization": "settings.read",
@@ -4767,15 +4785,15 @@
     }
   ],
   "counts": {
-    "total": 477,
+    "total": 479,
     "byAuth": {
       "none": 36,
-      "session": 428,
+      "session": 430,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 106,
+      "admin": 108,
       "auth": 18,
       "authz": 3,
       "backup-jobs": 4,

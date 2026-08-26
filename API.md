@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **476 routes** in 49 sections: 212 GET, 140 POST, 35 PUT, 34 PATCH, 52 DELETE, 4 (any).
+- **478 routes** in 49 sections: 213 GET, 140 POST, 36 PUT, 34 PATCH, 52 DELETE, 4 (any).
 - **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **323** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **5** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **325** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **7** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (106)
+- [/api/admin](#apiadmin) (108)
 - [/api/auth](#apiauth) (18)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -232,6 +232,8 @@ can still show what exists.
 | PUT | `/api/admin/settings/features` | session | `settings.write` | - | `FeatureSettingsHandler.Set` | write the bundle. |
 | GET | `/api/admin/settings/link-updates` | session | `settings.read` | - | `SettingsHandler.GetLinkUpdateSettings` | returns the current Link update policy and check interval. |
 | PUT | `/api/admin/settings/link-updates` | session | `settings.write` | - | `SettingsHandler.UpdateLinkUpdateSettings` | persists the policy + interval and mirrors both into Redis, which is where nodes read them (node/main.go, loadModesFromRedis). |
+| GET | `/api/admin/settings/mod-cache` | session | `settings.read` | - | `ModCacheSettingsHandler.Get` | - |
+| PUT | `/api/admin/settings/mod-cache` | session | `settings.write` | - | `ModCacheSettingsHandler.Set` | - |
 | GET | `/api/admin/settings/modpacks` | session | `settings.read` | - | `ModpackSettingsHandler.Get` | PANEL settings.read (RequireCap at the route). |
 | PUT | `/api/admin/settings/modpacks` | session | `settings.write` | - | `ModpackSettingsHandler.Set` | Body: full modpackSettings. |
 | GET | `/api/admin/settings/modpacks/delivery-capabilities` | session | `settings.read` | - | `ModpackSettingsHandler.DeliveryCapabilities` | Reflects the SAVED storage config only — it never presigns or HTTP-probes a caller-supplied URL, so it is not an SSRF lever. |

@@ -298,6 +298,7 @@ var requiredCaps = map[string]string{
 	// per-method ExemptRoutes reconciliation.
 	"/api/admin/settings/users":                          "settings.read",
 	"/api/admin/settings/modpacks":                       "settings.read",
+	"/api/admin/settings/mod-cache":                      "settings.read",
 	"/api/admin/settings/link-updates":                   "settings.read",
 	"/api/nodes/link-updates":                            "nodes.read",
 	"/api/admin/settings/modpacks/delivery-capabilities": "settings.read",
@@ -540,6 +541,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
+	modCacheSettingsHandler := handlers.NewModCacheSettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	tabProxySettingsHandler := handlers.NewTabProxySettingsHandler(appState)
@@ -949,6 +951,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modpackSettingsHandler.Get))).Methods("GET")
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.Set))).Methods("PUT")
 	api.HandleFunc("/admin/settings/modpacks/delivery-capabilities", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modpackSettingsHandler.DeliveryCapabilities))).Methods("GET")
+	// Where Modrinth metadata is cached. Optional by design: unset means the
+	// Redis Core already has, which is why nothing is gated on it.
+	api.HandleFunc("/admin/settings/mod-cache", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modCacheSettingsHandler.Get))).Methods("GET")
+	api.HandleFunc("/admin/settings/mod-cache", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modCacheSettingsHandler.Set))).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/modpack-flag", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.SetUserFlag))).Methods("PATCH")
 	// DELETE = stop overriding this user, not "revoke": it clears the manual
 	// marker so they follow the platform authoring toggle again.

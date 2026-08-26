@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -26,47 +25,15 @@ import (
 // on: a pack build carries the side its author declared, a server has to ask
 // Modrinth what sides its mods serve.
 
-// redisAvailabilityCache adapts the app's Redis client to the small interface
-// the compat service asks for. A nil Redis yields a nil cache, and the service
-// treats that as "nothing cached" rather than failing.
-type redisAvailabilityCache struct{ state *AppState }
-
-func (c redisAvailabilityCache) GetMany(ctx context.Context, keys []string) []string {
-	out := make([]string, len(keys))
-	if c.state == nil || c.state.Redis == nil || len(keys) == 0 {
-		return out
-	}
-	vals, err := c.state.Redis.MGet(ctx, keys...).Result()
-	if err != nil {
-		return out
-	}
-	for i := range vals {
-		if i >= len(out) {
-			break
-		}
-		if s, ok := vals[i].(string); ok {
-			out[i] = s
-		}
-	}
-	return out
-}
-
-func (c redisAvailabilityCache) SetMany(ctx context.Context, values map[string]string, ttl time.Duration) {
-	if c.state == nil || c.state.Redis == nil || len(values) == 0 {
-		return
-	}
-	pipe := c.state.Redis.Pipeline()
-	for k, v := range values {
-		pipe.Set(ctx, k, v, ttl)
-	}
-	_, _ = pipe.Exec(ctx)
-}
-
+// availabilityCache hands the compat service the same metadata cache the
+// Modrinth proxy uses, so an operator who moved that cache off the control
+// plane moved this one with it. A nil cache is read as "nothing cached" rather
+// than as a failure.
 func (s *AppState) availabilityCache() services.AvailabilityCache {
-	if s == nil || s.Redis == nil {
+	if s == nil || s.Cache == nil {
 		return nil
 	}
-	return redisAvailabilityCache{state: s}
+	return s.Cache
 }
 
 // compatQuery reads the shared mode/mc query parameters.

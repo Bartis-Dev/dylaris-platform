@@ -267,7 +267,19 @@ services:
     # works as non-root. valkey-acl/ is git-ignored (runtime state, not source).
     image: valkey/valkey:8-alpine
     restart: unless-stopped
-    command: ["valkey-server", "--save", "", "--appendonly", "no", "--aclfile", "/data/users.acl"]
+    # maxmemory + volatile-lru is a backstop for the metadata caches, which are
+    # the only thing here that grows with USE rather than with fleet size (one
+    # Modrinth version list measures 290 KB to 1.2 MB). Two properties matter:
+    #   volatile-*  evicts only keys that carry a TTL, and the node command
+    #               streams, the consumer groups and the ACL users carry none,
+    #               so the control plane is not evictable at all.
+    #   *-lru       goes for the least recently touched, which is a stale cache
+    #               entry rather than a live server status. volatile-ttl would
+    #               do the opposite: it drops the shortest TTL first, and that
+    #               is the 30s status, not the 1h cache.
+    # Without a limit the default is noeviction, where a full instance starts
+    # REFUSING writes - and one of those writes is queueing a node command.
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--aclfile", "/data/users.acl", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-lru"]
     volumes:
       - ./valkey-acl:/data
     networks:

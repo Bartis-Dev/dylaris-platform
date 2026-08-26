@@ -17,6 +17,7 @@ import { Package, Plus, X, AlertTriangle } from 'lucide-react';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup, SettingsRow } from '@/components/settings/SettingsCard';
+import ModCacheCard from '@/components/settings/ModCacheCard';
 import { SwitchRow } from '@/components/ui/Switch';
 import {
     getModpackSettings, setModpackSettings, getModpackDeliveryCapabilities,
@@ -422,6 +423,11 @@ export default function ModpacksTab() {
                     )}
                 </SettingsGroup>
             </SettingsCard>
+
+            {/* Its own card because it is its own payload: this writes where the
+                metadata cache lives, which has nothing to do with where modpack
+                archives are stored. One card, one save. */}
+            <ModCacheCard />
         </SettingsPage>
     );
 }

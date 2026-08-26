@@ -41,6 +41,12 @@ type AppState struct {
 	// publishers handle a nil pointer / nil Redis gracefully.
 	Events *services.SystemEventsPublisher
 
+	// Cache is where cached third-party metadata (the Modrinth proxy, the
+	// cross-version availability check) is kept. It points at Redis by default
+	// and at a dedicated endpoint when the operator configures one; see
+	// mod_cache_settings.go for why that is optional rather than a gate.
+	Cache *services.Cache
+
 	// FeatureFlags is the cached platform feature toggle reader.
 	// Read by the modpack route gates; flipped via /admin/settings/modpacks.
 	FeatureFlags *services.FeatureFlags

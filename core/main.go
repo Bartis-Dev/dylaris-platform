@@ -254,6 +254,14 @@ func main() {
 
 	appState.Redis = redisClient
 	appState.Queue = services.NewQueueService(redisClient)
+	// Metadata caches default into this same Redis. An operator who pointed them
+	// at a dedicated endpoint gets it applied here; a failure is logged and the
+	// caches stay on the default rather than being switched off, because a cache
+	// that is silently absent only shows up as a slower panel.
+	appState.Cache = services.NewCache(redisClient)
+	if err := appState.ApplyCacheSettings(context.Background()); err != nil {
+		log.Printf("mod metadata cache: keeping the default Redis: %v", err)
+	}
 
 	// In-panel cross-database migration. The source is THIS Core's live DB,
 	// re-opened read-only as the copy source; the target is supplied per-request.

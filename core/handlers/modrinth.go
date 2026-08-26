@@ -45,12 +45,22 @@ func NewModrinthHandler(state *AppState, ua string) *ModrinthHandler {
 	}
 }
 
+// maxCachedResponseBytes caps what one cache entry may weigh.
+//
+// Measured against the live API: a project's version list runs 290 KB for
+// Sodium filtered to one loader, 494 KB unfiltered, and 1.19 MB for Fabric API.
+// The proxy keys those per filter combination for an hour and the shipped Redis
+// runs with no maxmemory, so without a cap the tail of that distribution is what
+// decides how much memory the control plane has left. Over the cap the response
+// is served straight through: one extra upstream call, no stored megabyte.
+const maxCachedResponseBytes = 512 << 10
+
 // proxyJSON fetches the URL with caching. The cache key is a sha256 of the
 // full URL so we don't accidentally collide between similar queries.
 func (h *ModrinthHandler) proxyJSON(ctx context.Context, ttl time.Duration, urlStr string, w http.ResponseWriter) {
 	cacheKey := "dylaris:modrinth:" + hashURL(urlStr)
-	if h.state.Redis != nil {
-		if cached, err := h.state.Redis.Get(ctx, cacheKey).Result(); err == nil && cached != "" {
+	if h.state.Cache != nil {
+		if cached, ok := h.state.Cache.Get(ctx, cacheKey); ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			w.Write([]byte(cached))
@@ -76,8 +86,8 @@ func (h *ModrinthHandler) proxyJSON(ctx context.Context, ttl time.Duration, urlS
 
 	// Cache only successful 200s — error responses change shape and
 	// shouldn't poison the cache for 5+ minutes.
-	if resp.StatusCode == http.StatusOK && h.state.Redis != nil {
-		h.state.Redis.Set(ctx, cacheKey, string(body), ttl)
+	if resp.StatusCode == http.StatusOK && h.state.Cache != nil && len(body) <= maxCachedResponseBytes {
+		h.state.Cache.Set(ctx, cacheKey, string(body), ttl)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

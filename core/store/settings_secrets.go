@@ -22,6 +22,10 @@ var settingsSecretKeys = map[string]bool{
 	// a DB dump can send mail as the operator's domain, and that domain is where
 	// the password-reset links come from.
 	"resend.api_key": true,
+	// Password for a dedicated metadata-cache Redis. It is only a cache, but the
+	// credential is still a credential: whoever reads a DB dump would otherwise
+	// hold a working login to an endpoint on the operator's network.
+	"mod_cache_redis_password": true,
 }
 
 // smtpPasswordSuffix identifies the SMTP credential settings, whose key is

@@ -135,10 +135,10 @@ func TestSelectCompatTargets(t *testing.T) {
 
 func TestBucketStatus(t *testing.T) {
 	tests := []struct {
-		name            string
-		side            string
-		total, avail    int
-		want            string
+		name         string
+		side         string
+		total, avail int
+		want         string
 	}{
 		{"empty bucket is not a failure", CompatSideBoth, 0, 0, CompatStatusEmpty},
 		{"complete bucket is green", CompatSideBoth, 5, 5, CompatStatusGreen},
