@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Terminal, Globe, FolderOpen, Copy, CircleCheck, CircleAlert, Loader2 } from 'lucide-react';
+import { Terminal, Globe, FolderOpen, Copy, Loader2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { API_URL } from '@/lib/api';
 import FileBrowserView from '@/views/FileBrowserView';
+import { toast } from '@/components/ui/Toast';
 
 // Platform slugs match gateway/beam/relay/binaries.go validPlatforms.
 type BeamPlatform = 'windows-amd64' | 'linux-amd64' | 'linux-arm64' | 'darwin-amd64' | 'darwin-arm64';
@@ -43,7 +44,6 @@ export default function ServerFilesPage() {
     // Beam-download UI state: lives at page scope so the toast/spinner stay
     // mounted even if the file browser below re-renders.
     const [downloading, setDownloading] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
     if (!server) return null;
 
@@ -52,12 +52,7 @@ export default function ServerFilesPage() {
     const showSftp = (fileAccessMode === 'sftp' || fileAccessMode === 'both') && server.nodeAddress;
     const hasInfoBar = showSftp || beamEnabled;
 
-    const showToast = (msg: string, ok: boolean) => {
-        setToast({ msg, ok });
-        // Keep errors up longer than successes so the user can actually read
-        // the explanation before it disappears.
-        setTimeout(() => setToast(null), ok ? 3000 : 6000);
-    };
+    const showToast = (msg: string, ok: boolean) => toast(msg, ok);
 
     // Fetch the binary through Core (which proxies to the relay) instead of
     // opening the URL in a new tab. The old <a href> approach made an error
@@ -163,15 +158,6 @@ export default function ServerFilesPage() {
             )}
             <FileBrowserView serverUuid={server.uuid} currentServerPath={server.activeSubServer || ''} readOnly={server.role === 'demo'} />
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

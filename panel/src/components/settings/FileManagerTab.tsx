@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { getFileManagerSettings, saveFileManagerSettings, FileManagerSettings } from '@/lib/api';
-import { CircleCheck, CircleAlert } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import { toast } from '@/components/ui/Toast';
 
 const UNITS = [
     { label: 'MB', multiplier: 1024 * 1024 },
@@ -84,15 +84,11 @@ export default function FileManagerTab() {
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
     // Snapshot of last-saved settings for dirty detection.
     const snapshotRef = useRef<FileManagerSettings | null>(null);
 
-    const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    };
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     useEffect(() => {
         getFileManagerSettings().then(res => {
@@ -163,15 +159,6 @@ export default function FileManagerTab() {
             </div>
 
             {/* Toast */}
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

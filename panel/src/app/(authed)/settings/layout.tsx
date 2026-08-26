@@ -4,7 +4,6 @@ import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
-import { Loader2 } from 'lucide-react';
 import {
     useUnsavedChangesState,
     UnsavedDialog,
@@ -138,7 +137,6 @@ function SettingsLayoutInner({
     const [dialogSaving, setDialogSaving] = useState(false);
 
     const dirty = registration?.dirty ?? false;
-    const saving = registration?.saving ?? false;
 
     // Intercept tab clicks when dirty.
     const handleTabClick = useCallback(
@@ -214,39 +212,13 @@ function SettingsLayoutInner({
                     ))}
                 </nav>
 
-                {/* Content column: routed page + sticky bottom save bar */}
+                {/* Content column. The save bar is mounted once for the whole
+                    panel in (authed)/layout.tsx - it was here, which is why the
+                    rule it enforces only applied inside Settings. */}
                 <div className="flex-1 min-w-0 flex flex-col min-h-0">
                     <div className="flex-1 overflow-y-auto">
                         {children}
                     </div>
-
-                    {/* Sticky bottom save/discard bar - only visible when dirty */}
-                    {dirty && (
-                        <div className="shrink-0 flex items-center justify-between gap-4 border-t border-(--base-03) bg-(--base-02) px-5 py-3 mt-4">
-                            <span className="mono-label text-[11px]">
-                                Unsaved changes
-                            </span>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => registration?.discard()}
-                                    className="btn btn-secondary text-xs py-1.5 px-4"
-                                    disabled={saving}
-                                >
-                                    Discard
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={async () => { await registration?.save(); }}
-                                    disabled={saving}
-                                    className="btn btn-primary text-xs py-1.5 px-4 disabled:opacity-40 inline-flex items-center gap-1.5"
-                                >
-                                    {saving && <Loader2 size={12} className="animate-spin" />}
-                                    Save
-                                </button>
-                            </div>
-                        </div>
-                    )}
                 </div>
             </div>
 

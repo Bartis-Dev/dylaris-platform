@@ -10,7 +10,7 @@
 // shared dirty-bar in settings/layout.tsx surfaces save/discard.
 
 import { useEffect, useRef, useState } from 'react';
-import { Package, Plus, X, CircleCheck, CircleAlert, AlertTriangle } from 'lucide-react';
+import { Package, Plus, X, AlertTriangle } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import {
@@ -18,6 +18,7 @@ import {
     type ModpackSettings, type DeliveryCapabilities,
 } from '@/lib/api/modpackSettings';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
+import { toast } from '@/components/ui/Toast';
 
 // Whether a Solder delivery mode is currently unusable given the backend's
 // probed capabilities. `caps === null` (not yet loaded, or the probe failed)
@@ -81,7 +82,6 @@ export default function ModpacksTab() {
     const [settings, setSettings] = useState<ModpackSettings>(DEFAULTS);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [connections, setConnections] = useState<StorageConnection[]>([]);
     // Probed once on mount — which delivery modes the backend can actually
     // serve right now, so the radios below can grey out one that would just
@@ -93,10 +93,7 @@ export default function ModpacksTab() {
     // field empty after save doesn't keep the bar dirty forever.
     const snapshotRef = useRef<ModpackSettings | null>(null);
 
-    const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3000);
-    };
+    const flash = (msg: string, ok = true) => toast(msg, ok);
 
     useEffect(() => {
         getModpackSettings().then(res => {
@@ -499,15 +496,6 @@ export default function ModpacksTab() {
             </div>
 
             {/* Toast */}
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

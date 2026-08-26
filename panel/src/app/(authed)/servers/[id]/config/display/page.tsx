@@ -2,12 +2,13 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { CircleCheck, CircleAlert, Image as ImageIcon, Upload, Trash2, MessageSquare, RotateCcw, Globe } from 'lucide-react';
+import { Image as ImageIcon, Upload, Trash2, MessageSquare, RotateCcw, Globe } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getFileContent, saveFile, getEdgeMotd, setEdgeMotd, type EdgeMotdMode } from '@/lib/api';
 import { uploadFiles } from '@/lib/api/files';
 import { API_URL, getAuthHeader } from '@/lib/api/core';
 import { parseProperties, serializeProperties } from '@/lib/properties-codec';
+import { toast } from '@/components/ui/Toast';
 import {
     parseMotd, motdVisibleLengths, insertMotdCode,
     MOTD_COLORS, MOTD_STYLES, MOTD_MAX_LINES, MOTD_SOFT_LINE_LIMIT,
@@ -40,13 +41,9 @@ export default function ServerConfigDisplayPage() {
     const [savingMotd, setSavingMotd] = useState(false);
     const [iconBust, setIconBust] = useState(0);
     const [uploadingIcon, setUploadingIcon] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     useEffect(() => {
         if (!propertiesPath || !serverUuid) return;
@@ -498,15 +495,6 @@ export default function ServerConfigDisplayPage() {
             </section>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

@@ -3,11 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import {
-    Package, ArrowLeft, Plus, Trash2, ExternalLink, RefreshCw,
-    CircleCheck, CircleAlert, X, Edit, ChevronRight, Layers,
-    Settings, UserX, UserCheck, Lock,
-} from 'lucide-react';
+import { Package, ArrowLeft, Plus, Trash2, ExternalLink, RefreshCw, CircleAlert, X, Edit, ChevronRight, Layers, Settings, UserX, UserCheck, Lock } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     getPack, listBuilds, createBuild, deleteBuild,
@@ -22,6 +18,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 // Pack detail. Shows pack metadata + its builds. Each build pins a
 // Minecraft version + loader and links to the per-build content editor at
@@ -51,7 +48,6 @@ export default function PackDetailPage() {
         versionString: string; minecraft: string; loader: string; loaderVersion: string;
     } | null>(null);
     const [deletePrompt, setDeletePrompt] = useState<PackBuild | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
     // Solder config modal
     const [editingConfig, setEditingConfig] = useState(false);
@@ -66,10 +62,7 @@ export default function PackDetailPage() {
     const [selectedClientId, setSelectedClientId] = useState<number | ''>('');
     const [clientsError, setClientsError] = useState('');
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         const [p, bs] = await Promise.all([getPack(packId), listBuilds(packId)]);
@@ -639,15 +632,6 @@ export default function PackDetailPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </main>
     );
 }

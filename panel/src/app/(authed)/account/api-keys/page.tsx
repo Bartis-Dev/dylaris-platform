@@ -1,15 +1,13 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-    Key, Plus, Copy, Trash2, AlertTriangle, CircleCheck, CircleAlert,
-    Shield, X, EyeOff,
-} from 'lucide-react';
+import { Key, Plus, Copy, Trash2, AlertTriangle, Shield, X, EyeOff } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { listAPIKeys, createAPIKey, revokeAPIKey, type APIKey, type APIKeyOptions } from '@/lib/api/apiKeys';
 import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 // per-user API key management. Lives under /account/ because
 // keys are owned by users, not the admin platform. Plaintext is shown
@@ -38,14 +36,10 @@ export default function ApiKeysPage() {
 
     const [revealedKey, setRevealedKey] = useState<{ plaintext: string; name: string } | null>(null);
     const [revoking, setRevoking] = useState<APIKey | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [creatingKey, runCreate] = useBusy();
     const [revokingKey, runRevoke] = useBusy();
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         const res = await listAPIKeys();
@@ -417,15 +411,6 @@ export default function ApiKeysPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </main>
     );
 }

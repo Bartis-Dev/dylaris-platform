@@ -16,6 +16,7 @@ import BillingBanner from '@/components/BillingBanner';
 import StorageBanner from '@/components/StorageBanner';
 import { ConfirmDialogRoot } from '@/components/ui/ConfirmDialog';
 import { ToastRoot } from '@/components/ui/Toast';
+import UnsavedBar from '@/components/settings/UnsavedBar';
 import CoreRegionChip from '@/components/CoreRegionChip';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
@@ -123,6 +124,11 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                 dismiss timeouts from 2800ms to 4500ms, so the same action
                 reported differently depending on which screen ran it. */}
             <ToastRoot />
+            {/* The one save bar. It used to live inside the settings layout,
+                which is why "everything saves the same way" only applied to a
+                quarter of the panel. It renders nothing while nothing is
+                dirty. */}
+            <UnsavedBar />
             {/* Global maintenance banner. Renders nothing when off. */}
             <MaintenanceBanner />
             {/* Non-dismissible billing banner for past_due/suspended tenants. */}

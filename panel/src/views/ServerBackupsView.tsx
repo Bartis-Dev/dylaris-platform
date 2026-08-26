@@ -2,10 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
-import {
-    Plus, Play, Trash2, Pencil, X, Download, Clock, HardDrive, CircleCheck, CircleAlert, Save,
-    Undo2, AlertTriangle,
-} from 'lucide-react';
+import { Plus, Play, Trash2, Pencil, X, Download, Clock, HardDrive, CircleAlert, Save, Undo2, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     BackupJob, BackupRun, BackupStorage, BackupRestore,
@@ -16,6 +13,7 @@ import {
 import Spinner from '@/components/Spinner';
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { toast } from '@/components/ui/Toast';
 
 function formatBytes(b: number): string {
     if (!b) return '—';
@@ -201,17 +199,13 @@ export default function ServerBackupsView() {
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
     const [editingJob, setEditingJob] = useState<BackupJob | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [busyJob, setBusyJob] = useState<number | null>(null);
     const [restoreTarget, setRestoreTarget] = useState<BackupRun | null>(null);
     const [restoreCountdown, setRestoreCountdown] = useState(5);
     const [restoring, setRestoring] = useState(false);
     const [restoreHistory, setRestoreHistory] = useState<BackupRestore[]>([]);
 
-    const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    };
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const reload = useCallback(async () => {
         if (!server) return;
@@ -561,15 +555,6 @@ export default function ServerBackupsView() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

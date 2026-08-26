@@ -1,9 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-    Plus, Trash2, Pencil, X, CircleCheck, CircleAlert, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2,
-} from 'lucide-react';
+import { Plus, Trash2, Pencil, X, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2 } from 'lucide-react';
 import {
     BackupStorage,
     BackupConfig,
@@ -16,6 +14,8 @@ import {
 import { SkeletonHeader, SkeletonCard, SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 interface LocalConfig {
     basePath: string;
@@ -213,16 +213,12 @@ export default function BackupsTab() {
     const [savedConfig, setSavedConfig] = useState<BackupConfig | null>(null);
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState<BackupStorage | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [saving, setSaving] = useState(false);
     // Persistent per-storage durability warnings from the last test. A warning
     // that scrolls away in a toast is one nobody acts on.
     const [testWarnings, setTestWarnings] = useState<Record<number, string>>({});
 
-    const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    };
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const reload = useCallback(async () => {
         setLoading(true);
@@ -307,6 +303,15 @@ export default function BackupsTab() {
         );
     };
 
+    // This card had its own Discard/Save pair, hand-rolled from the same idea as
+    // the shared bar but without registering - so it had no navigation guard and
+    // no beforeunload, while the tab beside it prompted. Same mechanism now.
+    const configDirty = !!savedConfig && JSON.stringify(savedConfig) !== JSON.stringify(config);
+
+    const handleConfigDiscard = () => {
+        if (savedConfig) setConfig(savedConfig);
+    };
+
     const handleConfigSave = async () => {
         if (!config) return;
         setSaving(true);
@@ -320,6 +325,8 @@ export default function BackupsTab() {
         }
     };
 
+    useUnsavedChanges({ dirty: configDirty, save: handleConfigSave, discard: handleConfigDiscard, saving });
+
     if (loading || !config) return (
         <div className="max-w-3xl space-y-6">
             <SkeletonHeader />
@@ -331,7 +338,6 @@ export default function BackupsTab() {
         </div>
     );
 
-    const configDirty = savedConfig && JSON.stringify(savedConfig) !== JSON.stringify(config);
     const activeProvider = PROVIDER_FOR_MODE[config.mode];
 
     return (
@@ -342,26 +348,6 @@ export default function BackupsTab() {
             </div>
 
             <StorageModeCard config={config} onChange={setConfig} />
-
-            {configDirty && (
-                <div className="flex items-center gap-2 justify-end">
-                    <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => setConfig(savedConfig!)}
-                    >
-                        Discard
-                    </button>
-                    <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        onClick={handleConfigSave}
-                        disabled={saving}
-                    >
-                        <Save size={13} /> {saving ? 'Saving…' : 'Save mode'}
-                    </button>
-                </div>
-            )}
 
             <div className="card card-pad">
                 <div className="flex items-center justify-between mb-4">
@@ -601,15 +587,6 @@ export default function BackupsTab() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

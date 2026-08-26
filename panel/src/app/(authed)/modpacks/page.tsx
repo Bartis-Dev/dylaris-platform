@@ -2,10 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import {
-    Package, Plus, ExternalLink, RefreshCw, CircleCheck, CircleAlert,
-    X, Trash2,
-} from 'lucide-react';
+import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import { listPacks, createPack, deletePack, type Pack } from '@/lib/api/packs';
 import { useAppData } from '@/lib/AppDataContext';
@@ -14,6 +11,7 @@ import ImportSolderDialog from '@/components/modpacks/ImportSolderDialog';
 import { DownloadCloud } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 // top-level packs list. Per-user authored packs on the unified pack API.
 // The builder UI lives at /modpacks/<id>; this page covers create + list +
@@ -36,12 +34,8 @@ export default function PacksListPage() {
     } | null>(null);
     const [importOpen, setImportOpen] = useState(false);
     const [deletePrompt, setDeletePrompt] = useState<Pack | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         const list = await listPacks();
@@ -294,15 +288,6 @@ export default function PacksListPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
 
             {importOpen && (
                 <ImportSolderDialog

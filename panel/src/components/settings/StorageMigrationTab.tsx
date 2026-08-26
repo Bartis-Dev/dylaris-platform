@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     HardDrive, Loader2, CircleCheck, CircleAlert, Play, ShieldAlert,
     Download, FileSearch, X, ArrowRight, Info,
@@ -19,6 +19,7 @@ import {
 } from '@/lib/storageMigration';
 import { systemEvents } from '@/lib/systemEvents';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
+import { toast } from '@/components/ui/Toast';
 
 const PHASE_LABEL: Record<StorageMigrationPhase, string> = {
     preparing: 'Preparing',
@@ -62,16 +63,7 @@ export default function StorageMigrationTab() {
     const [busyDataSet, setBusyDataSet] = useState('');
     const [downloading, setDownloading] = useState(0);
 
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-    const toastTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const flash = (msg: string, ok = true) => {
-        if (toastTimeout.current) clearTimeout(toastTimeout.current);
-        setToast({ msg, ok });
-        toastTimeout.current = setTimeout(() => setToast(null), 4000);
-    };
-    useEffect(() => () => {
-        if (toastTimeout.current) clearTimeout(toastTimeout.current);
-    }, []);
+    const flash = (msg: string, ok = true) => toast(msg, ok);
 
     // load() must not silently swallow a failed request: Overview deliberately
     // returns 500 (rather than an empty list) when it cannot read manifests,
@@ -536,14 +528,6 @@ export default function StorageMigrationTab() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <span className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />
-                        <span className="text-xs">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

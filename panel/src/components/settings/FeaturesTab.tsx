@@ -6,11 +6,12 @@ import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload 
 import { getTabProxySettings, setTabProxySettings, type TabProxySettings } from '@/lib/api/tabProxySettings';
 import { getCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage } from '@/lib/coreStorage';
-import { CircleCheck, CircleAlert, Network, Globe, LifeBuoy, Package, Move, AlertTriangle, Server, Key, ChevronDown, ChevronRight } from 'lucide-react';
+import { Network, Globe, LifeBuoy, Package, Move, AlertTriangle, Server, Key, ChevronDown, ChevronRight } from 'lucide-react';
 import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { useAppData } from '@/lib/AppDataContext';
+import { toast } from '@/components/ui/Toast';
 
 export default function FeaturesTab() {
     // Auto-move is gateway-only — gate its toggle on the live routing mode.
@@ -28,14 +29,19 @@ export default function FeaturesTab() {
     const [settings, setSettings] = useState<FeatureSettings>({ proxyEnabled: true });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    // Platform-wide subsystem toggles (tickets, modpacks) — these live behind
-    // /api/admin/settings/features and save-on-click independently of the
-    // proxy/gateway settings above. Each flip persists immediately so the
-    // admin doesn't have to remember a Save bar for a dangerous gate.
+    // Platform-wide subsystem toggles (tickets, modpacks, ...), behind
+    // /api/admin/settings/features.
+    //
+    // These used to persist on every click, and say nothing when they worked.
+    // Three save models sat in one scroll on this page - these seven flags
+    // autosaving silently, the two tab-proxy switches autosaving on click and
+    // its numbers on blur, and everything else waiting for the save bar - on
+    // controls that look identical to each other. Now all three are dirty
+    // states and the bar commits them.
     const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
-    const [platformSaving, setPlatformSaving] = useState<keyof FeatureFlagsAdminPayload | null>(null);
+    const [platformSaving, setPlatformSaving] = useState(false);
+    const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
     // What the NEXT flip of "open authoring to users" should do to per-user
     // overrides an admin set by hand. Component state on purpose, not a stored
@@ -63,6 +69,7 @@ export default function FeaturesTab() {
     // as the platform flags above, but its own admin settings endpoint.
     const [tabProxy, setTabProxy] = useState<TabProxySettings>({ enabled: false, allowPublicLinks: false, maxPerServer: 10, maxShareLinksPerUser: 20 });
     const [tabProxySaving, setTabProxySaving] = useState(false);
+    const tabProxySnapshot = useRef<TabProxySettings | null>(null);
 
     // The capability whitelist for user API keys, rendered from the authz
     // catalog rather than a hardcoded list, so a capability added to the
@@ -74,10 +81,7 @@ export default function FeaturesTab() {
     // Snapshot of last-saved settings for dirty detection.
     const snapshotRef = useRef<FeatureSettings | null>(null);
 
-    const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    };
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     useEffect(() => {
         getFeatureSettings().then(res => {
@@ -108,7 +112,10 @@ export default function FeaturesTab() {
             setStorageConfigured(!!res.settings && canSaveCoreStorage(res.settings));
         });
         getTabProxySettings().then(res => {
-            if (res.success && res.settings) setTabProxy(res.settings);
+            if (res.success && res.settings) {
+                setTabProxy(res.settings);
+                tabProxySnapshot.current = res.settings;
+            }
         });
         getCatalog().then(res => {
             if (res.success && res.catalog) {
@@ -117,50 +124,70 @@ export default function FeaturesTab() {
         });
     }, []);
 
-    // Save-on-click for the platform-wide bundle. We send BOTH keys every
-    // time so the wire shape stays predictable even when only one toggle
-    // flipped; cheaper than tracking partial dirty state for a 2-bool form.
-    const savePlatformFlag = async (key: keyof FeatureFlagsAdminPayload, value: boolean | string) => {
-        if (platformSaving) return;
-        const prev = platformFlags;
-        const next = { ...platformFlags, [key]: value };
-        // applyAuthoringToManual rides along only on the toggle it describes;
-        // sending it with an unrelated flip would be a standing instruction the
-        // admin never gave.
-        const payload: FeatureFlagsAdminPayload =
-            key === 'modpackAuthoring' ? { ...next, applyAuthoringToManual: applyToManual } : next;
-        setPlatformFlags(next);
-        setPlatformSaving(key);
+    // An edit to a platform flag. Local; the bar commits it.
+    const editPlatformFlag = (key: keyof FeatureFlagsAdminPayload, value: boolean | string) => {
+        setPlatformFlags(prev => ({ ...prev, [key]: value }));
         setLastBulk(null);
-        const res = await updateSystemFeatures(payload);
-        if (!res.success) {
-            setPlatformFlags(prev);
-            showToast(res.message || 'Save failed.', false);
-        } else {
-            if (res.features) setPlatformFlags(res.features);
-            if (key === 'modpackAuthoring' && typeof res.usersChanged === 'number') {
-                setLastBulk(res.usersChanged);
-            }
-        }
-        setPlatformSaving(null);
     };
 
-    // Save-on-click/blur for the tab-proxy settings bundle - sends the full
-    // payload every round-trip (mirrors savePlatformFlag's shape discipline).
-    const saveTabProxy = async (next: TabProxySettings) => {
-        if (tabProxySaving) return;
-        const prev = tabProxy;
-        setTabProxy(next);
-        setTabProxySaving(true);
-        const res = await setTabProxySettings(next);
+    const platformDirty =
+        platformSnapshot.current !== null &&
+        JSON.stringify(platformFlags) !== JSON.stringify(platformSnapshot.current);
+
+    const savePlatform = async () => {
+        const prev = platformSnapshot.current;
+        if (!prev) return;
+        // applyAuthoringToManual rides along only when the toggle it describes
+        // actually moved; sending it otherwise would be a standing instruction
+        // the admin never gave.
+        const payload: FeatureFlagsAdminPayload =
+            platformFlags.modpackAuthoring !== prev.modpackAuthoring
+                ? { ...platformFlags, applyAuthoringToManual: applyToManual }
+                : platformFlags;
+        setPlatformSaving(true);
+        const res = await updateSystemFeatures(payload);
         if (!res.success) {
-            setTabProxy(prev);
             showToast(res.message || 'Save failed.', false);
-        } else if (res.settings) {
-            setTabProxy(res.settings);
+        } else {
+            const stored = res.features ?? platformFlags;
+            setPlatformFlags(stored);
+            platformSnapshot.current = stored;
+            if (typeof res.usersChanged === 'number') setLastBulk(res.usersChanged);
+            showToast('Feature switches saved.');
+        }
+        setPlatformSaving(false);
+    };
+
+    const discardPlatform = () => {
+        if (platformSnapshot.current) setPlatformFlags(platformSnapshot.current);
+        setLastBulk(null);
+    };
+
+    useUnsavedChanges({ dirty: platformDirty, save: savePlatform, discard: discardPlatform, saving: platformSaving });
+
+    const tabProxyDirty =
+        tabProxySnapshot.current !== null &&
+        JSON.stringify(tabProxy) !== JSON.stringify(tabProxySnapshot.current);
+
+    const saveTabProxy = async () => {
+        setTabProxySaving(true);
+        const res = await setTabProxySettings(tabProxy);
+        if (!res.success) {
+            showToast(res.message || 'Save failed.', false);
+        } else {
+            const stored = res.settings ?? tabProxy;
+            setTabProxy(stored);
+            tabProxySnapshot.current = stored;
+            showToast('Tab proxy settings saved.');
         }
         setTabProxySaving(false);
     };
+
+    const discardTabProxy = () => {
+        if (tabProxySnapshot.current) setTabProxy(tabProxySnapshot.current);
+    };
+
+    useUnsavedChanges({ dirty: tabProxyDirty, save: saveTabProxy, discard: discardTabProxy, saving: tabProxySaving });
 
     const handleSave = async () => {
         setSaving(true);
@@ -192,7 +219,7 @@ export default function FeaturesTab() {
     const toggleKeyCap = (id: string) => {
         const next = new Set(allowedKeyCaps);
         if (next.has(id)) next.delete(id); else next.add(id);
-        savePlatformFlag('userApiKeyAllowedCaps', Array.from(next).join(','));
+        editPlatformFlag('userApiKeyAllowedCaps', Array.from(next).join(','));
     };
 
     if (loading) return (
@@ -257,8 +284,8 @@ export default function FeaturesTab() {
                         type="button"
                         role="switch"
                         aria-checked={platformFlags.tickets}
-                        disabled={platformSaving !== null || (!platformFlags.tickets && storageConfigured !== true)}
-                        onClick={() => savePlatformFlag('tickets', !platformFlags.tickets)}
+                        disabled={(!platformFlags.tickets && storageConfigured !== true)}
+                        onClick={() => editPlatformFlag('tickets', !platformFlags.tickets)}
                         className={`toggle-track ${platformFlags.tickets ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
                     >
                         <span className={`toggle-knob ${platformFlags.tickets ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
@@ -296,8 +323,8 @@ export default function FeaturesTab() {
                         type="button"
                         role="switch"
                         aria-checked={platformFlags.modpacks}
-                        disabled={platformSaving !== null}
-                        onClick={() => savePlatformFlag('modpacks', !platformFlags.modpacks)}
+                        
+                        onClick={() => editPlatformFlag('modpacks', !platformFlags.modpacks)}
                         className={`toggle-track ${platformFlags.modpacks ? 'toggle-track-on' : 'toggle-track-off'}`}
                     >
                         <span className={`toggle-knob ${platformFlags.modpacks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
@@ -316,8 +343,8 @@ export default function FeaturesTab() {
                             type="button"
                             role="switch"
                             aria-checked={platformFlags.modpackAuthoring}
-                            disabled={platformSaving !== null || !platformFlags.modpacks}
-                            onClick={() => savePlatformFlag('modpackAuthoring', !platformFlags.modpackAuthoring)}
+                            disabled={!platformFlags.modpacks}
+                            onClick={() => editPlatformFlag('modpackAuthoring', !platformFlags.modpackAuthoring)}
                             className={`toggle-track ${platformFlags.modpackAuthoring ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
                         >
                             <span className={`toggle-knob ${platformFlags.modpackAuthoring ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
@@ -333,7 +360,7 @@ export default function FeaturesTab() {
                         <input
                             type="checkbox"
                             checked={applyToManual}
-                            disabled={!platformFlags.modpacks || platformSaving !== null}
+                            disabled={!platformFlags.modpacks}
                             onChange={e => setApplyToManual(e.target.checked)}
                             className="mt-0.5 shrink-0"
                         />
@@ -372,8 +399,8 @@ export default function FeaturesTab() {
                         type="button"
                         role="switch"
                         aria-checked={platformFlags.autoMove}
-                        disabled={platformSaving !== null || gatewayOff}
-                        onClick={() => savePlatformFlag('autoMove', !platformFlags.autoMove)}
+                        disabled={gatewayOff}
+                        onClick={() => editPlatformFlag('autoMove', !platformFlags.autoMove)}
                         className={`toggle-track ${platformFlags.autoMove ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
                     >
                         <span className={`toggle-knob ${platformFlags.autoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
@@ -416,8 +443,8 @@ export default function FeaturesTab() {
                         type="button"
                         role="switch"
                         aria-checked={platformFlags.byon}
-                        disabled={platformSaving !== null || gatewayOff}
-                        onClick={() => savePlatformFlag('byon', !platformFlags.byon)}
+                        disabled={gatewayOff}
+                        onClick={() => editPlatformFlag('byon', !platformFlags.byon)}
                         className={`toggle-track ${platformFlags.byon ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
                     >
                         <span className={`toggle-knob ${platformFlags.byon ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
@@ -454,8 +481,8 @@ export default function FeaturesTab() {
                         type="button"
                         role="switch"
                         aria-checked={platformFlags.userApiKeys}
-                        disabled={platformSaving !== null}
-                        onClick={() => savePlatformFlag('userApiKeys', !platformFlags.userApiKeys)}
+                        
+                        onClick={() => editPlatformFlag('userApiKeys', !platformFlags.userApiKeys)}
                         className={`toggle-track ${platformFlags.userApiKeys ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
                     >
                         <span className={`toggle-knob ${platformFlags.userApiKeys ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
@@ -489,8 +516,8 @@ export default function FeaturesTab() {
                                 {allowedKeyCaps.size > 0 && (
                                     <button
                                         type="button"
-                                        disabled={platformSaving !== null}
-                                        onClick={() => savePlatformFlag('userApiKeyAllowedCaps', '')}
+                                        
+                                        onClick={() => editPlatformFlag('userApiKeyAllowedCaps', '')}
                                         className="btn btn-ghost btn-sm"
                                     >
                                         Clear restriction
@@ -510,7 +537,7 @@ export default function FeaturesTab() {
                                                             <input
                                                                 type="checkbox"
                                                                 checked={allowedKeyCaps.has(c.id)}
-                                                                disabled={platformSaving !== null}
+                                                                
                                                                 onChange={() => toggleKeyCap(c.id)}
                                                             />
                                                             <span>{c.label}</span>
@@ -542,8 +569,8 @@ export default function FeaturesTab() {
                             </div>
                         </div>
                     </div>
-                    <button type="button" role="switch" aria-checked={tabProxy.enabled} disabled={tabProxySaving}
-                        onClick={() => saveTabProxy({ ...tabProxy, enabled: !tabProxy.enabled })}
+                    <button type="button" role="switch" aria-checked={tabProxy.enabled} 
+                        onClick={() => setTabProxy(t => ({ ...t, enabled: !t.enabled }))}
                         className={`toggle-track ${tabProxy.enabled ? 'toggle-track-on' : 'toggle-track-off'}`}>
                         <span className={`toggle-knob ${tabProxy.enabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
@@ -553,8 +580,8 @@ export default function FeaturesTab() {
                         <div className="text-sm font-medium text-(--base-09)">Allow public share links</div>
                         <p className="text-xs text-(--base-06)">Let owners publish anonymous (no-login) share links.</p>
                     </div>
-                    <button type="button" role="switch" aria-checked={tabProxy.allowPublicLinks} disabled={tabProxySaving}
-                        onClick={() => saveTabProxy({ ...tabProxy, allowPublicLinks: !tabProxy.allowPublicLinks })}
+                    <button type="button" role="switch" aria-checked={tabProxy.allowPublicLinks} 
+                        onClick={() => setTabProxy(t => ({ ...t, allowPublicLinks: !t.allowPublicLinks }))}
                         className={`toggle-track ${tabProxy.allowPublicLinks ? 'toggle-track-on' : 'toggle-track-off'}`}>
                         <span className={`toggle-knob ${tabProxy.allowPublicLinks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                     </button>
@@ -590,31 +617,20 @@ export default function FeaturesTab() {
                 <div className="grid grid-cols-2 gap-3 border-t border-(--base-03) pt-3">
                     <div>
                         <label className="input-label">Max proxied tabs / server</label>
-                        <input type="number" min={1} value={tabProxy.maxPerServer} disabled={tabProxySaving}
+                        <input type="number" min={1} value={tabProxy.maxPerServer} 
                             onChange={e => setTabProxy({ ...tabProxy, maxPerServer: Number(e.target.value) })}
-                            onBlur={() => saveTabProxy(tabProxy)}
                             className="input-field w-full" />
                     </div>
                     <div>
                         <label className="input-label">Max share links / user</label>
-                        <input type="number" min={1} value={tabProxy.maxShareLinksPerUser} disabled={tabProxySaving}
+                        <input type="number" min={1} value={tabProxy.maxShareLinksPerUser} 
                             onChange={e => setTabProxy({ ...tabProxy, maxShareLinksPerUser: Number(e.target.value) })}
-                            onBlur={() => saveTabProxy(tabProxy)}
                             className="input-field w-full" />
                     </div>
                 </div>
             </div>
 
             {/* Toast */}
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

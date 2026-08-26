@@ -1,10 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-    Users, Plus, Copy, Trash2, AlertTriangle, CircleCheck, CircleAlert,
-    MonitorSmartphone, X,
-} from 'lucide-react';
+import { Users, Plus, Copy, Trash2, AlertTriangle, MonitorSmartphone, X } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     listClients, createClient, deleteClient,
@@ -12,6 +9,7 @@ import {
 } from '@/lib/api/solderAccess';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 // Per-user Solder client management. A client is a Technic Launcher
 // identity — its UUID (?cid=) whitelists private packs for that launcher.
@@ -29,14 +27,10 @@ export default function SolderClientsPage() {
     const [creating, setCreating] = useState(false);
     const [name, setName] = useState('');
     const [deleting, setDeleting] = useState<SolderClient | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [creatingClient, runCreate] = useBusy();
     const [deletingClient, runDelete] = useBusy();
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         try {
@@ -220,15 +214,6 @@ export default function SolderClientsPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </main>
     );
 }

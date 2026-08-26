@@ -1,10 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-    KeyRound, Plus, Copy, Trash2, AlertTriangle, CircleCheck, CircleAlert,
-    Shield, X, EyeOff,
-} from 'lucide-react';
+import { KeyRound, Plus, Copy, Trash2, AlertTriangle, Shield, X, EyeOff } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     listKeys, createKey, deleteKey,
@@ -12,6 +9,7 @@ import {
 } from '@/lib/api/solderAccess';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 // Per-user Solder key management. A key (?k=) grants a launcher read access
 // to ALL of the owner's private packs. Treat like a password — shown once on
@@ -30,14 +28,10 @@ export default function SolderKeysPage() {
     const [name, setName] = useState('');
     const [revealedKey, setRevealedKey] = useState<{ plaintext: string; name: string } | null>(null);
     const [deleting, setDeleting] = useState<SolderKey | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [creatingKey, runCreate] = useBusy();
     const [deletingKey, runDelete] = useBusy();
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         try {
@@ -246,15 +240,6 @@ export default function SolderKeysPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </main>
     );
 }

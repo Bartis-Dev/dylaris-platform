@@ -2,10 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
-import {
-    Clock, Plus, Pencil, Trash2, Play, Square, X, RotateCcw, AlertTriangle,
-    CheckCircle2, MessageSquare, RefreshCw, CircleCheck, CircleAlert,
-} from 'lucide-react';
+import { Clock, Plus, Pencil, Trash2, Play, Square, X, RotateCcw, AlertTriangle, CheckCircle2, MessageSquare, RefreshCw } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -14,6 +11,7 @@ import {
 } from '@/lib/api/scheduledTasks';
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 // Scheduled Tasks sub-tab. Per-server cron jobs (restart, say).
 // Presets cover the 90% of operator wishes (daily restart at 4 AM, "10
@@ -78,12 +76,8 @@ export default function ServerConfigScheduledPage() {
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState<EditingTask | null>(null);
     const [deletePrompt, setDeletePrompt] = useState<ScheduledTask | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         if (!serverId) return;
@@ -339,15 +333,6 @@ export default function ServerConfigScheduledPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

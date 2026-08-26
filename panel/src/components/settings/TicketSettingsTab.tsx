@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState , useRef} from 'react';
 import Link from 'next/link';
 import { LifeBuoy, Loader2, CircleCheck, CircleAlert, Trash2, ArrowRight } from 'lucide-react';
 import { getTicketSettings, saveTicketSettings, TicketSettings } from '@/lib/api/tickets';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import { toast } from '@/components/ui/Toast';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 const defaultSettings: TicketSettings = {
     crossTeamVisibility: true,
@@ -21,9 +23,11 @@ const defaultSettings: TicketSettings = {
 
 export default function TicketSettingsTab() {
     const [s, setS] = useState<TicketSettings>(defaultSettings);
+    // See MaintenanceTab: this form tracked nothing, so leaving the page
+    // dropped every edit without a word.
+    const snapshotRef = useRef<TicketSettings | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     // Without this a failed load renders defaultSettings as though it were the
     // stored config and Save writes those defaults over the real ones. See
     // BeamTab for the same reasoning; the tabs that snapshot into a ref get this
@@ -32,28 +36,37 @@ export default function TicketSettingsTab() {
 
     useEffect(() => {
         getTicketSettings().then(res => {
-            if (res.success && res.settings) setS(res.settings);
+            if (res.success && res.settings) { setS(res.settings); snapshotRef.current = res.settings; }
             else setLoadFailed(true);
             setLoading(false);
         });
     }, []);
 
-    const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 2800);
-    };
+    const flash = (msg: string, ok = true) => toast(msg, ok);
 
     const handleSave = async () => {
         setSaving(true);
         const res = await saveTicketSettings(s);
         setSaving(false);
         if (res.success) {
-            if (res.settings) setS(res.settings);
+            const stored = res.settings ?? s;
+            setS(stored);
+            snapshotRef.current = stored;
             flash('Saved.');
         } else {
             flash(res.message || 'Save failed.', false);
         }
     };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(s) !== JSON.stringify(snapshotRef.current);
+
+    const handleDiscard = () => {
+        if (snapshotRef.current) setS(snapshotRef.current);
+    };
+
+    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
     if (loading) {
         return (
@@ -192,12 +205,6 @@ export default function TicketSettingsTab() {
                     </button>
                 </div>
 
-                {toast && (
-                    <p className={`text-xs ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'} flex items-center gap-1`}>
-                        {toast.ok ? <CircleCheck size={12} /> : <CircleAlert size={12} />}
-                        {toast.msg}
-                    </p>
-                )}
             </section>
 
             <p className="text-xs text-(--base-06) italic">

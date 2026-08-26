@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { CircleCheck, CircleAlert, Plus, Pencil, Trash2, X, ShieldCheck, UserCog, Eye } from 'lucide-react';
+import { CircleCheck, Plus, Pencil, Trash2, X, ShieldCheck, UserCog, Eye } from 'lucide-react';
 import { getCatalog, getPermissionsMode, type CatalogScope, type PermissionsMode } from '@/lib/api/authzCatalog';
 import {
     listPanelRoles,
@@ -18,6 +18,7 @@ import CapabilityPicker from '@/components/access/CapabilityPicker';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { MODE_LABELS, MODE_HELP } from '@/lib/access/accessMode';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 // Panel-admin Settings tab (F6): (A) the global permissions_mode 3-state
 // switch, (B) panel-role CRUD, (C) assigning a panel role + grant/deny
@@ -31,7 +32,6 @@ const MODE_OPTIONS: { value: PermissionsMode; label: string }[] = [
     { value: 'advanced', label: MODE_LABELS.advanced },
 ];
 
-type Toast = { msg: string; ok: boolean } | null;
 
 export default function RolesTab() {
     const [mode, setMode] = useState<PermissionsMode>('off');
@@ -48,11 +48,7 @@ export default function RolesTab() {
     const [assignUser, setAssignUser] = useState<User | null>(null);
     const [viewingRole, setViewingRole] = useState<PanelRole | null>(null);
 
-    const [toast, setToast] = useState<Toast>(null);
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = useCallback((msg: string, ok = true) => toast(msg, ok), []);
 
     const loadRoles = useCallback(async () => {
         const res = await listPanelRoles();
@@ -303,15 +299,6 @@ export default function RolesTab() {
                 />
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

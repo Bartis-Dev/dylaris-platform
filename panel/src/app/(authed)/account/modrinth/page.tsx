@@ -1,16 +1,14 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-    Package, Key, ExternalLink, CircleCheck, CircleAlert, Trash2,
-    AlertTriangle, EyeOff, Eye,
-} from 'lucide-react';
+import { Package, Key, ExternalLink, CircleCheck, Trash2, AlertTriangle, EyeOff, Eye } from 'lucide-react';
 import {
     getModrinthPATStatus, setModrinthPAT, clearModrinthPAT,
     type ModrinthPATStatus,
 } from '@/lib/api/modrinthPat';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
+import { toast } from '@/components/ui/Toast';
 
 // Modrinth account integration. Lets the user attach a Personal
 // Access Token so the platform can publish modpacks on their behalf. Token
@@ -37,12 +35,8 @@ export default function ModrinthIntegrationPage() {
     const [token, setToken] = useState('');
     const [showToken, setShowToken] = useState(false);
     const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 4000);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         const s = await getModrinthPATStatus();
@@ -198,15 +192,6 @@ export default function ModrinthIntegrationPage() {
                 </section>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </main>
     );
 }

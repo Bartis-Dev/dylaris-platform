@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/Badge';
 import { systemEvents } from '@/lib/systemEvents';
 import { reachReducer, initialReachState, statusLabel, statusRemedy, parseStorageReachEvent } from '@/lib/storageReach';
 import StorageHealthCard from '@/components/settings/StorageHealthCard';
+import { toast } from '@/components/ui/Toast';
 
 const BACKENDS = [
   { id: 'path', label: 'Filesystem Path', description: 'A local disk or an OS-level mount (NFS/SMB/WebDAV). Must be reachable by every Core.', icon: HardDrive },
@@ -28,7 +29,6 @@ export default function CoreStorageTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   // Kept out of the toast on purpose: a durability warning that scrolls away
   // after three seconds is a warning nobody acts on. It stays on screen until
   // the next test replaces or clears it.
@@ -59,7 +59,7 @@ export default function CoreStorageTab() {
   // discarded rather than clobbering the newer, still-active round's state.
   const saveGenerationRef = useRef(0);
 
-  const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 4500); };
+  const showToast = (msg: string, ok = true) => toast(msg, ok);
 
   useEffect(() => {
     getCoreStorage().then(res => {
@@ -430,13 +430,6 @@ export default function CoreStorageTab() {
         </div>
       )}
 
-      {toast && (
-        <div className="toast-container"><div className="toast">
-          <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-          {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-          <span className="text-sm text-(--base-09)">{toast.msg}</span>
-        </div></div>
-      )}
     </div>
   );
 }

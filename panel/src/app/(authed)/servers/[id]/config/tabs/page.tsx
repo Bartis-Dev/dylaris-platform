@@ -2,10 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import {
-    LayoutGrid, Plus, Pencil, Trash2, Play, Square, ExternalLink,
-    AlertTriangle, CircleCheck, CircleAlert, X, Link2, Copy, RotateCw, Clock,
-} from 'lucide-react';
+import { LayoutGrid, Plus, Pencil, Trash2, Play, Square, ExternalLink, AlertTriangle, X, Link2, Copy, RotateCw, Clock } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     listServerTabs, createServerTab, updateServerTab, deleteServerTab,
@@ -19,6 +16,7 @@ import { shareLinkExpired } from '@/lib/shareLink';
 import { DynamicIcon, TAB_ICON_NAMES } from '@/lib/icons';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 // Custom Tabs management.
 //
@@ -61,12 +59,8 @@ export default function ServerConfigTabsPage() {
     const [editing, setEditing] = useState<EditingTab | null>(null);
     const [deletePrompt, setDeletePrompt] = useState<ServerTab | null>(null);
     const [iconQuery, setIconQuery] = useState('');
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         if (!serverId) return;
@@ -588,15 +582,6 @@ export default function ServerConfigTabsPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

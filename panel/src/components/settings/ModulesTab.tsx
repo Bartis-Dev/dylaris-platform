@@ -20,6 +20,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { toast } from '@/components/ui/Toast';
 
 interface ModulesTabProps {
     modules: AppModule[];
@@ -217,6 +218,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
             return;
         }
         setActionError('');
+        toast('Order saved');
         onModulesChange();
     };
 
@@ -225,6 +227,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
         const res = await createModule(modForm as any);
         if (res.success) {
             setIsModalOpen(false);
+            toast('Module added');
             onModulesChange();
         } else setError(res.message);
     };
@@ -243,6 +246,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
             return;
         }
         setActionError('');
+        toast('Module deleted');
         onModulesChange();
     };
 
@@ -250,6 +254,12 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
         const res = await toggleModule(id, !currentStatus);
         if (res.success) {
             setActionError("");
+            // These are row operations on a list, like deleting a user, so they
+            // apply straight away rather than waiting for the save bar. What
+            // they did NOT do was say so: this screen had no toast at all, so a
+            // toggle, a role change and a drag all succeeded in silence and the
+            // only way to know was that something moved.
+            toast(currentStatus ? 'Module disabled' : 'Module enabled');
             onModulesChange();
         } else {
             setActionError(res.message || "Could not toggle the module.");
@@ -260,6 +270,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
         const res = await setModuleAccessRole(id, role);
         if (res.success) {
             setActionError("");
+            toast(role === 'admin' ? 'Module is now admin-only' : 'Module is now visible to everyone');
             onModulesChange();
         } else {
             setActionError(res.message || "Could not change the module role.");

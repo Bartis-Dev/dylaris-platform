@@ -6,6 +6,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { FolderPlus, Upload, ArrowUp, FolderOpen, Folder, Archive, Trash2, Eye, EyeOff } from 'lucide-react';
 import { SkeletonTable } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 interface FileEntry {
     name: string;
@@ -31,7 +32,6 @@ export default function LibraryView() {
     const [creatingDir, runCreateDir] = useBusy();
     const [deletingEntry, runDelete] = useBusy();
     const [error, setError] = useState('');
-    const [toast, setToast] = useState<string | null>(null);
 
     const [showCreateDir, setShowCreateDir] = useState(false);
     const [newDirName, setNewDirName] = useState('');
@@ -41,8 +41,7 @@ export default function LibraryView() {
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const showToast = (msg: string) => {
-        setToast(msg);
-        setTimeout(() => setToast(null), 3000);
+        toast(msg);
     };
 
     const fetchFiles = async (path: string) => {
@@ -301,14 +300,6 @@ export default function LibraryView() {
             )}
 
             {/* Toast */}
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className="toast-bar bg-(--accent)"></div>
-                        <span className="text-sm text-(--base-09)">{toast}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

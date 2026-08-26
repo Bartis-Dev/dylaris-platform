@@ -1,12 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-    Terminal, Copy, RefreshCw, EyeOff, Save, AlertTriangle,
-    CircleCheck, CircleAlert, Play, RotateCcw,
-} from 'lucide-react';
+import { Terminal, Copy, RefreshCw, EyeOff, Save, AlertTriangle, Play, RotateCcw } from 'lucide-react';
 import { getRconConfig, setRconConfig, execRcon, friendlyRconError } from '@/lib/api/rcon';
 import { serverPower } from '@/lib/api';
+import { toast } from '@/components/ui/Toast';
 
 // RCON enable/password card. Lives as the RCON sub-section of the Players
 // tab. Generates a 24-byte hex password on first enable, supports manual
@@ -37,7 +35,6 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
     const [testCmd, setTestCmd] = useState('list');
     const [testing, setTesting] = useState(false);
     const [testOutput, setTestOutput] = useState<{ ok: boolean; text: string } | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     // Set when a Save actually rewrote server.properties (Core's
     // restartRequired) while enabled=true - the running server (if any) has
     // not picked it up yet, so we hold off treating RCON as live until an
@@ -50,10 +47,7 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
     const restartPollRef = useRef<{ cancelled: boolean } | null>(null);
     useEffect(() => () => { if (restartPollRef.current) restartPollRef.current.cancelled = true; }, []);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         const res = await getRconConfig(serverId);
@@ -342,15 +336,6 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
                 )}
             </div>
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </section>
     );
 }

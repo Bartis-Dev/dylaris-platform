@@ -2,10 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import {
-    Activity, Play, Square, Trash2, ExternalLink, RefreshCw, AlertTriangle,
-    CircleCheck, CircleAlert, Download, Clock,
-} from 'lucide-react';
+import { Activity, Play, Square, Trash2, ExternalLink, RefreshCw, AlertTriangle, Download, Clock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { systemEvents } from '@/lib/systemEvents';
 import { sendConsoleCommand } from '@/lib/api';
@@ -13,6 +10,7 @@ import { listInstalledMods } from '@/lib/api/modrinth';
 import { listSparkProfiles, recordSparkProfile, deleteSparkProfile, SPARK_URL_RE, type SparkProfile } from '@/lib/api/spark';
 import { createEventSource } from '@/lib/sse';
 import { useBusy } from '@/lib/useBusy';
+import { toast } from '@/components/ui/Toast';
 
 // Spark profiler integration. UX:
 //   * "Not installed" → prompts user to add `spark` from the Content tab
@@ -47,14 +45,10 @@ export default function ServerConfigProfilingPage() {
     const [active, setActive] = useState<ActiveProfile | null>(null);
     const [duration, setDuration] = useState(60);
     const [nowTick, setNowTick] = useState(Date.now());
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
     const esRef = useRef<EventSource | null>(null);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     // ----- Spark install detection (via P10 installed_mods) -----
     useEffect(() => {
@@ -305,15 +299,6 @@ export default function ServerConfigProfilingPage() {
                 )}
             </section>
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

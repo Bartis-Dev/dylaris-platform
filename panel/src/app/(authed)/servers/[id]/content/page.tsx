@@ -2,10 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { useParams } from 'next/navigation';
-import {
-    Package, Search, Download, Trash2, ExternalLink,
-    CircleCheck, CircleAlert, AlertTriangle, Filter, Box, X, RefreshCw, Info,
-} from 'lucide-react';
+import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppData } from '@/lib/AppDataContext';
@@ -24,6 +21,7 @@ import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoa
 import { isMcVersion } from '@/lib/validation';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { declareServerLoaderMetadata } from '@/lib/api';
+import { toast } from '@/components/ui/Toast';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
 // sidebar (with the loader + MC-version filters below it, gated behind an
@@ -93,12 +91,8 @@ export default function ServerContentPage() {
     const [projectLoading, setProjectLoading] = useState(false);
     const [descMode, setDescMode] = useState<'short' | 'full'>('short');
 
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     // ----- Optional "declare loader + MC version" flow (imported servers) -----
     // Recommended, never forced: an imported/uploaded server keeps a blank
@@ -892,15 +886,6 @@ export default function ServerContentPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </main>
     );
 }

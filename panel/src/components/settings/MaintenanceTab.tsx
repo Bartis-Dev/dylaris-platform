@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState , useRef} from 'react';
 import { Wrench, Loader2, CircleCheck, CircleAlert } from 'lucide-react';
 import { getMaintenance, saveMaintenance, MaintenanceState } from '@/lib/api';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { toLocalInput, fromLocalInput } from '@/lib/localDateTime';
+import { toast } from '@/components/ui/Toast';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 const BLOCK_LEVELS: { value: MaintenanceState['blockLevel']; label: string; help: string }[] = [
     { value: 'off',          label: 'Off',                help: 'Feature off entirely. Banner hidden, no blocking.' },
@@ -23,9 +25,13 @@ const defaultState: MaintenanceState = {
 
 export default function MaintenanceTab() {
     const [state, setState] = useState<MaintenanceState>(defaultState);
+    // What was last loaded or saved. This large form tracked nothing, so
+    // clicking away from it dropped every edit in silence while the tab
+    // beside it prompted. A null snapshot also keeps `dirty` false after a
+    // failed load, which is the same guard loadFailed gives the button.
+    const snapshotRef = useRef<MaintenanceState | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     // A failed load used to leave defaultState on screen looking exactly like a
     // stored config - maintenance OFF at banner_only - with Save enabled. This
     // is the one screen where writing that back is destructive: the DB migration
@@ -36,28 +42,37 @@ export default function MaintenanceTab() {
 
     useEffect(() => {
         getMaintenance().then(res => {
-            if (res.success && res.state) setState(res.state);
+            if (res.success && res.state) { setState(res.state); snapshotRef.current = res.state; }
             else setLoadFailed(true);
             setLoading(false);
         });
     }, []);
 
-    const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 2800);
-    };
+    const flash = (msg: string, ok = true) => toast(msg, ok);
 
     const handleSave = async () => {
         setSaving(true);
         const res = await saveMaintenance(state);
         setSaving(false);
         if (res.success) {
-            if (res.state) setState(res.state);
+            const stored = res.state ?? state;
+            setState(stored);
+            snapshotRef.current = stored;
             flash('Saved.');
         } else {
             flash(res.message || 'Save failed.', false);
         }
     };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(state) !== JSON.stringify(snapshotRef.current);
+
+    const handleDiscard = () => {
+        if (snapshotRef.current) setState(snapshotRef.current);
+    };
+
+    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
     if (loading) {
         return (
@@ -181,12 +196,6 @@ export default function MaintenanceTab() {
                     </button>
                 </div>
 
-                {toast && (
-                    <p className={`text-xs ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'} flex items-center gap-1`}>
-                        {toast.ok ? <CircleCheck size={12} /> : <CircleAlert size={12} />}
-                        {toast.msg}
-                    </p>
-                )}
             </section>
 
             <p className="text-xs text-(--base-06) italic">

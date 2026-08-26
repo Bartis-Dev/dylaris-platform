@@ -2,11 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
-import {
-    Users, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2,
-    RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks,
-    CircleCheck, CircleAlert, X, ListPlus, MessageSquare, Terminal, Lock,
-} from 'lucide-react';
+import { Users, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2, RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks, CircleCheck, X, ListPlus, MessageSquare, Terminal, Lock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getRconConfig, parsePlayerList, friendlyRconError, type OnlinePlayer,
@@ -17,6 +13,7 @@ import {
 } from '@/lib/api/players';
 import RconConfigCard from '@/components/RconConfigCard';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
+import { toast } from '@/components/ui/Toast';
 
 // Player Management. Everything here goes through /servers/{id}/players,
 // which is gated on players.read (the roster + the three list files) and
@@ -71,12 +68,8 @@ export default function ServerPlayersPage() {
     } | null>(null);
     const [tellPrompt, setTellPrompt] = useState<{ player: string; message: string } | null>(null);
     const [addPrompt, setAddPrompt] = useState<{ target: 'whitelist' | 'ops'; name: string } | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const activeSub = server?.activeSubServer || '';
     const uuid = server?.uuid || '';
@@ -543,15 +536,6 @@ export default function ServerPlayersPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </main>
     );
 }

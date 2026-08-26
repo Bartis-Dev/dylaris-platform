@@ -219,3 +219,7 @@
 {"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "A Warp key set to Fixed no longer stores a connection limit it does not use, and the help text no longer promises a pinned overlay address the form never sent or an eviction by idleness it does not do."}
 {"date": "2026-08-26", "service": "panel", "type": "change", "summary": "The Gateway settings tab formerly called Hub Admin is now Hub Redis access, which is what it actually issues."}
 {"date": "2026-08-26", "service": "panel", "type": "feature", "summary": "Settings has a search box: type what a setting does, not which page it is on, and it takes you straight to the right page and tab."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "Everything in the panel now saves the same way: one Save and Discard bar at the bottom, which also warns before you navigate away with unsaved changes."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Server properties no longer writes the file on every keystroke in simple mode; edits are marked and saved together."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Toggling a navigation module, changing its audience or reordering it now confirms it worked instead of succeeding silently."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Maintenance mode, ticket settings and billing defaults no longer discard your edits without a word when you leave the page."}

@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect , useRef} from 'react';
 import { getBillingSettings, setBillingSettings, BillingSettings } from '@/lib/api/billing';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { Loader2, Info } from 'lucide-react';
+import { toast } from '@/components/ui/Toast';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 const SPEC_RE = /^\d+[dwm]$/;
 
@@ -12,7 +14,10 @@ export default function BillingTab() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    // See MaintenanceTab: this form tracked nothing either. A null snapshot
+    // after a failed load keeps it clean, so the component's own hardcoded
+    // defaults can never be saved over real settings.
+    const snapshotRef = useRef<BillingSettings | null>(null);
 
     useEffect(() => {
         getBillingSettings().then(res => {
@@ -22,7 +27,7 @@ export default function BillingTab() {
             // the same misread PlansTab already fixes.
             if (!res.success) setLoadError(res.message || 'Failed to load billing settings.');
             if (res.success) {
-                setSettings({
+                const stored: BillingSettings = {
                     gracePeriod: res.gracePeriod || '3d',
                     r2Retention: res.r2Retention || '3m',
                     nodeRetention: res.nodeRetention || '2w',
@@ -30,16 +35,15 @@ export default function BillingTab() {
                     presignTtlNodeMin: res.presignTtlNodeMin || '60',
                     presignTtlByonMin: res.presignTtlByonMin || '360',
                     paymentUrl: res.paymentUrl || '',
-                });
+                };
+                setSettings(stored);
+                snapshotRef.current = stored;
             }
             setLoading(false);
         });
     }, []);
 
-    const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    };
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const specsValid = SPEC_RE.test(settings.gracePeriod) && SPEC_RE.test(settings.r2Retention) && SPEC_RE.test(settings.nodeRetention);
 
@@ -50,6 +54,16 @@ export default function BillingTab() {
         setSaving(false);
         showToast(res.success ? 'Saved.' : (res.message || 'Save failed.'), res.success);
     };
+
+    const dirty =
+        snapshotRef.current !== null &&
+        JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
+
+    const handleDiscard = () => {
+        if (snapshotRef.current) setSettings(snapshotRef.current);
+    };
+
+    useUnsavedChanges({ dirty, save, discard: handleDiscard, saving });
 
     if (loading) {
         return <div className="space-y-4"><SkeletonHeader /><SkeletonCard /></div>;
@@ -150,9 +164,6 @@ export default function BillingTab() {
                 <button onClick={save} disabled={saving || !specsValid} className="btn btn-primary inline-flex items-center gap-1.5 disabled:opacity-40">
                     {saving && <Loader2 size={14} className="animate-spin" />} Save
                 </button>
-                {toast && (
-                    <span className={`text-sm ${toast.ok ? 'text-(--success-light)' : 'text-(--error)'}`}>{toast.msg}</span>
-                )}
             </div>
         </div>
     );

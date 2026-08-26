@@ -22,6 +22,7 @@ import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/componen
 import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser';
 import ConfigEditorModal from '@/components/modpacks/ConfigEditorModal';
 import { Badge } from '@/components/ui/Badge';
+import { toast } from '@/components/ui/Toast';
 
 // Build content editor. Two panels:
 //   left:  the build's content list (mods / resource-packs / plugins), with a
@@ -412,11 +413,7 @@ export default function BuildContentEditorPage() {
     const [shareExpiry, setShareExpiry] = useState(0);
     const [creatingShare, setCreatingShare] = useState(false);
 
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         const [p, bs, list, sl] = await Promise.all([
@@ -987,15 +984,6 @@ export default function BuildContentEditorPage() {
                 />
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </main>
     );
 }

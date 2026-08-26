@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ShieldCheck, Plus, Pencil, Trash2, CircleCheck, CircleAlert } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getPermissionsMode, getCatalog, getPresets,
@@ -15,6 +15,7 @@ import AccessServerRoles from '@/components/access/AccessServerRoles';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import AccessGrantForm from '@/components/access/AccessGrantForm';
 import { modeLabel, describeGrantAccess, fullAccessCaps, canEditInMode, isProxyScope } from '@/lib/access/accessMode';
+import { toast } from '@/components/ui/Toast';
 
 // Owner-facing delegation UI, master-detail layout. Behavior branches on the
 // account's permissions_mode:
@@ -50,12 +51,8 @@ export default function AccessPage() {
     const [serverRolesLoading, setServerRolesLoading] = useState(true);
 
     const [panel, setPanel] = useState<Panel>({ kind: 'empty' });
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refreshGrants = useCallback(async () => {
         const res = await listGrants();
@@ -299,15 +296,6 @@ export default function AccessPage() {
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </main>
     );
 }

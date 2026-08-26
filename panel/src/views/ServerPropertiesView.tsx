@@ -2,8 +2,10 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import { useParams } from 'next/navigation';
-import { AlertTriangle, Save, RotateCcw, Code2, ListChecks, Search, ChevronDown, FileQuestion, Power } from 'lucide-react';
+import { AlertTriangle, RotateCcw, Code2, ListChecks, Search, ChevronDown, FileQuestion, Power } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import { toast } from '@/components/ui/Toast';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { getFileContent, saveFile } from '@/lib/api';
 import {
     VANILLA_SCHEMA, GROUP_LABELS, groupedSchema,
@@ -36,20 +38,24 @@ function stringifyValue(def: PropertyDef, v: string | boolean | number): string 
 
 interface PropertyRowProps {
     def: PropertyDef;
+    /** The value in the form: a pending edit if there is one, else the file. */
     raw: string | undefined;
     onChange: (key: string, newRaw: string) => void;
+    /** Edited since the last save. Marks the row so it can be found again. */
+    edited?: boolean;
 }
 
-function PropertyRow({ def, raw, onChange }: PropertyRowProps) {
+function PropertyRow({ def, raw, onChange, edited }: PropertyRowProps) {
     const value = inferValue(def, raw);
     const commit = (next: string | boolean | number) => onChange(def.key, stringifyValue(def, next));
 
     return (
-        <div className="grid grid-cols-[20rem_auto] gap-6 items-start py-3 border-b border-(--base-03) last:border-b-0">
+        <div className={`grid grid-cols-[20rem_auto] gap-6 items-start py-3 border-b border-(--base-03) last:border-b-0 ${edited ? 'border-l-2 border-l-(--accent) -ml-3 pl-3' : ''}`}>
             <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                     <label htmlFor={`prop-${def.key}`} className="text-sm font-medium text-(--base-09)">{def.label}</label>
                     <code className="font-mono text-[10px] text-(--base-05)">{def.key}</code>
+                    {edited && <span className="mono-label text-(--accent-light)">edited</span>}
                     {def.requiresRestart && (
                         <span className="mono-label text-(--warning-light) bg-(--warning-ghost) border border-(--warning-border) rounded-sm px-1.5">restart</span>
                     )}
@@ -152,10 +158,18 @@ export default function ServerPropertiesView() {
     // a red error + Retry that just re-fires the same 404.
     const [notFound, setNotFound] = useState(false);
     const [doc, setDoc] = useState<PropertiesDoc | null>(null);
+    // Edits made since the last save, keyed by property.
+    //
+    // Simple mode used to issue one PUT and one toast per KEYSTROKE - every
+    // character typed into a MOTD was a write of the whole file and a toast
+    // saying so, while the Advanced tab next to it had Discard and Save. The
+    // file is rewritten from doc.rawLines with these applied, so comments,
+    // ordering and unknown keys survive exactly as they did.
+    const [pending, setPending] = useState<Record<string, string>>({});
+    const [savingSimple, setSavingSimple] = useState(false);
     const [advancedText, setAdvancedText] = useState('');
     const [advancedDirty, setAdvancedDirty] = useState(false);
     const [savingAdvanced, setSavingAdvanced] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [restartPending, setRestartPending] = useState(false);
     const [search, setSearch] = useState('');
     const [openGroups, setOpenGroups] = useState<Set<PropertyGroup>>(new Set(['world', 'network', 'performance']));
@@ -184,10 +198,7 @@ export default function ServerPropertiesView() {
     // user clicks retry. If no active sub-server is selected we
     // surface that as a friendly empty state instead of a 404 storm.
     const filePath = activeSubServer ? `${activeSubServer}/server.properties` : '';
-    const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    }, []);
+    const showToast = useCallback((msg: string, ok = true) => toast(msg, ok), []);
 
     const reload = useCallback(async () => {
         if (!serverUuid) return;
@@ -287,38 +298,50 @@ export default function ServerPropertiesView() {
     // (which dropped the earlier edit).
     const docRef = useRef(doc);
     useEffect(() => { docRef.current = doc; }, [doc]);
+    const pendingRef = useRef(pending);
+    useEffect(() => { pendingRef.current = pending; }, [pending]);
 
-    const inlineSave = useCallback(async (key: string, newRaw: string) => {
+    // An edit. Nothing leaves the browser: it lands in `pending` and the save
+    // bar at the bottom of the screen commits the lot in one write.
+    const editProperty = useCallback((key: string, newRaw: string) => {
+        setPending(prev => ({ ...prev, [key]: newRaw }));
+    }, []);
+
+    const simpleDirty = Object.keys(pending).length > 0;
+
+    const saveSimple = useCallback(async () => {
         const cur = docRef.current;
         if (!cur || !serverUuid) return;
-        const def = VANILLA_SCHEMA.find(d => d.key === key);
-        // Optimistic update — keeps the UI responsive between keystrokes.
-        const nextValues = { ...cur.values, [key]: newRaw };
-        const nextOrder = cur.order.includes(key) ? cur.order : [...cur.order, key];
-        const nextDoc: PropertiesDoc = { ...cur, values: nextValues, order: nextOrder };
-        docRef.current = nextDoc; // keep the ref current for a rapid follow-up edit
-        setDoc(nextDoc);
+        const edits = pendingRef.current;
+        if (Object.keys(edits).length === 0) return;
 
-        const fileText = serializeProperties(nextDoc, { [key]: newRaw });
+        setSavingSimple(true);
+        const fileText = serializeProperties(cur, edits);
         try {
             const res = await saveFile(filePath, fileText, serverUuid);
             if (res?.success === false) {
                 showToast(res.message || 'Save failed.', false);
+                setSavingSimple(false);
                 return;
             }
-            // Re-parse so doc.rawLines / lineIndex stay accurate for the
-            // next inline save.
+            // Re-parse so rawLines / lineIndex stay accurate for the next save.
             setDoc(parseProperties(fileText));
             setAdvancedText(fileText);
-            // Bump the change-detection baseline so the background
-            // poll doesn't see our own save as an external change.
+            // Bump the change-detection baseline so the background poll does
+            // not see our own save as an external change.
             lastLoadedTextRef.current = fileText;
-            if (def?.requiresRestart) setRestartPending(true);
-            showToast(`Saved ${key}`);
+            if (Object.keys(edits).some(k => VANILLA_SCHEMA.find(d => d.key === k)?.requiresRestart)) {
+                setRestartPending(true);
+            }
+            setPending({});
+            showToast('Saved server.properties');
         } catch {
             showToast('Network error', false);
         }
+        setSavingSimple(false);
     }, [serverUuid, filePath, showToast]);
+
+    const discardSimple = useCallback(() => setPending({}), []);
 
     const saveAdvanced = useCallback(async () => {
         if (!serverUuid) return;
@@ -341,10 +364,29 @@ export default function ServerPropertiesView() {
         setSavingAdvanced(false);
     }, [serverUuid, filePath, advancedText, showToast]);
 
+    const discardAdvanced = useCallback(() => {
+        if (docRef.current) setAdvancedText(serializeProperties(docRef.current, {}));
+        setAdvancedDirty(false);
+    }, []);
+
+    // One registration, for whichever mode is showing. They edit the same file
+    // by two routes, so letting both be dirty at once would mean one save
+    // overwriting the other with a stale copy.
+    useUnsavedChanges({
+        dirty: mode === 'advanced' ? advancedDirty : simpleDirty,
+        saving: mode === 'advanced' ? savingAdvanced : savingSimple,
+        save: mode === 'advanced' ? saveAdvanced : saveSimple,
+        discard: mode === 'advanced' ? discardAdvanced : discardSimple,
+    });
+
     const switchMode = (next: Mode) => {
         if (next === mode) return;
         if (next === 'simple' && advancedDirty) {
             showToast('Save or discard advanced changes first', false);
+            return;
+        }
+        if (next === 'advanced' && simpleDirty) {
+            showToast('Save or discard your changes first', false);
             return;
         }
         setMode(next);
@@ -383,10 +425,10 @@ export default function ServerPropertiesView() {
             if (needle && !key.toLowerCase().includes(needle) && !(doc.values[key] ?? '').toLowerCase().includes(needle)) {
                 continue;
             }
-            entries.push({ key, value: doc.values[key] ?? '' });
+            entries.push({ key, value: pending[key] ?? doc.values[key] ?? '' });
         }
         return entries;
-    }, [doc, search]);
+    }, [doc, search, pending]);
 
     const toggleGroup = (key: PropertyGroup) => {
         setOpenGroups(prev => {
@@ -540,8 +582,9 @@ export default function ServerPropertiesView() {
                                         <PropertyRow
                                             key={def.key}
                                             def={def}
-                                            raw={doc.values[def.key]}
-                                            onChange={inlineSave}
+                                            raw={pending[def.key] ?? doc.values[def.key]}
+                                            edited={def.key in pending}
+                                            onChange={editProperty}
                                         />
                                     ))}
                                 </div>
@@ -567,7 +610,7 @@ export default function ServerPropertiesView() {
                                 <span>{unknownEntries.length}</span>
                             </div>
                             <p className="text-xs text-(--base-06) mb-2 pl-1">
-                                Keys we don&apos;t have a schema entry for. Edits save the same way as the typed rows above.
+                                Keys we don&apos;t have a schema entry for. They save with everything else.
                             </p>
                             <div className="pl-3 border-l border-(--warning-border)">
                                 {unknownEntries.map(entry => (
@@ -578,16 +621,8 @@ export default function ServerPropertiesView() {
                                         <div className="flex items-center">
                                             <input
                                                 type="text"
-                                                defaultValue={entry.value}
-                                                onBlur={e => {
-                                                    const next = e.target.value;
-                                                    if (next !== entry.value) inlineSave(entry.key, next);
-                                                }}
-                                                onKeyDown={e => {
-                                                    if (e.key === 'Enter') {
-                                                        (e.currentTarget as HTMLInputElement).blur();
-                                                    }
-                                                }}
+                                                value={entry.value}
+                                                onChange={e => editProperty(entry.key, e.target.value)}
                                                 className="input-field w-72 font-mono text-xs"
                                                 placeholder="(empty)"
                                             />
@@ -616,33 +651,9 @@ export default function ServerPropertiesView() {
                             />
                         </Suspense>
                     </div>
-                    <div className="flex items-center gap-2 justify-end">
-                        <button
-                            onClick={() => { setAdvancedText(serializeProperties(doc, {})); setAdvancedDirty(false); }}
-                            disabled={!advancedDirty || savingAdvanced}
-                            className="btn btn-secondary disabled:opacity-40"
-                        >
-                            <RotateCcw size={13} /> Discard
-                        </button>
-                        <button
-                            onClick={saveAdvanced}
-                            disabled={!advancedDirty || savingAdvanced}
-                            className="btn btn-primary disabled:opacity-40"
-                        >
-                            <Save size={13} /> {savingAdvanced ? 'Saving…' : 'Save'}
-                        </button>
-                    </div>
                 </div>
             )}
 
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }
