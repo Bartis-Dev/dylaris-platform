@@ -665,6 +665,13 @@ input[type="number"] {
   align-self: stretch;
   flex-shrink: 0;
 }
+/* Toasts sit bottom-right, which is where the save bar also is. Without this
+   a "Saved" toast lands on top of the Save button that produced it - and the bar
+   is present exactly when something is being saved, so it is not a rare case. */
+body:has(.unsaved-bar) .toast-container {
+  bottom: 84px;
+}
+
 /* The card is clickable to dismiss early. It is not focusable: the message is
    already announced through the live region, and a control that appears in the
    tab order for three seconds and then vanishes moves focus out from under

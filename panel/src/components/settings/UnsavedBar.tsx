@@ -25,7 +25,7 @@ export default function UnsavedBar() {
         <div
             role="region"
             aria-label="Unsaved changes"
-            className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-4 border-t border-(--base-03) bg-(--base-02) px-5 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.35)] animate-fade-in"
+            className="unsaved-bar fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-4 border-t border-(--base-03) bg-(--base-02) px-5 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.35)] animate-fade-in"
         >
             <span className="mono-label text-[11px]">Unsaved changes</span>
             <div className="flex items-center gap-2">
