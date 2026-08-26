@@ -1,0 +1,165 @@
+package services
+
+// Putting a version move back when the node refused to make it.
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"strings"
+
+	"dylaris-core/models"
+)
+
+// A version move writes the database optimistically and then dispatches the
+// command, the same ordering a reinstall uses. That is right while the node
+// always goes through with it - and it does not.
+//
+// The node stages and verifies every jar BEFORE it removes anything or even
+// stops the server, so a download it cannot complete aborts the move with the
+// machine untouched. The database has already been rewritten by then, and what
+// it now claims is not cosmetic: minecraft_version is what the next mod install
+// and the next cross-version availability check resolve against. Left wrong, it
+// quietly installs jars for a Minecraft version the server is not running.
+//
+// So the pre-move state is parked in Redis at dispatch, the node writes a
+// give-up signal on the abort paths, and the status watcher pairs the two and
+// puts the columns back. Only the pre-commit aborts signal: once the node has
+// started removing jars the disk really has moved, and reverting the database
+// then would be the mistake, not the fix.
+//
+// A lost signal leaves exactly the old behaviour, so this can only improve on it.
+
+// VersionUpdateUndoKey holds the pre-move state, written by Core at dispatch.
+func VersionUpdateUndoKey(serverUUID string) string {
+	return "dylaris:server:" + serverUUID + ":version_update_undo"
+}
+
+// VersionUpdateFailedKey is the node's give-up signal. It is written by the
+// NODE, which is why it lives under the per-server prefix the node's Redis ACL
+// already covers (`~dylaris:server:<uuid>:*`).
+func VersionUpdateFailedKey(serverUUID string) string {
+	return "dylaris:server:" + serverUUID + ":version_update_failed"
+}
+
+// versionUpdateFailedPattern is what the watcher scans for.
+const versionUpdateFailedPattern = "dylaris:server:*:version_update_failed"
+
+// VersionUpdateUndo is the state a version move is about to overwrite. Only the
+// columns a move touches: this is a compensating write for one command, not a
+// snapshot of the server.
+type VersionUpdateUndo struct {
+	InstallerType    string                 `json:"installerType"`
+	MinecraftVersion string                 `json:"minecraftVersion"`
+	BuildNumber      string                 `json:"buildNumber"`
+	SubServerName    string                 `json:"subServerName"`
+	Mods             []VersionUpdateUndoMod `json:"mods"`
+}
+
+// VersionUpdateUndoMod is one installed mod as it was before the move.
+type VersionUpdateUndoMod struct {
+	ModrinthProjectID   string `json:"modrinthProjectId"`
+	ModrinthProjectSlug string `json:"modrinthProjectSlug"`
+	ModrinthVersionID   string `json:"modrinthVersionId"`
+	Title               string `json:"title"`
+	FileName            string `json:"fileName"`
+	SHA512              string `json:"sha512"`
+	TargetDir           string `json:"targetDir"`
+}
+
+// consumeVersionUpdateFailures lands the node's give-up signal for a version
+// move: restore what the dispatch overwrote, and clear both keys.
+//
+// Returns true when anything panel-visible changed, so the caller fires one
+// servers.changed for the tick.
+func (s *StatusWatcherService) consumeVersionUpdateFailures(ctx context.Context) bool {
+	var cursor uint64
+	changed := false
+	for {
+		keys, next, err := s.redis.Scan(ctx, cursor, versionUpdateFailedPattern, 100).Result()
+		if err != nil {
+			return changed
+		}
+		for _, key := range keys {
+			parts := strings.Split(key, ":")
+			if len(parts) != 4 {
+				continue
+			}
+			uuid := parts[2]
+			reason, rerr := s.redis.Get(ctx, key).Result()
+			if rerr != nil {
+				continue
+			}
+
+			// Clear the signal FIRST. A restore that fails halfway must not be
+			// retried every five seconds against a database it is already
+			// partway through; the operator can re-run the move instead.
+			s.redis.Del(ctx, key)
+
+			raw, uerr := s.redis.Get(ctx, VersionUpdateUndoKey(uuid)).Result()
+			s.redis.Del(ctx, VersionUpdateUndoKey(uuid))
+			if uerr != nil {
+				// Expired, or the move predates this mechanism. Say so rather
+				// than leaving it looking handled: the columns are now wrong and
+				// only a log line will ever mention it.
+				log.Printf("Server %s: the version move was abandoned by the node (%s) and there is no undo record, so its Minecraft version and mod list still describe the move that did not happen", uuid, reason)
+				continue
+			}
+			var undo VersionUpdateUndo
+			if json.Unmarshal([]byte(raw), &undo) != nil {
+				log.Printf("Server %s: the version move was abandoned by the node (%s) and its undo record could not be read", uuid, reason)
+				continue
+			}
+
+			srv, serr := s.store.GetServerByUUID(uuid)
+			if serr != nil || srv == nil {
+				continue
+			}
+			log.Printf("Server %s: the node abandoned the version move (%s), putting Minecraft %s and %d mod rows back",
+				uuid, reason, undo.MinecraftVersion, len(undo.Mods))
+
+			if err := s.store.UpdateServerLoaderMetadata(srv.ID, undo.InstallerType, undo.MinecraftVersion, undo.BuildNumber); err != nil {
+				log.Printf("Server %s: could not restore the Minecraft version: %v", uuid, err)
+			}
+			s.restoreServerMods(srv.ID, undo)
+			s.store.UpdateServerStatus(srv.ID, "stopped")
+			changed = true
+		}
+		cursor = next
+		if cursor == 0 {
+			return changed
+		}
+	}
+}
+
+// restoreServerMods puts the mod inventory back.
+//
+// Upsert rather than a delete-and-insert: the rows conflict on
+// (server_id, sub_server_name, modrinth_project_id), so writing each remembered
+// mod restores both the ones whose version was rewritten and the ones that were
+// deleted as unavailable. Row ids may differ afterwards, which nothing depends
+// on - the project id is the identity.
+//
+// A mod with no Modrinth project id is skipped: it has no conflict key, so
+// writing it would insert a duplicate on every restore rather than replace one.
+func (s *StatusWatcherService) restoreServerMods(serverID int, undo VersionUpdateUndo) {
+	for _, m := range undo.Mods {
+		if strings.TrimSpace(m.ModrinthProjectID) == "" {
+			continue
+		}
+		row := models.ServerMod{
+			ServerID:            serverID,
+			SubServerName:       undo.SubServerName,
+			ModrinthProjectID:   m.ModrinthProjectID,
+			ModrinthProjectSlug: m.ModrinthProjectSlug,
+			ModrinthVersionID:   m.ModrinthVersionID,
+			Title:               m.Title,
+			FileName:            m.FileName,
+			SHA512:              m.SHA512,
+			TargetDir:           m.TargetDir,
+		}
+		if _, err := s.store.UpsertServerMod(&row); err != nil {
+			log.Printf("Server %d: could not restore mod %s: %v", serverID, m.Title, err)
+		}
+	}
+}

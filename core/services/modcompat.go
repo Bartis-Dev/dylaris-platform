@@ -591,21 +591,7 @@ func availabilityFor(ctx context.Context, cache AvailabilityCache, ids []string,
 		for i, id := range ids {
 			keys[i] = availabilityKey(id, mc, loader)
 		}
-		cached := cache.GetMany(ctx, keys)
-		unknown = unknown[:0]
-		for i, id := range ids {
-			if i < len(cached) {
-				switch cached[i] {
-				case "1":
-					avail[id] = true
-					continue
-				case "0":
-					avail[id] = false
-					continue
-				}
-			}
-			unknown = append(unknown, id)
-		}
+		avail, unknown = splitCachedAvailability(ids, cache.GetMany(ctx, keys))
 	}
 	if len(unknown) == 0 {
 		return avail, nil
@@ -631,6 +617,41 @@ func availabilityFor(ctx context.Context, cache AvailabilityCache, ids []string,
 		cache.SetMany(ctx, fresh, compatCacheTTL)
 	}
 	return avail, nil
+}
+
+// splitCachedAvailability partitions ids into what the cache already answered
+// and what still has to be searched. cached is positional: cached[i] belongs to
+// ids[i], and anything that is neither "1" nor "0" (including a short slice)
+// counts as unknown.
+//
+// Pure, and it MUST NOT touch ids. It used to filter in place with `ids[:0]`,
+// which is the correct idiom when the source is finished with - and ids is not:
+// BuildMatrix reuses the same slice for every target version. Reusing the
+// backing array compacted the uncached ids over the front of the caller's list
+// and left duplicates in the tail, so from the SECOND target version onwards
+// some projects were never queried at all. A project missing from the map reads
+// as false, which renders as "no version for this Minecraft version" - a
+// confident wrong answer about a mod that is perfectly available.
+//
+// It only bit when the cache was PARTIALLY warm, which is the ordinary state as
+// soon as two packs share a mod or one mod is added to a checked build.
+func splitCachedAvailability(ids, cached []string) (map[string]bool, []string) {
+	avail := make(map[string]bool, len(ids))
+	unknown := make([]string, 0, len(ids))
+	for i, id := range ids {
+		if i < len(cached) {
+			switch cached[i] {
+			case "1":
+				avail[id] = true
+				continue
+			case "0":
+				avail[id] = false
+				continue
+			}
+		}
+		unknown = append(unknown, id)
+	}
+	return avail, unknown
 }
 
 func uniqueProjectIDs(items []CompatItem) []string {

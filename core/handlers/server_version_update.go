@@ -354,6 +354,27 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		"loader":  req.InstallerVersion,
 	}
 
+	// An undo record, written BEFORE the optimistic writes below.
+	//
+	// The node stages every jar and verifies it before touching anything, so a
+	// download it cannot complete aborts the whole move with the server still
+	// running its old version - nothing on disk changes. The writes below have
+	// already happened by then, which would leave the DB claiming a Minecraft
+	// version and a set of mod versions that are not on the machine. That is
+	// not cosmetic: minecraft_version is what the next mod install and the next
+	// availability check resolve against, so a wrong one silently installs
+	// incompatible jars.
+	//
+	// So the pre-move state is parked where the node's give-up signal can be
+	// paired with it, and services.StatusWatcher puts it back. One hour is far
+	// longer than any move takes and short enough that a stale record cannot
+	// undo a LATER, successful move.
+	if h.state.Redis != nil {
+		if rec, merr := json.Marshal(buildVersionUpdateUndo(srv, mods)); merr == nil {
+			h.state.Redis.Set(r.Context(), services.VersionUpdateUndoKey(srv.UUID), rec, time.Hour)
+		}
+	}
+
 	// The database is written BEFORE the dispatch, the same ordering reinstall
 	// uses: a node that starts the move and a panel that still shows the old
 	// version would disagree about what is running, and the version is what the
@@ -408,6 +429,31 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		"installed": len(install),
 		"removed":   unavailable,
 	})
+}
+
+// buildVersionUpdateUndo captures everything the optimistic writes are about to
+// overwrite. Only the columns a version move touches: this is a compensating
+// write for one command, not a snapshot of the server.
+func buildVersionUpdateUndo(srv *models.Server, mods []models.ServerMod) services.VersionUpdateUndo {
+	undo := services.VersionUpdateUndo{
+		InstallerType:    srv.InstallerType,
+		MinecraftVersion: srv.MinecraftVersion,
+		BuildNumber:      srv.BuildNumber,
+		SubServerName:    srv.ActiveSubServer,
+		Mods:             make([]services.VersionUpdateUndoMod, 0, len(mods)),
+	}
+	for _, m := range mods {
+		undo.Mods = append(undo.Mods, services.VersionUpdateUndoMod{
+			ModrinthProjectID:   m.ModrinthProjectID,
+			ModrinthProjectSlug: m.ModrinthProjectSlug,
+			ModrinthVersionID:   m.ModrinthVersionID,
+			Title:               m.Title,
+			FileName:            m.FileName,
+			SHA512:              m.SHA512,
+			TargetDir:           m.TargetDir,
+		})
+	}
+	return undo
 }
 
 // serverModTarget is one mod's resolved jar for the target version.
@@ -532,6 +578,26 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
 		return
 	}
+
+	// The node refuses to copy onto an existing directory, which protects the
+	// FILES. It does not protect the mod inventory: the rows below are written
+	// whatever the node decides, so without this check copying onto the name of
+	// an existing sub-server would merge this one's mods into that one's list
+	// while the copy itself never happened - and the response would still say
+	// the copy was queued.
+	//
+	// A node that cannot be reached is a refusal rather than an assumption. The
+	// whole point of the check is that the answer is not knowable from here.
+	entries, lerr := h.listServerDir(srv.NodeID, srv.UUID, "")
+	if lerr != nil {
+		sendJSONError(w, "The node did not answer, so it is not known whether that name is already taken: "+lerr.Error(), http.StatusBadGateway)
+		return
+	}
+	if subServerNameTaken(entries, req.TargetName) {
+		sendJSONError(w, "A sub-server called "+req.TargetName+" already exists. Pick another name.", http.StatusConflict)
+		return
+	}
+
 	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "copy_sub_server", map[string]interface{}{
 		"uuid":            srv.UUID,
 		"sourceSubServer": srv.ActiveSubServer,
@@ -557,6 +623,30 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		"success": true,
 		"message": "Copy queued. It appears as a sub-server once the files are in place.",
 	})
+}
+
+// subServerNameTaken reports whether a server directory already holds an entry
+// by that name.
+//
+// Case-INSENSITIVE, and deliberately stricter than the filesystem underneath:
+// on Linux "Server" and "server" are two directories the node would happily
+// create, and two sub-servers whose names differ only in case is a trap for
+// every screen that lists them. Refusing the near-collision costs an operator
+// one rename; allowing it costs everyone reading the list afterwards.
+//
+// Pure, so the rule can be exercised without a node on the other end - which is
+// the whole reason the check exists: what is on that disk is not knowable here.
+func subServerNameTaken(entries []*pb.FileInfo, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	for _, e := range entries {
+		if e != nil && strings.EqualFold(strings.TrimSpace(e.Name), name) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- node round trips ------------------------------------------------------

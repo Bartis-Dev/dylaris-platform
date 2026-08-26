@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
+	pb "dylaris-proto/node"
 )
 
 func TestUnmanagedJars(t *testing.T) {
@@ -126,5 +127,57 @@ func TestUnmanagedJarsReturnsEmptySliceNotNil(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("got %+v, want empty", got)
+	}
+}
+
+// Copying a sub-server onto a name that is already taken has to be refused HERE,
+// not only on the node.
+//
+// The node does refuse to copy onto an existing directory, so the files are
+// safe. The mod inventory is not: Core writes the copy's mod rows whichever way
+// the node decides, so without this check copying onto an existing sub-server's
+// name merged the source's mods into that sub-server's list while the copy
+// itself never happened - and the response still said the copy was queued.
+func TestSubServerNameTaken(t *testing.T) {
+	dir := []*pb.FileInfo{
+		{Name: "server"},
+		{Name: "server-121"},
+		{Name: ".active_server"},
+		nil, // a node answer with a hole in it must not panic
+	}
+	tests := []struct {
+		name  string
+		want  bool
+		entry string
+	}{
+		{"an unused name is free", false, "server-1204"},
+		{"an existing sub-server is taken", true, "server-121"},
+		{"the active sub-server is taken", true, "server"},
+
+		// Stricter than the filesystem on purpose: Linux would let both exist,
+		// and two sub-servers differing only in case is a trap for every screen
+		// that lists them.
+		{"a name differing only in case is taken", true, "Server-121"},
+		{"and in the other direction too", true, "SERVER"},
+
+		// Whitespace is trimmed on both sides, so a padded name cannot slip
+		// past a comparison the node would then collapse.
+		{"a padded name is still taken", true, "  server-121  "},
+
+		{"an empty name is not a collision", false, ""},
+		{"whitespace only is not a collision", false, "   "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := subServerNameTaken(dir, tt.entry); got != tt.want {
+				t.Errorf("subServerNameTaken(%q) = %v, want %v", tt.entry, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSubServerNameTakenOnAnEmptyDirectory(t *testing.T) {
+	if subServerNameTaken(nil, "server") {
+		t.Error("reported a collision against an empty listing")
 	}
 }

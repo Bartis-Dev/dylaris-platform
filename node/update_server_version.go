@@ -108,10 +108,12 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	modsDir, err := resolveWithinDir(serverPath, filepath.Join(subName, targetDir))
 	if err != nil {
 		log.Printf("update_server_version: %v", err)
+		abandonVersionUpdate(ctx, rdb, pl.UUID, err.Error())
 		return
 	}
 	if err := os.MkdirAll(modsDir, 0o755); err != nil {
 		log.Printf("update_server_version: mkdir %s: %v", modsDir, err)
+		abandonVersionUpdate(ctx, rdb, pl.UUID, "the mods directory could not be created")
 		return
 	}
 
@@ -133,6 +135,10 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	if err != nil {
 		log.Printf("update_server_version: %v; the move is aborted and %s/%s is left exactly as it was",
 			err, pl.UUID, subName)
+		// Core wrote the new version and the new mod rows before dispatching
+		// this. Nothing on disk moved, so those writes now describe a move that
+		// did not happen - tell Core to put them back.
+		abandonVersionUpdate(ctx, rdb, pl.UUID, err.Error())
 		return
 	}
 	defer func() {
@@ -193,6 +199,25 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		return
 	}
 	log.Printf("update_server_version: %s/%s moved and running", pl.UUID, subName)
+}
+
+// abandonVersionUpdate tells Core the move did not happen, so it can undo the
+// database writes it made before dispatching the command.
+//
+// ONLY for the aborts that happen before anything on disk has been touched. Past
+// the commit point the server really has moved, and asking Core to revert then
+// would make the database wrong in the other direction. The TTL outlives several
+// of the status watcher's five-second ticks without lingering long enough to
+// land on a later, successful move.
+func abandonVersionUpdate(ctx context.Context, rdb *redis.Client, serverUUID, reason string) {
+	if rdb == nil {
+		return
+	}
+	if reason == "" {
+		reason = "the node could not carry out the move"
+	}
+	key := fmt.Sprintf("dylaris:server:%s:version_update_failed", serverUUID)
+	rdb.Set(ctx, key, reason, 5*time.Minute)
 }
 
 // stageInstalls fetches and verifies every jar into a ".part" beside its final

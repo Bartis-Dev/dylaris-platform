@@ -326,3 +326,89 @@ func TestBuildMatrixCountsUnlinkedWithoutFailingThem(t *testing.T) {
 		t.Errorf("lines = %v, want none when there is nothing checkable", m.Lines)
 	}
 }
+
+// The partition must not touch the caller's list.
+//
+// BuildMatrix resolves the project ids ONCE and reuses that slice for every
+// target version. The split used to filter in place with `ids[:0]`, which
+// rewrote the caller's backing array: the uncached ids were compacted over the
+// front and the tail was left holding duplicates. From the second target
+// version onwards some projects were therefore never queried, and a project
+// missing from the availability map reads as false - which the row renders as
+// "no version for this Minecraft version" about a mod that is perfectly
+// available.
+//
+// It only appeared when the cache was PARTIALLY warm, which is the ordinary
+// state as soon as two packs share a mod.
+func TestSplitCachedAvailabilityLeavesTheCallersSliceAlone(t *testing.T) {
+	ids := []string{"A", "B", "C", "D"}
+	before := append([]string(nil), ids...)
+
+	// A and C answered from cache, B and D not.
+	avail, unknown := splitCachedAvailability(ids, []string{"1", "", "0", ""})
+
+	for i := range before {
+		if ids[i] != before[i] {
+			t.Fatalf("ids was rewritten: %v, want %v — the next target version would query the wrong projects", ids, before)
+		}
+	}
+	if len(unknown) != 2 || unknown[0] != "B" || unknown[1] != "D" {
+		t.Errorf("unknown = %v, want [B D]", unknown)
+	}
+	if !avail["A"] {
+		t.Error("A was cached as available and did not come back available")
+	}
+	if v, ok := avail["C"]; !ok || v {
+		t.Error("C was cached as unavailable and did not come back that way")
+	}
+	if _, ok := avail["B"]; ok {
+		t.Error("B has no cached answer and must not appear in the map at all")
+	}
+}
+
+// The regression in the terms it actually appeared in: run the split twice over
+// the SAME slice, the way BuildMatrix does for two target versions, and the
+// second run has to see the same projects as the first.
+func TestSplitCachedAvailabilityIsStableAcrossTargetVersions(t *testing.T) {
+	ids := []string{"A", "B", "C", "D"}
+
+	// First target version: A and C are already known.
+	_, first := splitCachedAvailability(ids, []string{"1", "", "1", ""})
+	if len(first) != 2 {
+		t.Fatalf("first pass unknown = %v", first)
+	}
+
+	// Second target version, nothing cached for it yet: every project must be
+	// asked about, including the two the first pass answered from cache.
+	_, second := splitCachedAvailability(ids, nil)
+	if len(second) != 4 {
+		t.Fatalf("second pass asked about %d of 4 projects (%v): the first pass corrupted the list", len(second), second)
+	}
+	seen := map[string]bool{}
+	for _, id := range second {
+		if seen[id] {
+			t.Fatalf("second pass has a duplicate (%v)", second)
+		}
+		seen[id] = true
+	}
+	for _, want := range []string{"A", "B", "C", "D"} {
+		if !seen[want] {
+			t.Errorf("project %q was dropped from the second pass, so it would report as unavailable", want)
+		}
+	}
+}
+
+// A short cached slice must not index out of range, and must count as unknown
+// rather than as a negative answer. GetMany promises alignment, but "the cache
+// returned fewer answers than keys" is exactly the shape that turns into a
+// wrong claim rather than a crash.
+func TestSplitCachedAvailabilityTreatsAShortCacheAnswerAsUnknown(t *testing.T) {
+	ids := []string{"A", "B", "C"}
+	avail, unknown := splitCachedAvailability(ids, []string{"1"})
+	if len(unknown) != 2 || unknown[0] != "B" || unknown[1] != "C" {
+		t.Errorf("unknown = %v, want [B C]", unknown)
+	}
+	if len(avail) != 1 || !avail["A"] {
+		t.Errorf("avail = %v, want only A available", avail)
+	}
+}

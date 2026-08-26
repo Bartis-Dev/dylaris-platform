@@ -260,3 +260,7 @@
 {"date":"2026-08-26","service":"core","type":"fix","summary":"Administrators no longer need a subscription of their own to add a node or a protected address on their own platform."}
 {"date":"2026-08-26","service":"core","type":"fix","summary":"A separate cache Redis that is unreachable at startup no longer silently falls back to the panel Redis, and the settings page now says it is not answering instead of showing a healthy tick."}
 {"date":"2026-08-26","service":"node","type":"fix","summary":"Moving a server to another Minecraft version now downloads every mod before removing anything, so a failed download leaves the server untouched instead of starting it without that mod."}
+{"date":"2026-08-26","service":"core","type":"fix","summary":"The cross-version mod check reported some mods as unavailable on every version after the first once part of the answer was already cached; it now checks every mod on every version."}
+{"date":"2026-08-26","service":"core","type":"fix","summary":"A Minecraft version move the node could not carry out now puts the server's recorded version and mod list back, instead of leaving them describing a move that never happened."}
+{"date":"2026-08-26","service":"core","type":"fix","summary":"Copying a sub-server onto a name that already exists is refused instead of merging the copy's mod list into the existing one."}
+{"date":"2026-08-26","service":"panel","type":"fix","summary":"Migrating a modpack build now says which mods could not be added to the new build, instead of reporting a plain success."}

@@ -95,6 +95,12 @@ func (s *StatusWatcherService) scan() {
 		dirty = true
 	}
 
+	// The same idea for a version move the node refused to make: put back the
+	// columns Core wrote optimistically before dispatching it.
+	if s.consumeVersionUpdateFailures(ctx) {
+		dirty = true
+	}
+
 	// Publish the durable per-server state keys the node reconciler and the
 	// gateway edge read (desired_state + live_status).
 	s.publishServerStateKeys(ctx)

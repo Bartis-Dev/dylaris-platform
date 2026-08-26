@@ -10,6 +10,38 @@ import { migrateBuild, type CompatVersion } from '@/lib/api/modcompat';
 import type { BuildContentEntry } from '@/lib/api/packs';
 
 /**
+ * What to tell someone after a migration returned 200.
+ *
+ * `failed` is NOT the list the matrix showed. Those mods were CHOSEN: the button
+ * named them and the dialog confirmed dropping them. `failed` is content that
+ * was supposed to travel and did not - a download that would not complete, a
+ * storage write that was refused - and the build now exists without it.
+ *
+ * Reporting that as "Build created" and navigating away is how someone finds out
+ * weeks later, from a mod that is simply not there. Exported for its own test:
+ * the whole risk is a success message that is not one.
+ */
+export function migrationOutcome(
+    versionString: string,
+    minecraft: string,
+    failed: { title: string }[] | undefined,
+): { message: string; ok: boolean } {
+    const lost = failed ?? [];
+    if (lost.length === 0) {
+        return { message: `Build ${versionString} created for Minecraft ${minecraft}.`, ok: true };
+    }
+    const names = lost.slice(0, 3).map(f => f.title).join(', ');
+    const rest = lost.length > 3 ? ` and ${lost.length - 3} more` : '';
+    return {
+        message:
+            `Build ${versionString} was created, but ${lost.length} ` +
+            `${lost.length === 1 ? 'mod' : 'mods'} could not be added to it: ${names}${rest}. ` +
+            `Add them by hand on the new build.`,
+        ok: false,
+    };
+}
+
+/**
  * "Could this build move to a newer Minecraft version, and what would it cost."
  *
  * A migration always produces a NEW build. The source is never rewritten: a
@@ -141,7 +173,17 @@ function MigrateDialog({
             setError(res.message || 'Creating the build failed.');
             return;
         }
-        showToast(`Build ${res.build.versionString} created for Minecraft ${target.minecraft}.`);
+
+        // `failed` is NOT the same list as the mods the matrix said were
+        // missing. Those were chosen: the button named them and this dialog
+        // confirmed dropping them. `failed` is content that was supposed to
+        // travel and did not - a download that would not complete, a storage
+        // write that was refused - and the build exists without it.
+        //
+        // Reporting that as "Build created" and navigating away is how someone
+        // finds out weeks later, by a mod that is simply not there.
+        const outcome = migrationOutcome(res.build.versionString, target.minecraft, res.failed);
+        showToast(outcome.message, outcome.ok);
         onClose();
         router.push(`/modpacks/${packId}/builds/${res.build.id}`);
     };
