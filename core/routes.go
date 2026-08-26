@@ -46,6 +46,8 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/install-cooldown":            "overview.read",
 	"/api/servers/{id:[0-9]+}/setup":                       "server.settings.write",
 	"/api/servers/{id:[0-9]+}/reinstall":                   "server.settings.write",
+	"/api/servers/{id:[0-9]+}/version-update":              "server.settings.write",
+	"/api/servers/{id:[0-9]+}/copy-sub-server":             "server.settings.write",
 	"/api/servers/{id:[0-9]+}/switch":                      "server.settings.write",
 	"/api/servers/{id:[0-9]+}/name":                        "server.settings.write",
 	"/api/servers/{id:[0-9]+}/resources":                   "server.settings.write",
@@ -88,6 +90,9 @@ var requiredCaps = map[string]string{
 	// PATCH+DELETE /tabs/{tabId} share -> tabs.write.
 	"/api/servers/{id:[0-9]+}/mods":                           "mods.read",
 	"/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}":            "mods.delete",
+	"/api/servers/{id:[0-9]+}/mods/compat":                    "mods.read",
+	"/api/servers/{id:[0-9]+}/mods/unmanaged":                 "mods.read",
+	"/api/servers/{id:[0-9]+}/mods/identify":                  "mods.write",
 	"/api/servers/{id:[0-9]+}/modpack-contents":               "mods.read",
 	"/api/servers/{id:[0-9]+}/tabs":                           "tabs.read",
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}":            "tabs.write",
@@ -410,6 +415,8 @@ var requiredCaps = map[string]string{
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export":                                         "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader":                                         "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth": "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat":                                         "modpack.read",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate":                                        "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods":                                    "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder":                                 "modpack.write",
 	"/api/packs/{id:[0-9]+}/solder-config":                                                          "modpack.write",
@@ -786,10 +793,21 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/modrinth/project/{slug}/versions", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.ProjectVersions))).Methods("GET")
 	api.HandleFunc("/modrinth/version/{id}", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Version))).Methods("GET")
 	api.HandleFunc("/modrinth/categories", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Categories))).Methods("GET")
+	api.HandleFunc("/modrinth/game-versions", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.GameVersions))).Methods("GET")
 	// Per-server installed mods + install/uninstall dispatch.
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.List))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.Install))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.delete")(serverModsHandler.Uninstall))).Methods("DELETE")
+	// Cross-Minecraft-version availability + the move itself. These literals
+	// cannot be swallowed by the /mods/{modId} pattern above: that one is
+	// numeric-constrained.
+	api.HandleFunc("/servers/{id:[0-9]+}/mods/compat", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.ServerCompat))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods/unmanaged", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.UnmanagedMods))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods/identify", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.IdentifyMods))).Methods("POST")
+	// A version move and a sub-server copy both rewrite what the server IS, so
+	// they take the same capability as reinstall rather than a mods one.
+	api.HandleFunc("/servers/{id:[0-9]+}/version-update", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverModsHandler.VersionUpdate))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/copy-sub-server", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverModsHandler.CopySubServer))).Methods("POST")
 	// Read-only modpack snapshot backing the Content-tab cross-check.
 	api.HandleFunc("/servers/{id:[0-9]+}/modpack-contents", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.ModpackContents))).Methods("GET")
 
@@ -864,6 +882,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.GetBuildLoader)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ReplaceWithModrinth))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateMods))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.BuildCompat)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.MigrateBuild))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishSolder))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/solder-config", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSolderConfig))))).Methods("PATCH")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireShareLinksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateShareLink)))))).Methods("POST")

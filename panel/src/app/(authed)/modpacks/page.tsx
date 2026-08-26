@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import { listPacks, createPack, deletePack, type Pack } from '@/lib/api/packs';
+import UnlinkedContentWarning from '@/components/mods/UnlinkedContentWarning';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
 import ImportSolderDialog from '@/components/modpacks/ImportSolderDialog';
@@ -210,6 +211,11 @@ export default function PacksListPage() {
                             <button onClick={() => setCreating(null)} className="text-(--base-06)"><X size={16} /></button>
                         </div>
                         <div className="modal-body space-y-4">
+                            {/* Said here, before a pack exists, because it is the
+                                one rule that decides what a pack can do LATER: a
+                                file uploaded by hand can never be version-checked
+                                or carried to a newer Minecraft version. */}
+                            <UnlinkedContentWarning context="pack" />
                             <div>
                                 <label className="input-label">Internal name</label>
                                 <input

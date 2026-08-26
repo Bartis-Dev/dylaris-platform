@@ -1,11 +1,12 @@
 import React from 'react';
 
-export type BadgeVariant = 'neutral' | 'success' | 'warning' | 'accent';
+export type BadgeVariant = 'neutral' | 'success' | 'warning' | 'error' | 'accent';
 
 const variantClasses: Record<BadgeVariant, string> = {
     neutral: 'bg-(--base-03) text-(--base-06)',
     success: 'bg-(--success-ghost) text-(--success-light)',
     warning: 'bg-(--warning-ghost) text-(--warning-light)',
+    error: 'bg-(--error-ghost) text-(--error-light)',
     accent: 'bg-(--accent-ghost) text-(--accent-light)',
 };
 

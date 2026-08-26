@@ -140,8 +140,10 @@ func (v *modrinthVersion) PrimaryFile() ModrinthFile {
 	return ModrinthFile{Hashes: map[string]string{}}
 }
 
-// latestProjectVersion picks the newest version of a project compatible with mc+loader.
-func latestProjectVersion(projectID, mc, loader string) (*modrinthVersion, error) {
+// LatestProjectVersionFor picks the newest version of a project compatible with
+// mc+loader. Exported for the migration path, which needs a fallback for
+// content whose stored hash Modrinth cannot place.
+func LatestProjectVersionFor(projectID, mc, loader string) (*modrinthVersion, error) {
 	q := url.Values{}
 	if loader != "" {
 		q.Set("loaders", fmt.Sprintf("[%q]", loader))
@@ -189,7 +191,7 @@ func ResolveModrinthDependencies(root *modrinthVersion, mc, loader string, alrea
 			if d.VersionID != "" {
 				dv, err = FetchModrinthVersion(d.VersionID)
 			} else {
-				dv, err = latestProjectVersion(d.ProjectID, mc, loader)
+				dv, err = LatestProjectVersionFor(d.ProjectID, mc, loader)
 			}
 			if err != nil || dv == nil {
 				continue // skip unresolvable deps rather than fail the whole add

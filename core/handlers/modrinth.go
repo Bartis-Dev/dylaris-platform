@@ -211,6 +211,15 @@ func (h *ModrinthHandler) Version(w http.ResponseWriter, r *http.Request) {
 	h.proxyJSON(r.Context(), modrinthProjectTTL, upstream, w)
 }
 
+// GameVersions GET /api/modrinth/game-versions - Modrinth's Minecraft version
+// tag list, newest first. The panel needs it to offer a specific migration
+// target; the ORDER is the reason it comes from here rather than being sorted
+// client-side, since a comparator would have to rank 1.21.11 above 1.21.2 and
+// 26.2 above both. Cached for a day like the other tag lists.
+func (h *ModrinthHandler) GameVersions(w http.ResponseWriter, r *http.Request) {
+	h.proxyJSON(r.Context(), modrinthCategoryTTL, modrinthBaseURL+"/tag/game_version", w)
+}
+
 // Categories GET /api/modrinth/categories — the Modrinth category tag list
 // (each entry: name, project_type, header, icon SVG). Very stable, so it is
 // cached for a day; the panel uses it to build the always-visible category

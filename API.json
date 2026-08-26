@@ -2241,6 +2241,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/modrinth/game-versions",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "Modrinth's Minecraft version tag list, newest first.",
+      "handler": "ModrinthHandler.GameVersions",
+      "group": "modrinth",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/modrinth/project/{slug}",
       "auth": "session",
       "authorization": "no capability",
@@ -2621,6 +2631,15 @@
     },
     {
       "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "handler": "PacksHandler.BuildCompat",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content",
       "auth": "session",
       "authorization": "modpack.read",
@@ -2716,6 +2735,15 @@
       "authorization": "modpack.read",
       "description": "returns the cached loader row for a build's (minecraft, loader, loader_version) triple, so the panel / hand-test can see build status + md5.",
       "handler": "PacksHandler.GetBuildLoader",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "handler": "PacksHandler.MigrateBuild",
       "group": "packs",
       "external": false
     },
@@ -3050,6 +3078,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/copy-sub-server",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "Duplicates the active sub-server so a version move can be tried on the copy while the original stays as it is.",
+      "handler": "ServerModsHandler.CopySubServer",
+      "group": "servers",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/servers/{id:[0-9]+}/edge-motd",
       "auth": "session",
@@ -3186,6 +3224,35 @@
       "authorization": "mods.write",
       "description": "queues a mod install onto the active sub-server.",
       "handler": "ServerModsHandler.Install",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/mods/compat",
+      "auth": "session",
+      "authorization": "mods.read",
+      "handler": "ServerModsHandler.ServerCompat",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/mods/identify",
+      "auth": "session",
+      "authorization": "mods.write",
+      "description": "Asks the node to hash the named files and looks each hash up on Modrinth.",
+      "handler": "ServerModsHandler.IdentifyMods",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/mods/unmanaged",
+      "auth": "session",
+      "authorization": "mods.read",
+      "description": "A jar placed by hand (SFTP, beam, the file manager) has no row saying which Modrinth project it is, so a version move cannot carry it and cannot even tell whether it would survive.",
+      "handler": "ServerModsHandler.UnmanagedMods",
       "group": "servers",
       "external": false
     },
@@ -3606,6 +3673,15 @@
       "authorization": "server.settings.write",
       "description": "(tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on.",
       "handler": "ServerHandler.TransferServer",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/version-update",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "handler": "ServerModsHandler.VersionUpdate",
       "group": "servers",
       "external": false
     },
@@ -4691,10 +4767,10 @@
     }
   ],
   "counts": {
-    "total": 469,
+    "total": 477,
     "byAuth": {
       "none": 36,
-      "session": 420,
+      "session": 428,
       "user API key": 10,
       "warp key": 3
     },
@@ -4717,16 +4793,16 @@
       "library": 6,
       "maintenance": 1,
       "me": 19,
-      "modrinth": 5,
+      "modrinth": 6,
       "modules": 6,
       "nodes": 17,
       "notifications": 4,
-      "packs": 27,
+      "packs": 29,
       "placement": 3,
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 70,
+      "servers": 75,
       "settings": 28,
       "setup": 2,
       "share": 1,

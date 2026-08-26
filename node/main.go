@@ -1818,6 +1818,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "remove_mod":
 		runRemoveMod(storage, payload)
 
+	case "update_server_version":
+		runUpdateServerVersion(ctx, rdb, dm, storage, cmd, payload)
+	case "copy_sub_server":
+		runCopySubServer(ctx, rdb, storage, payload)
+
 	default:
 		log.Printf("Unknown action: %s", cmd.Action)
 	}

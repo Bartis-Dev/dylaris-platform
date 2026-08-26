@@ -135,10 +135,10 @@ can still show what exists.
 
 ## At a glance
 
-- **468 routes** in 49 sections: 208 GET, 136 POST, 35 PUT, 34 PATCH, 52 DELETE, 4 (any).
+- **476 routes** in 49 sections: 212 GET, 140 POST, 35 PUT, 34 PATCH, 52 DELETE, 4 (any).
 - **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **316** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **89** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **1** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **323** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **5** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -159,16 +159,16 @@ can still show what exists.
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
 - [/api/me](#apime) (19)
-- [/api/modrinth](#apimodrinth) (5)
+- [/api/modrinth](#apimodrinth) (6)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (17)
 - [/api/notifications](#apinotifications) (4)
-- [/api/packs](#apipacks) (27)
+- [/api/packs](#apipacks) (29)
 - [/api/placement](#apiplacement) (3)
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (70)
+- [/api/servers](#apiservers) (75)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -503,6 +503,7 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/modrinth/categories` | session | _no capability_ | Limit | `ModrinthHandler.Categories` | the Modrinth category tag list (each entry: name, project_type, header, icon SVG). |
+| GET | `/api/modrinth/game-versions` | session | _no capability_ | Limit | `ModrinthHandler.GameVersions` | Modrinth's Minecraft version tag list, newest first. |
 | GET | `/api/modrinth/project/{slug}` | session | _no capability_ | Limit | `ModrinthHandler.Project` | full project metadata. |
 | GET | `/api/modrinth/project/{slug}/versions` | session | _no capability_ | Limit | `ModrinthHandler.ProjectVersions` | a cached proxy to Modrinth's version list. |
 | GET | `/api/modrinth/search` | session | _no capability_ | Limit | `ModrinthHandler.Search` | Query params (Modrinth-compatible): query, limit, offset, facets (JSON array of arrays), loaders (comma list), versions (comma list), categories (comma list), project_type. |
@@ -561,6 +562,7 @@ can still show what exists.
 | POST | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateBuild` | adds a build. |
 | PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateBuild` | edits a build. |
 | DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.DeleteBuild` | deletes a build that belongs to the pack in the path. |
+| GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.BuildCompat` | - |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListContent` | the mods and files in one build. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.AddModrinth` | adds a Modrinth version to a build and, on request, its dependencies. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UploadContent` | uploads a file into a build. |
@@ -571,6 +573,7 @@ can still show what exists.
 | PUT | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetContentText` | overwrites a stored text content entry with edited bytes, re-wrapping into the Solder zip at the same key and re-hashing. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ExportMrpack` | streams the .mrpack for a build (self-distributed download). |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.GetBuildLoader` | returns the cached loader row for a build's (minecraft, loader, loader_version) triple, so the panel / hand-test can see build status + md5. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.MigrateBuild` | - |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.PublishModrinth` | publishes a build to Modrinth under the caller's own personal access token. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.PublishSolder` | renders + publishes a build to the public Solder API. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateShareLink` | mints a share token for one build, so it can be downloaded without a session. |
@@ -629,6 +632,7 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/console/command` | session | `console.send` | - | `ConsoleHandler.SendCommand` | pushes one line onto the server's Redis input queue. |
 | GET | `/api/servers/{id:[0-9]+}/console/history` | session | `console.read` | - | `ConsoleHandler.GetHistory` | Returns the last 1000 log lines from the Redis Stream for this server. |
 | GET | `/api/servers/{id:[0-9]+}/console/stream` | session | `console.read` | - | `ConsoleHandler.StreamConsole` | Streams live server logs via SSE (Server-Sent Events). |
+| POST | `/api/servers/{id:[0-9]+}/copy-sub-server` | session | `server.settings.write` | - | `ServerModsHandler.CopySubServer` | Duplicates the active sub-server so a version move can be tried on the copy while the original stays as it is. |
 | GET | `/api/servers/{id:[0-9]+}/edge-motd` | session | `overview.read` | - | `ServerHandler.GetServerEdgeMotd` | Returns the per-server edge transitional-MOTD config (mode + custom text). |
 | PATCH | `/api/servers/{id:[0-9]+}/edge-motd` | session | `server.settings.write` | - | `ServerHandler.SetServerEdgeMotd` | Updates the per-server edge transitional-MOTD mode/text and publishes it to Redis so the gateway edge picks it up (auto/custom/off; see the edge's handleSpliceServerStatus). |
 | GET | `/api/servers/{id:[0-9]+}/install-cooldown` | session | `overview.read` | - | `ServerHandler.GetInstallCooldown` | returns how many seconds remain on the post-install cooldown for a server, so the UI can disable power actions and show a countdown instead of letting the user click and get a 429. |
@@ -643,6 +647,9 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/modpack-contents` | session | `mods.read` | - | `ServerModsHandler.ModpackContents` | returns the modpack snapshot for the active sub-server: the Modrinth-identified members of the pack this server was installed from. |
 | GET | `/api/servers/{id:[0-9]+}/mods` | session | `mods.read` | - | `ServerModsHandler.List` | the mods installed on the server's ACTIVE sub-server, not on every sub-server it has. |
 | POST | `/api/servers/{id:[0-9]+}/mods` | session | `mods.write` | - | `ServerModsHandler.Install` | queues a mod install onto the active sub-server. |
+| GET | `/api/servers/{id:[0-9]+}/mods/compat` | session | `mods.read` | - | `ServerModsHandler.ServerCompat` | - |
+| POST | `/api/servers/{id:[0-9]+}/mods/identify` | session | `mods.write` | - | `ServerModsHandler.IdentifyMods` | Asks the node to hash the named files and looks each hash up on Modrinth. |
+| GET | `/api/servers/{id:[0-9]+}/mods/unmanaged` | session | `mods.read` | - | `ServerModsHandler.UnmanagedMods` | A jar placed by hand (SFTP, beam, the file manager) has no row saying which Modrinth project it is, so a version move cannot carry it and cannot even tell whether it would survive. |
 | DELETE | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}` | session | `mods.delete` | - | `ServerModsHandler.Uninstall` | queues removal of one mod from the active sub-server. |
 | PATCH | `/api/servers/{id:[0-9]+}/name` | session | `server.settings.write` | - | `ServerHandler.UpdateServerName` | renames a server and records the old and new name in its audit trail. |
 | POST | `/api/servers/{id:[0-9]+}/players/action` | session | `players.manage` | - | `PlayersHandler.Action` | one of a fixed set of player commands. |
@@ -685,6 +692,7 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RotateShareLink` | (re)generate the unguessable slug for a proxied page tab. |
 | DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RevokeShareLink` | null the slug so the standalone page 404s. |
 | POST | `/api/servers/{id:[0-9]+}/transfer` | session | `server.settings.write` | RequireGatewayEnabled | `ServerHandler.TransferServer` | (tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on. |
+| POST | `/api/servers/{id:[0-9]+}/version-update` | session | `server.settings.write` | - | `ServerModsHandler.VersionUpdate` | - |
 
 ## /api/settings
 

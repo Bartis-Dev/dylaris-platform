@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { useParams } from 'next/navigation';
-import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info } from 'lucide-react';
+import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppData } from '@/lib/AppDataContext';
@@ -18,6 +18,7 @@ import {
 } from '@/lib/api/modrinth';
 import { pickNewestMatchingVersion, compareInstalledVsLatest, type ModStatus } from '@/lib/modVersionCompare';
 import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
+import ServerVersionPanel from '@/components/mods/ServerVersionPanel';
 import { isMcVersion } from '@/lib/validation';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { declareServerLoaderMetadata } from '@/lib/api';
@@ -29,7 +30,7 @@ import { toast } from '@/components/ui/Toast';
 // right (description with a short/full switch, plus the version list with the
 // newest build for this server's MC version highlighted).
 
-type Section = 'browse' | 'installed';
+type Section = 'browse' | 'installed' | 'version';
 // Row status shown in the browse list: 'checking' is a UI-only state (the
 // matching-version fetch for an installed row is still in flight) layered on
 // top of the pure ModStatus from lib/modVersionCompare.
@@ -471,6 +472,7 @@ export default function ServerContentPage() {
                 {([
                     { id: 'browse' as const, label: 'Browse', Icon: Search },
                     { id: 'installed' as const, label: `Installed (${installed.length})`, Icon: Box },
+                    { id: 'version' as const, label: 'Minecraft version', Icon: ArrowUpRight },
                 ]).map(({ id, label, Icon }) => (
                     <button
                         key={id}
@@ -844,6 +846,14 @@ export default function ServerContentPage() {
                         </aside>
                     )}
                 </div>
+            )}
+
+            {section === 'version' && server && (
+                <ServerVersionPanel
+                    server={server}
+                    onChanged={refreshInstalled}
+                    showToast={showToast}
+                />
             )}
 
             {section === 'installed' && (

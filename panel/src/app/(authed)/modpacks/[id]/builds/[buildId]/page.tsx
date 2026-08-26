@@ -14,6 +14,7 @@ import {
     uploadContent, getPack, modrinthTypeToContentType, type Pack, type PackBuild, type BuildContentEntry,
 } from '@/lib/api/packs';
 import { publishModrinth, replaceWithModrinth, updateMods, mrpackDownloadUrl } from '@/lib/api/packsPublish';
+import BuildMigrationPanel from '@/components/mods/BuildMigrationPanel';
 import { publishSolder } from '@/lib/api/solderPublish';
 import { createShareLink, listShareLinks, revokeShareLink, publicShareUrl, type ShareLink, type ShareLinkKind } from '@/lib/api/packsShare';
 import { getAuthHeader } from '@/lib/api/core';
@@ -710,6 +711,17 @@ export default function BuildContentEditorPage() {
                     </div>
                 </div>
             </header>
+
+            {build.minecraft && build.loader && (
+                <BuildMigrationPanel
+                    packId={packId}
+                    build={build}
+                    content={content}
+                    disabled={modpacksDisabled}
+                    disabledReason="Modpack authoring is disabled"
+                    showToast={showToast}
+                />
+            )}
 
             {(featureFlags.shareLinks || shareLinks.length > 0) && (
                 <section className="card p-4 mx-6 mb-4 max-w-6xl">

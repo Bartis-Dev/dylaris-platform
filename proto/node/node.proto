@@ -82,6 +82,13 @@ message NodeMessage {
     WsFrame           ws_frame             = 115;
     WsClose           ws_close             = 116;
 
+    // File hashing (WS: version migration). Core->Node request naming files in
+    // one directory, Node->Core response with sha1+sha512 per file. Used to
+    // identify jars that were placed by hand (SFTP/beam) and therefore have no
+    // database row saying which Modrinth project they are.
+    HashFilesReq      hash_files_req      = 117;
+    HashFilesResp     hash_files_resp     = 118;
+
     // Generic result / error
     OpResult          result        = 90;
     OpError           error         = 91;
@@ -150,6 +157,25 @@ message FileInfo {
   string name = 1;
   bool is_dir = 2;
   int64 size = 3;
+}
+
+// Hash named files inside one directory of a server. Names are plain file
+// names, never paths: the node rejects anything else rather than resolving it.
+message HashFilesReq {
+  string path = 1;             // directory relative to the sub-server root, e.g. "mods"
+  repeated string names = 2;   // plain file names inside that directory
+}
+
+message FileHash {
+  string name   = 1;
+  string sha1   = 2;
+  string sha512 = 3;
+  int64  size   = 4;
+  string error  = 5;   // set when this one file could not be hashed
+}
+
+message HashFilesResp {
+  repeated FileHash files = 1;
 }
 
 message ReadFileReq {
