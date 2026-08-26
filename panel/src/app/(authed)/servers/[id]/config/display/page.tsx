@@ -9,6 +9,7 @@ import { uploadFiles } from '@/lib/api/files';
 import { API_URL, getAuthHeader } from '@/lib/api/core';
 import { parseProperties, serializeProperties } from '@/lib/properties-codec';
 import { toast } from '@/components/ui/Toast';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import {
     parseMotd, motdVisibleLengths, insertMotdCode,
     MOTD_COLORS, MOTD_STYLES, MOTD_MAX_LINES, MOTD_SOFT_LINE_LIMIT,
@@ -153,6 +154,23 @@ export default function ServerConfigDisplayPage() {
         }
         setSavingMotd(false);
     }, [propertiesPath, serverUuid, propertiesText, motd, showToast]);
+
+    // Two Revert/Save pairs used to sit on this one page. They are separate
+    // registrations rather than one, because they write different things by
+    // different routes - the MOTD is a line in server.properties, the edge MOTD
+    // is a gateway setting - and the bar saves whatever is dirty, in order.
+    useUnsavedChanges({
+        dirty: motdDirty,
+        saving: savingMotd,
+        save: handleSaveMotd,
+        discard: () => setMotd(motdInitial),
+    });
+    useUnsavedChanges({
+        dirty: edgeMotdDirty,
+        saving: savingEdgeMotd,
+        save: handleSaveEdgeMotd,
+        discard: () => { setEdgeMotdMode(edgeMotdInitial.mode); setEdgeMotdText(edgeMotdInitial.text); },
+    });
 
     const handleIconUpload = useCallback(async (file: File) => {
         if (!activeSubServer || !serverUuid) return;
@@ -335,27 +353,6 @@ export default function ServerConfigDisplayPage() {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2 justify-end">
-                    {motdDirty && (
-                        <button
-                            type="button"
-                            onClick={() => setMotd(motdInitial)}
-                            className="btn btn-secondary btn-sm"
-                            disabled={savingMotd}
-                        >
-                            <RotateCcw size={13} />
-                            Revert
-                        </button>
-                    )}
-                    <button
-                        type="button"
-                        onClick={handleSaveMotd}
-                        className="btn btn-primary btn-sm"
-                        disabled={!motdDirty || savingMotd}
-                    >
-                        {savingMotd ? 'Saving…' : 'Save MOTD'}
-                    </button>
-                </div>
             </section>
 
             {/* Server Icon */}
@@ -471,27 +468,6 @@ export default function ServerConfigDisplayPage() {
                     </div>
                 )}
 
-                <div className="flex items-center gap-2 justify-end">
-                    {edgeMotdDirty && (
-                        <button
-                            type="button"
-                            onClick={() => { setEdgeMotdMode(edgeMotdInitial.mode); setEdgeMotdText(edgeMotdInitial.text); }}
-                            className="btn btn-secondary btn-sm"
-                            disabled={savingEdgeMotd}
-                        >
-                            <RotateCcw size={13} />
-                            Revert
-                        </button>
-                    )}
-                    <button
-                        type="button"
-                        onClick={handleSaveEdgeMotd}
-                        className="btn btn-primary btn-sm"
-                        disabled={!edgeMotdDirty || savingEdgeMotd}
-                    >
-                        {savingEdgeMotd ? 'Saving...' : 'Save Edge MOTD'}
-                    </button>
-                </div>
             </section>
             )}
 

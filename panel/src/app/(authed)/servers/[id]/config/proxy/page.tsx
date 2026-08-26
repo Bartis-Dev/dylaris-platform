@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState, lazy, Suspense } from 'react';
 import { useParams } from 'next/navigation';
-import { Save, AlertTriangle, Network, Copy, Info } from 'lucide-react';
+import { AlertTriangle, Network, Copy, Info } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getFileContent, saveFile } from '@/lib/api';
 import { proxyConfigFilename, backendAddress, proxyPrereqHint } from '@/lib/proxyConfig';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 // Proxy Config tab: a raw text editor for the proxy's own config file
 // (config.yml for BungeeCord/Waterfall, velocity.toml for Velocity) plus a
@@ -92,6 +93,16 @@ export default function ServerConfigProxyPage() {
         setSaving(false);
     }, [serverUuid, filePath, text, filename, showToast]);
 
+    // Editing a raw config file is the same kind of change as everything else
+    // in the panel now: the bar at the bottom commits it, and leaving the page
+    // with an unsaved edit prompts rather than dropping it.
+    useUnsavedChanges({
+        dirty: dirty && !notFound,
+        saving,
+        save,
+        discard: () => { void reload(); },
+    });
+
     const copy = (key: string, val: string) => {
         navigator.clipboard.writeText(val);
         setCopiedKey(key);
@@ -113,13 +124,6 @@ export default function ServerConfigProxyPage() {
                         </span>
                         {dirty && <span className="mono-label text-(--warning-light) shrink-0">unsaved</span>}
                     </div>
-                    <button
-                        onClick={save}
-                        disabled={saving || !dirty || notFound}
-                        className="btn btn-primary btn-sm shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                        <Save size={14} /> {saving ? 'Saving…' : 'Save'}
-                    </button>
                 </div>
 
                 {loading ? (

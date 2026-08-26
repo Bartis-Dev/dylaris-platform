@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Terminal, Copy, RefreshCw, EyeOff, Save, AlertTriangle, Play, RotateCcw } from 'lucide-react';
+import { Terminal, Copy, RefreshCw, EyeOff, AlertTriangle, Play, RotateCcw } from 'lucide-react';
 import { getRconConfig, setRconConfig, execRcon, friendlyRconError } from '@/lib/api/rcon';
 import { serverPower } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 
 // RCON enable/password card. Lives as the RCON sub-section of the Players
 // tab. Generates a 24-byte hex password on first enable, supports manual
@@ -99,6 +100,16 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
             onEnabledChange?.(res.enabled);
         }
     }, [serverId, enabled, port, showToast, onEnabledChange]);
+
+    // The port and the enable switch go through the shared bar, like every
+    // other form in the panel. The regenerate button below is an ACTION and
+    // stays immediate: it mints a new password and shows it once.
+    useUnsavedChanges({
+        dirty,
+        saving,
+        save: () => handleSave(),
+        discard: () => { void refresh(); },
+    });
 
     // Saved immediately on toggle rather than through the Save button: it takes
     // effect within seconds and has no restart to wait for, so queueing it behind
@@ -280,14 +291,10 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
                 </button>
             </div>
 
-            <div className="flex items-center justify-between border-t border-(--base-03) pt-3">
+            <div className="border-t border-(--base-03) pt-3">
                 <p className="text-xs text-(--base-06)">
                     Requires a server restart to take effect.
                 </p>
-                <button onClick={() => handleSave()} className="btn btn-primary btn-sm" disabled={!dirty || saving}>
-                    <Save size={12} />
-                    Save
-                </button>
             </div>
 
             {needsRestart && (
