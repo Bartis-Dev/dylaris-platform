@@ -13,8 +13,8 @@ import {
 import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network, KeyRound, Database } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skeleton';
 import Spinner from '@/components/Spinner';
-import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
-import Tabs from '@/components/ui/Tabs';
+import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import GuardedTabs from '@/components/settings/GuardedTabs';
 import { useTabParam } from '@/lib/useTabParam';
 import { toast } from '@/components/ui/Toast';
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
@@ -1533,48 +1533,18 @@ function HubAdminPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =
 export default function GatewayTab() {
     const [subTab, setSubTab] = useTabParam<SubTab>(GATEWAY_TABS, 'gateway');
 
-    // Sub-tab switch guard — the active panel registers its unsaved state with
-    // the shared bar; we intercept sub-nav clicks when it's dirty.
-    const registration = useUnsavedChangesState();
-    const [pendingSubTab, setPendingSubTab] = useState<SubTab | null>(null);
-    const [dialogSaving, setDialogSaving] = useState(false);
 
     const showToast = toast;
 
-    const requestSubTab = (id: SubTab) => {
-        if (id === subTab) return;
-        if (registration?.dirty) {
-            setPendingSubTab(id);
-        } else {
-            setSubTab(id);
-        }
-    };
 
-    const handleDialogSave = async () => {
-        if (!registration || pendingSubTab === null) return;
-        setDialogSaving(true);
-        try {
-            await registration.save();
-        } finally {
-            setDialogSaving(false);
-        }
-        setSubTab(pendingSubTab);
-        setPendingSubTab(null);
-    };
 
-    const handleDialogDiscard = () => {
-        if (!registration || pendingSubTab === null) return;
-        registration.discard();
-        setSubTab(pendingSubTab);
-        setPendingSubTab(null);
-    };
 
     // This used to be a SECOND left sidebar, next to the settings sidebar. Two
     // vertical navigations side by side read as one confused one; a tab bar is
     // the only sub-navigation in the panel now, and the deepest it goes.
     return (
         <div className="flex flex-col h-full min-h-0">
-            <Tabs items={NAV_ITEMS} active={subTab} onChange={requestSubTab} ariaLabel="Gateway settings" />
+            <GuardedTabs items={NAV_ITEMS} active={subTab} onChange={setSubTab} ariaLabel="Gateway settings" />
 
             <div className="flex-1 overflow-y-auto pt-5">
                 {subTab === 'gateway' && <GatewayPanel showToast={showToast} />}
@@ -1582,15 +1552,6 @@ export default function GatewayTab() {
                 {subTab === 'hub' && <HubAdminPanel showToast={showToast} />}
             </div>
 
-            {/* Sub-tab switch confirm dialog */}
-            {pendingSubTab !== null && registration && (
-                <UnsavedDialog
-                    onSave={handleDialogSave}
-                    onDiscard={handleDialogDiscard}
-                    onCancel={() => { setPendingSubTab(null); setDialogSaving(false); }}
-                    saving={dialogSaving}
-                />
-            )}
 
         </div>
     );

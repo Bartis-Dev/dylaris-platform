@@ -16,7 +16,8 @@ import { Skeleton, SkeletonText, SkeletonFormRow } from '@/components/Skeleton';
 import { useAppData } from '@/lib/AppDataContext';
 import { useSettingsForm, type SettingsForm } from '@/lib/useSettingsForm';
 import { useTabParam } from '@/lib/useTabParam';
-import Tabs, { type TabItem } from '@/components/ui/Tabs';
+import { type TabItem } from '@/components/ui/Tabs';
+import GuardedTabs from '@/components/settings/GuardedTabs';
 import Switch from '@/components/ui/Switch';
 import HelpTip from '@/components/ui/HelpTip';
 import AccountPolicyCard from '@/components/settings/AccountPolicyCard';
@@ -92,7 +93,7 @@ export default function UserManagementTab() {
 
     return (
         <div className="flex flex-col h-full min-h-0">
-            <Tabs items={TABS} active={tab} onChange={setTab} ariaLabel="User settings" />
+            <GuardedTabs items={TABS} active={tab} onChange={setTab} ariaLabel="User settings" />
 
             <div className="flex-1 overflow-y-auto pt-5">
                 <div className="space-y-6 max-w-3xl">

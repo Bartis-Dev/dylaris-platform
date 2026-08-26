@@ -18,7 +18,7 @@ import Select from '@/components/ui/Select';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import StoragePlacement from '@/components/StoragePlacement';
 import LinkUpdatesPanel from '@/components/settings/LinkUpdatesPanel';
-import Tabs from '@/components/ui/Tabs';
+import GuardedTabs from '@/components/settings/GuardedTabs';
 import { useTabParam } from '@/lib/useTabParam';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { toast } from '@/components/ui/Toast';
@@ -62,7 +62,7 @@ export default function NodesTab() {
 
     return (
         <div className="flex flex-col h-full min-h-0">
-            <Tabs items={NAV_ITEMS} active={subTab} onChange={setSubTab} ariaLabel="Node settings" />
+            <GuardedTabs items={NAV_ITEMS} active={subTab} onChange={setSubTab} ariaLabel="Node settings" />
 
             <div className="flex-1 overflow-y-auto pt-5">
                 {subTab === 'nodes' && <NodesPanel showToast={toast} />}
