@@ -58,6 +58,13 @@ const maxCachedResponseBytes = 512 << 10
 // proxyJSON fetches the URL with caching. The cache key is a sha256 of the
 // full URL so we don't accidentally collide between similar queries.
 func (h *ModrinthHandler) proxyJSON(ctx context.Context, ttl time.Duration, urlStr string, w http.ResponseWriter) {
+	h.proxyJSONWith(ctx, ttl, urlStr, w, nil)
+}
+
+// proxyJSONWith is proxyJSON with an optional transform applied to the upstream
+// body BEFORE it is cached and before it is written, so a cache hit and a cache
+// miss return the same document.
+func (h *ModrinthHandler) proxyJSONWith(ctx context.Context, ttl time.Duration, urlStr string, w http.ResponseWriter, transform func([]byte) []byte) {
 	cacheKey := "dylaris:modrinth:" + hashURL(urlStr)
 	if h.state.Cache != nil {
 		if cached, ok := h.state.Cache.Get(ctx, cacheKey); ok {
@@ -83,6 +90,12 @@ func (h *ModrinthHandler) proxyJSON(ctx context.Context, ttl time.Duration, urlS
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+
+	// Transform only a successful body: an error response has a different shape
+	// and must reach the caller as it arrived.
+	if transform != nil && resp.StatusCode == http.StatusOK {
+		body = transform(body)
+	}
 
 	// Cache only successful 200s — error responses change shape and
 	// shouldn't poison the cache for 5+ minutes.
@@ -205,7 +218,10 @@ func (h *ModrinthHandler) ProjectVersions(w http.ResponseWriter, r *http.Request
 	if enc := values.Encode(); enc != "" {
 		upstream += "?" + enc
 	}
-	h.proxyJSON(r.Context(), modrinthProjectTTL, upstream, w)
+	// Every build is kept; only the changelog goes. See modrinth_slim.go for why
+	// that is the bigger win than dropping older builds, and why dropping them
+	// would cost a capability.
+	h.proxyJSONWith(r.Context(), modrinthProjectTTL, upstream, w, stripVersionChangelogs)
 }
 
 // Version GET /api/modrinth/version/{id} — single version metadata.
@@ -218,7 +234,7 @@ func (h *ModrinthHandler) Version(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstream := fmt.Sprintf("%s/version/%s", modrinthBaseURL, url.PathEscape(id))
-	h.proxyJSON(r.Context(), modrinthProjectTTL, upstream, w)
+	h.proxyJSONWith(r.Context(), modrinthProjectTTL, upstream, w, stripVersionChangelogs)
 }
 
 // GameVersions GET /api/modrinth/game-versions - Modrinth's Minecraft version

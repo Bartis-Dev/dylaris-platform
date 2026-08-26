@@ -155,11 +155,13 @@ export default function ModCacheCard() {
 
             <SettingsGroup title="Why this exists">
                 <p className="text-xs text-(--base-06)">
-                    One Modrinth version list weighs between 290 KB and 1.2 MB and is kept for an hour per filter
-                    combination, so heavy browsing is the only thing here that grows with use rather than with fleet
-                    size. Responses over 512 KB are never stored, which removes the large end of that, and the panel
-                    Redis evicts cached entries before anything else when it runs short. Pointing the cache elsewhere
-                    is the stronger version of the same idea, for operators who want it.
+                    A Modrinth version list weighs between 270 KB and 1.2 MB and is kept for an hour per filter
+                    combination, so browsing is the only thing here that grows with use rather than with fleet size.
+                    Three things bound it: changelogs are stripped before anything is stored, which is about 60 percent
+                    of a typical list and nothing displays them; responses still over 512 KB are served through and
+                    never stored; and the panel Redis evicts cached entries before anything else when it runs short.
+                    Every published build stays available, because installing an older one is the point of the version
+                    picker. Moving the cache off this Redis entirely is the stronger version of the same idea.
                 </p>
             </SettingsGroup>
         </SettingsCard>
