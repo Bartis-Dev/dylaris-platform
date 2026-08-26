@@ -209,3 +209,7 @@
 {"date": "2026-08-26", "service": "core", "type": "fix", "summary": "Saving the Beam settings no longer pins whichever relay was discovered as a permanent manual override, which used to end relay failover silently."}
 {"date": "2026-08-26", "service": "panel", "type": "change", "summary": "The Beam settings page now shows the relay in use separately from the optional override, and explains what the throttles, upload limits and hardware reference actually do."}
 {"date": "2026-08-26", "service": "core", "type": "feature", "summary": "The DNS check now also checks the API hostname and the Beam relay hostname, and dials both."}
+{"date": "2026-08-26", "service": "core", "type": "feature", "summary": "Outgoing email can now be sent through Resend instead of an SMTP server; pick the provider under Settings, User settings, Email."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "User settings is now five tabs instead of seven cards stacked down one page, and everything on it saves through the same bar at the bottom."}
+{"date": "2026-08-26", "service": "panel", "type": "fix", "summary": "Changing a sign-in rule and later an auto-delete rule no longer silently reverts the first: both edit one shared copy of the account policy now."}
+{"date": "2026-08-26", "service": "panel", "type": "change", "summary": "The Gateway and Nodes settings pages now use a tab bar instead of a second sidebar next to the settings sidebar."}

@@ -46,6 +46,16 @@ export interface SettingsFormOptions<T> {
 
 export interface SettingsForm<T> {
     value: T | null;
+    /**
+     * The last SAVED value, which is not the same question as `value`.
+     *
+     * A card that reports whether a feature is in force has to read this one. A
+     * badge driven by the form turns green the moment a switch is flipped, and
+     * stays green if the operator walks away without saving - which is a lie
+     * about the running system delivered by the control that is supposed to
+     * describe it.
+     */
+    saved: T | null;
     /** Edit. No-op before the first successful load. */
     update: (updater: (prev: T) => T) => void;
     /** Shorthand for a flat merge. */
@@ -75,7 +85,11 @@ export function useSettingsForm<T>(opts: SettingsFormOptions<T>): SettingsForm<T
 
     // null until a load succeeds. That is the load-failure guard: dirty is
     // computed against it, so no snapshot means never dirty.
-    const snapshot = useRef<T | null>(null);
+    //
+    // State rather than a ref, even though it is never rendered directly: dirty
+    // IS derived from it during render, and a ref that changes without a
+    // re-render would leave the save bar showing a state that is no longer true.
+    const [snapshot, setSnapshot] = useState<T | null>(null);
 
     // The callers are inline arrow functions at every call site, so holding
     // them in refs keeps the effects below from re-running every render.
@@ -95,11 +109,11 @@ export function useSettingsForm<T>(opts: SettingsFormOptions<T>): SettingsForm<T
         setLoading(false);
         if (loaded === null) {
             setLoadFailed(true);
-            snapshot.current = null;
+            setSnapshot(null);
             return;
         }
         setLoadFailed(false);
-        snapshot.current = loaded;
+        setSnapshot(loaded);
         setValue(loaded);
     }, []);
 
@@ -115,11 +129,11 @@ export function useSettingsForm<T>(opts: SettingsFormOptions<T>): SettingsForm<T
         setValue(prev => (prev === null ? prev : { ...prev, ...partial }));
     }, []);
 
-    const dirty = snapshot.current !== null && value !== null && !same(value, snapshot.current);
+    const dirty = snapshot !== null && value !== null && !same(value, snapshot);
 
     const save = useCallback(async () => {
         const current = value;
-        const previous = snapshot.current;
+        const previous = snapshot;
         if (current === null || previous === null) return;
 
         const ask = confirmRef.current?.(current, previous) ?? null;
@@ -140,21 +154,22 @@ export function useSettingsForm<T>(opts: SettingsFormOptions<T>): SettingsForm<T
         // the new snapshot is what keeps the form from reading dirty straight
         // after a successful save.
         const stored = res.value ?? current;
-        snapshot.current = stored;
+        setSnapshot(stored);
         setValue(stored);
         if (successRef.current) toast(successRef.current, true);
-    }, [value]);
+    }, [value, snapshot]);
 
     const discard = useCallback(() => {
-        if (snapshot.current === null) return;
-        setValue(snapshot.current);
+        if (snapshot === null) return;
+        setValue(snapshot);
         setError(null);
-    }, []);
+    }, [snapshot]);
 
     useUnsavedChanges({ dirty, save, discard, saving });
 
     return {
         value,
+        saved: snapshot,
         update,
         patch,
         loading,

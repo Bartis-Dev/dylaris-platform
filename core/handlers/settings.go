@@ -723,7 +723,7 @@ type BeamSettings struct {
 	// Absent (nil) keeps the legacy behaviour for a client that does not know
 	// this field; present is authoritative, including an explicit "" meaning
 	// "go back to discovery".
-	ManualOverride *string `json:"manualOverride"`
+	ManualOverride   *string         `json:"manualOverride"`
 	PublicHost       string          `json:"publicHost"`       // Externally reachable hostname for discovered relays (e.g. beam.dylaris.com)
 	DiscoveredRelays []BeamRelayInfo `json:"discoveredRelays"` // Currently registered relays (read-only)
 	// BwLimit is the legacy single-value Node throttle (bytes/sec, 0 =

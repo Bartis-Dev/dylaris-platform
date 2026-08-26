@@ -218,9 +218,9 @@ func insertAuditEvent(s store.Store, eventType string, targetUserID string, meta
 // SMTP purpose with the usual fallback to "default" — same as registration
 // and password-reset.
 func sendDeletionWarningEmail(s store.Store, frontendURL, to, username string, scheduledAt time.Time, mode string) error {
-	cfg, err := mailer.LoadConfig(s, "auth")
+	transport, err := mailer.Load(s, "auth")
 	if err != nil {
-		return fmt.Errorf("smtp not configured: %w", err)
+		return fmt.Errorf("mail not configured: %w", err)
 	}
 	loginURL := strings.TrimRight(frontendURL, "/") + "/login"
 	verb := "anonymized (account details wiped, identifier kept for audit references)"
@@ -243,7 +243,7 @@ If you do nothing, the action will go ahead automatically. No further reminders 
 `, username, verb, scheduledAt.UTC().Format("2006-01-02 15:04 UTC"), loginURL)
 
 	_ = json.Marshal // silence unused if importer ever drops it
-	return mailer.Send(cfg, mailer.Message{
+	return transport.Send(mailer.Message{
 		To:      to,
 		Subject: "Your Dylaris account is scheduled for deletion",
 		Body:    body,

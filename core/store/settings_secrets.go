@@ -18,6 +18,10 @@ var settingsSecretKeys = map[string]bool{
 	// DNS provider credential, set in Settings -> DNS. It can rewrite the
 	// operator's zone, so it never sits in the clear next to the zone name.
 	"dns.api_token": true,
+	// Resend API key. Same argument as the SMTP password below it: whoever reads
+	// a DB dump can send mail as the operator's domain, and that domain is where
+	// the password-reset links come from.
+	"resend.api_key": true,
 }
 
 // smtpPasswordSuffix identifies the SMTP credential settings, whose key is

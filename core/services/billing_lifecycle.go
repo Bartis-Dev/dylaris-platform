@@ -516,7 +516,7 @@ func (s *BillingLifecycleService) sendDunningEmail(userID string, graceUntil tim
 	if err != nil || u == nil || u.Email == "" {
 		return
 	}
-	cfg, err := mailer.LoadConfig(s.store, "auth")
+	transport, err := mailer.Load(s.store, "auth")
 	if err != nil {
 		return
 	}
@@ -534,7 +534,7 @@ Your data is safe either way — nothing is deleted when you miss a payment.
 
 — Dylaris
 `, u.Username, graceUntil.UTC().Format("2006-01-02 15:04 UTC"), s.paymentURL())
-	if err := mailer.Send(cfg, mailer.Message{To: u.Email, Subject: "Payment required — your Dylaris services", Body: body}); err != nil {
+	if err := transport.Send(mailer.Message{To: u.Email, Subject: "Payment required — your Dylaris services", Body: body}); err != nil {
 		log.Printf("billing lifecycle: dunning mail to %s failed: %v", u.Email, err)
 	}
 }
@@ -544,7 +544,7 @@ func (s *BillingLifecycleService) sendSuspendedEmail(userID string) {
 	if err != nil || u == nil || u.Email == "" {
 		return
 	}
-	cfg, err := mailer.LoadConfig(s.store, "auth")
+	transport, err := mailer.Load(s.store, "auth")
 	if err != nil {
 		return
 	}
@@ -558,7 +558,7 @@ Pay here to reactivate:
 
 — Dylaris
 `, u.Username, s.paymentURL())
-	if err := mailer.Send(cfg, mailer.Message{To: u.Email, Subject: "Your Dylaris services are suspended", Body: body}); err != nil {
+	if err := transport.Send(mailer.Message{To: u.Email, Subject: "Your Dylaris services are suspended", Body: body}); err != nil {
 		log.Printf("billing lifecycle: suspended mail to %s failed: %v", u.Email, err)
 	}
 }

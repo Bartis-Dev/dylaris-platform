@@ -18,11 +18,13 @@ import Select from '@/components/ui/Select';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import StoragePlacement from '@/components/StoragePlacement';
 import LinkUpdatesPanel from '@/components/settings/LinkUpdatesPanel';
+import Tabs from '@/components/ui/Tabs';
+import { toast } from '@/components/ui/Toast';
 import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
-    CircleCheck, CircleAlert, Pencil, X, AlertTriangle, SlidersHorizontal, Cpu, KeyRound, Copy,
+    Pencil, X, AlertTriangle, SlidersHorizontal, Cpu, KeyRound, Copy,
     ShieldCheck, Plus, Trash2, Ticket, RotateCcw,
 } from 'lucide-react';
 
@@ -47,54 +49,27 @@ const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
     { id: 'enrollment', label: 'Node settings', icon: ShieldCheck },
 ];
 
+// The sub-navigation used to be a SECOND left sidebar, sitting beside the
+// settings sidebar. Two vertical navigations next to each other read as one
+// confused one, and it put this page's depth at three levels. A tab bar is the
+// only sub-navigation in the panel now, and it is the last level there is.
 export default function NodesTab() {
     const [subTab, setSubTab] = useState<SubTab>('nodes');
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-
-    const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    };
 
     return (
-        <div className="flex gap-0 h-full">
-            <nav className="w-44 shrink-0 border-r border-(--base-03) pr-4 flex flex-col gap-1 pt-1">
-                {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-                    <button
-                        key={id}
-                        onClick={() => setSubTab(id)}
-                        className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left ${
-                            subTab === id
-                                ? 'bg-(--accent)/10 text-(--accent-light)'
-                                : 'text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
-                        }`}
-                    >
-                        <Icon size={15} className={subTab === id ? 'text-(--accent-light)' : 'text-(--base-06)'} />
-                        {label}
-                    </button>
-                ))}
-            </nav>
+        <div className="flex flex-col h-full min-h-0">
+            <Tabs items={NAV_ITEMS} active={subTab} onChange={setSubTab} ariaLabel="Node settings" />
 
-            <div className="flex-1 pl-6 overflow-y-auto">
-                {subTab === 'nodes' && <NodesPanel showToast={showToast} />}
-                {subTab === 'placement' && <PlacementPanel showToast={showToast} />}
+            <div className="flex-1 overflow-y-auto pt-5">
+                {subTab === 'nodes' && <NodesPanel showToast={toast} />}
+                {subTab === 'placement' && <PlacementPanel showToast={toast} />}
                 {subTab === 'enrollment' && (
                     <div className="space-y-6">
-                        <NodeEnrollmentPanel showToast={showToast} />
-                        <LinkUpdatesPanel showToast={showToast} />
+                        <NodeEnrollmentPanel showToast={toast} />
+                        <LinkUpdatesPanel showToast={toast} />
                     </div>
                 )}
             </div>
-
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

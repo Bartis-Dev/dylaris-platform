@@ -262,6 +262,11 @@ func (h *AuthSettingsHandler) SaveAuthPolicy(w http.ResponseWriter, r *http.Requ
 // password is treated as "keep the existing one" so a re-save without
 // re-typing the password doesn't wipe it.
 type SMTPConfigDTO struct {
+	// Provider selects the transport: "smtp" (default) or "resend". The From
+	// identity below is shared by both, because it is a property of the mail
+	// configuration rather than of the wire protocol - switching provider should
+	// not ask an operator to retype their own address.
+	Provider   string `json:"provider"`
 	Host       string `json:"host"`
 	Port       int    `json:"port"`
 	Username   string `json:"username"`
@@ -272,6 +277,13 @@ type SMTPConfigDTO struct {
 	// PasswordSet is set by the GET handler so the UI can show
 	// "(saved — leave blank to keep)" placeholder.
 	PasswordSet bool `json:"passwordSet,omitempty"`
+
+	// ResendAPIKey follows the same write-only rule as the SMTP password, and
+	// for the same reason: it is a credential that can send mail as the
+	// operator's domain, which is the domain their password-reset links come
+	// from. Stored encrypted at rest (store.settingsSecretKeys).
+	ResendAPIKey    string `json:"resendApiKey,omitempty"` // write-only
+	ResendAPIKeySet bool   `json:"resendApiKeySet,omitempty"`
 }
 
 // GetSMTPConfig GET /api/admin/settings/smtp - PANEL settings.read (RequireCap at the route).
@@ -293,14 +305,21 @@ func loadSMTPConfigForUI(state *AppState, purpose string) SMTPConfigDTO {
 		fmt.Sscanf(v, "%d", &port)
 	}
 	pw := get("password")
+	provider, _ := state.Store.GetSetting(mailer.SettingKeyProvider)
+	if strings.TrimSpace(provider) == "" {
+		provider = mailer.ProviderSMTP
+	}
+	resendKey, _ := state.Store.GetSetting(mailer.SettingKeyResendAPIKey)
 	return SMTPConfigDTO{
-		Host:        get("host"),
-		Port:        port,
-		Username:    get("username"),
-		FromEmail:   get("from_email"),
-		FromName:    get("from_name"),
-		Encryption:  get("encryption"),
-		PasswordSet: pw != "",
+		Provider:        provider,
+		Host:            get("host"),
+		Port:            port,
+		Username:        get("username"),
+		FromEmail:       get("from_email"),
+		FromName:        get("from_name"),
+		Encryption:      get("encryption"),
+		PasswordSet:     pw != "",
+		ResendAPIKeySet: strings.TrimSpace(resendKey) != "",
 	}
 }
 
@@ -316,9 +335,18 @@ func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Requ
 		enc = "starttls"
 	}
 
+	// An unknown provider is coerced rather than rejected: the only way to send
+	// one is a client out of step with this build, and silently keeping mail on
+	// SMTP is better than a 400 an operator cannot act on.
+	provider := strings.ToLower(strings.TrimSpace(dto.Provider))
+	if provider != mailer.ProviderResend {
+		provider = mailer.ProviderSMTP
+	}
+
 	actorID, _ := r.Context().Value("userID").(string)
 	purpose := "default"
 	pairs := []struct{ k, v string }{
+		{mailer.SettingKeyProvider, provider},
 		{"smtp." + purpose + ".host", strings.TrimSpace(dto.Host)},
 		{"smtp." + purpose + ".port", fmt.Sprintf("%d", dto.Port)},
 		{"smtp." + purpose + ".username", strings.TrimSpace(dto.Username)},
@@ -337,6 +365,14 @@ func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Requ
 	if dto.Password != "" {
 		if err := h.state.Store.SetSettingBy("smtp."+purpose+".password", dto.Password, actorID); err != nil {
 			sendJSONError(w, "Failed to save password", http.StatusInternalServerError)
+			return
+		}
+	}
+	// Same rule for the Resend key: blank means keep. Switching provider back
+	// and forth must not cost the credential.
+	if strings.TrimSpace(dto.ResendAPIKey) != "" {
+		if err := h.state.Store.SetSettingBy(mailer.SettingKeyResendAPIKey, strings.TrimSpace(dto.ResendAPIKey), actorID); err != nil {
+			sendJSONError(w, "Failed to save the Resend API key", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -373,15 +409,17 @@ func (h *AuthSettingsHandler) TestSendSMTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	cfg, err := mailer.LoadConfig(h.state.Store, "default")
+	transport, err := mailer.Load(h.state.Store, "default")
 	if err != nil {
-		sendJSONError(w, "SMTP not configured: "+err.Error(), http.StatusBadRequest)
+		sendJSONError(w, "Mail not configured: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = mailer.Send(cfg, mailer.Message{
+	err = transport.Send(mailer.Message{
 		To:      to,
-		Subject: "Dylaris — SMTP test",
-		Body:    "If you can read this, your Dylaris SMTP configuration is working.\n\nThis test was triggered from Admin → Settings → User Management.",
+		Subject: "Dylaris — mail test",
+		Body: "If you can read this, your Dylaris mail configuration is working.\n\n" +
+			"Sent via " + transport.Describe() + ".\n" +
+			"Triggered from Settings -> User settings -> Email.",
 	})
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{

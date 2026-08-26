@@ -14,6 +14,8 @@ import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOf
 import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skeleton';
 import Spinner from '@/components/Spinner';
 import { useUnsavedChanges, useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
+import Tabs from '@/components/ui/Tabs';
+import { toast } from '@/components/ui/Toast';
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
 import GatewayDnsCard from '@/components/settings/GatewayDnsCard';
 import { useAppData } from '@/lib/AppDataContext';
@@ -487,7 +489,10 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         }));
         setRemoveBusy(false);
         setRemoveTarget(null);
-        showToast(`Removed ${removeTarget.domain}${cascadeMessage}. Click Save to persist.`);
+        // Nothing has been written yet - the removal is a local edit and the
+        // save bar at the bottom of the page commits it. The old wording named a
+        // Save button this card does not have.
+        showToast(`Removed ${removeTarget.domain}${cascadeMessage}. Save at the bottom of the page to apply it.`);
     };
     const updateHoster = (idx: number, patch: Partial<HosterDomain>) => {
         setSettings(prev => ({
@@ -1467,7 +1472,6 @@ function HubAdminPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =
 
 export default function GatewayTab() {
     const [subTab, setSubTab] = useState<SubTab>('gateway');
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
     // Sub-tab switch guard — the active panel registers its unsaved state with
     // the shared bar; we intercept sub-nav clicks when it's dirty.
@@ -1485,10 +1489,7 @@ export default function GatewayTab() {
         }
     }, []);
 
-    const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
-    };
+    const showToast = toast;
 
     const requestSubTab = (id: SubTab) => {
         if (id === subTab) return;
@@ -1518,28 +1519,14 @@ export default function GatewayTab() {
         setPendingSubTab(null);
     };
 
+    // This used to be a SECOND left sidebar, next to the settings sidebar. Two
+    // vertical navigations side by side read as one confused one; a tab bar is
+    // the only sub-navigation in the panel now, and the deepest it goes.
     return (
-        <div className="flex gap-0 h-full">
-            {/* Left nav */}
-            <nav className="w-44 shrink-0 border-r border-(--base-03) pr-4 flex flex-col gap-1 pt-1">
-                {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-                    <button
-                        key={id}
-                        onClick={() => requestSubTab(id)}
-                        className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left ${
-                            subTab === id
-                                ? 'bg-(--accent)/10 text-(--accent-light)'
-                                : 'text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
-                        }`}
-                    >
-                        <Icon size={15} className={subTab === id ? 'text-(--accent-light)' : 'text-(--base-06)'} />
-                        {label}
-                    </button>
-                ))}
-            </nav>
+        <div className="flex flex-col h-full min-h-0">
+            <Tabs items={NAV_ITEMS} active={subTab} onChange={requestSubTab} ariaLabel="Gateway settings" />
 
-            {/* Right content */}
-            <div className="flex-1 pl-6 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto pt-5">
                 {subTab === 'gateway' && <GatewayPanel showToast={showToast} />}
                 {subTab === 'xdp' && <XDPPanel showToast={showToast} />}
                 {subTab === 'hub' && <HubAdminPanel showToast={showToast} />}
@@ -1555,16 +1542,6 @@ export default function GatewayTab() {
                 />
             )}
 
-            {/* Shared toast */}
-            {toast && (
-                <div className="toast-container">
-                    <div className="toast">
-                        <div className={`toast-bar ${toast.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`}></div>
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

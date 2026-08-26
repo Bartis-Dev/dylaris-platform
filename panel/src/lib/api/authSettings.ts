@@ -23,12 +23,19 @@ export interface AuthPolicy {
     deletionMode: 'anonymize' | 'hard_delete';
 }
 
+export type MailProvider = 'smtp' | 'resend';
+
 export interface SMTPConfig {
+    /** Which transport actually sends. Empty from an older Core means smtp. */
+    provider: MailProvider;
     host: string;
     port: number;
     username: string;
     /** Write-only — never present on GET responses. */
     password?: string;
+    /** Shared by BOTH providers: the sender is a property of the mail
+     *  configuration, not of the protocol, so switching does not ask the
+     *  operator to retype their own address. */
     fromEmail: string;
     fromName: string;
     /** "none" | "starttls" | "tls" */
@@ -36,6 +43,9 @@ export interface SMTPConfig {
     /** GET-only flag: true when a password is already stored.
      *  Lets the UI show "leave blank to keep" placeholder. */
     passwordSet?: boolean;
+    /** Write-only, same rule as the password: blank keeps the stored one. */
+    resendApiKey?: string;
+    resendApiKeySet?: boolean;
 }
 
 export async function getAuthPolicy() {

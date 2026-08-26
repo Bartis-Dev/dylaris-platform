@@ -190,7 +190,7 @@ func (s *BillingLifecycleService) sendOverLimitEmail(userID string, u tenantUsag
 	if err != nil || usr == nil || usr.Email == "" {
 		return
 	}
-	cfg, err := mailer.LoadConfig(s.store, "auth")
+	transport, err := mailer.Load(s.store, "auth")
 	if err != nil {
 		return
 	}
@@ -215,7 +215,7 @@ Manage your account here:
 - Dylaris
 `, usr.Username, u.describe(), deadline.Format("2 January 2006, 15:04 MST"), s.frontendURL)
 
-	if err := mailer.Send(cfg, mailer.Message{
+	if err := transport.Send(mailer.Message{
 		To:      usr.Email,
 		Subject: "Action needed: your account is over its limit",
 		Body:    body,

@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
-    Users, ShieldCheck, Mail, KeyRound, Trash2, HelpCircle, Send, Loader2, CircleCheck, CircleAlert, Plus, X, FileText,
+    ShieldCheck, Mail, KeyRound, Trash2, HelpCircle, Send, Loader2, Plus, X, FileText, UserCog,
 } from 'lucide-react';
 import {
-    AuthPolicy, SMTPConfig,
+    AuthPolicy, SMTPConfig, MailProvider,
     getAuthPolicy, saveAuthPolicy,
     getSMTPConfig, saveSMTPConfig, testSendSMTP,
     getDemoAccount, setDemoAccount,
@@ -14,6 +14,12 @@ import { getAdminSecurityQuestionPool, setAdminSecurityQuestionPool } from '@/li
 import { getAuditPolicy, saveAuditPolicy, AuditPolicy } from '@/lib/api/serverAudit';
 import { Skeleton, SkeletonText, SkeletonFormRow } from '@/components/Skeleton';
 import { useAppData } from '@/lib/AppDataContext';
+import { useSettingsForm, type SettingsForm } from '@/lib/useSettingsForm';
+import Tabs, { type TabItem } from '@/components/ui/Tabs';
+import Switch from '@/components/ui/Switch';
+import HelpTip from '@/components/ui/HelpTip';
+import AccountPolicyCard from '@/components/settings/AccountPolicyCard';
+import { toast } from '@/components/ui/Toast';
 
 const ENCRYPTION_OPTIONS = [
     { value: 'starttls', label: 'STARTTLS (port 587)' },
@@ -21,26 +27,87 @@ const ENCRYPTION_OPTIONS = [
     { value: 'none', label: 'None — plaintext (private network only)' },
 ];
 
-export default function UserManagementTab() {
-    // The demo-account feature only exists on the hosted (store-enabled) build.
-    const { featureFlags } = useAppData();
-    return (
-        <div className="space-y-8 max-w-3xl">
-            <header>
-                <h2 className="text-lg font-display flex items-center gap-2">
-                    <Users size={18} className="text-(--accent-light)" /> User Management
-                </h2>
-                <p className="text-sm text-(--base-06) mt-1">
-                    Registration, authentication, password reset and lifecycle policies.
-                </p>
-            </header>
+type UserTab = 'signin' | 'email' | 'accounts' | 'retention' | 'questions';
 
-            <AuthPolicySection />
-            <SecurityQuestionsPoolSection />
-            {featureFlags.store && <DemoAccountSection />}
-            <AutoDeleteSection />
-            <AuditPolicySection />
-            <SMTPSection />
+// Six unrelated cards used to sit stacked down one scroll, each with its own
+// Save button and its own idea of what feedback looks like. Tabs are the panel's
+// one sub-navigation, and this page is the clearest case for them: nobody
+// arrives here wanting to look at registration policy AND audit retention.
+export default function UserManagementTab() {
+    const { featureFlags } = useAppData();
+    const [tab, setTab] = useState<UserTab>('signin');
+
+    // ONE AuthPolicy form, shared by the two tabs that edit it.
+    //
+    // They used to be two independent cards, each loading and saving the WHOLE
+    // AuthPolicy DTO. Whichever saved last wrote its own copy of the other's
+    // fields back over them - so changing a 2FA rule and then, later, an
+    // auto-delete rule silently reverted the first. Loading it once removes the
+    // second copy that made that possible.
+    const [uncovered, setUncovered] = useState<{ missing: number; total: number } | null>(null);
+    const auth = useSettingsForm<AuthPolicy>({
+        load: async () => {
+            const res = await getAuthPolicy();
+            if (!res.success || !res.policy) return null;
+            if (typeof res.accountsMissingSecurityQuestions === 'number') {
+                setUncovered({ missing: res.accountsMissingSecurityQuestions, total: res.accountsTotal ?? 0 });
+            }
+            return res.policy as AuthPolicy;
+        },
+        save: async policy => {
+            const res = await saveAuthPolicy(policy);
+            return { ok: !!res.success, message: res.message, value: res.policy as AuthPolicy | undefined };
+        },
+        successMessage: 'Account settings saved',
+        // Turning auto-delete on arms a daily job that removes people. Nothing
+        // else on this page acts on its own after the tab is closed.
+        confirmBeforeSave: (next, prev) =>
+            next.inactiveDeleteEnabled && !prev.inactiveDeleteEnabled
+                ? {
+                      title: 'Start deleting inactive accounts?',
+                      message:
+                          `A daily job will ${next.deletionMode === 'hard_delete' ? 'permanently delete' : 'anonymise'} ` +
+                          `accounts inactive for ${next.inactiveDaysBeforeDelete} days. ` +
+                          (next.deleteEmailWarningDays > 0
+                              ? `They are warned by email ${next.deleteEmailWarningDays} days first.`
+                              : 'They are NOT warned first, because the lead time is 0.'),
+                      confirmLabel: 'Turn it on',
+                      destructive: next.deletionMode === 'hard_delete',
+                  }
+                : null,
+    });
+
+    const TABS: TabItem<UserTab>[] = [
+        { id: 'signin', label: 'Registration & sign-in', icon: ShieldCheck },
+        { id: 'email', label: 'Email', icon: Send },
+        { id: 'accounts', label: 'Accounts', icon: UserCog },
+        { id: 'retention', label: 'Retention', icon: Trash2 },
+        { id: 'questions', label: 'Security questions', icon: HelpCircle },
+    ];
+
+    return (
+        <div className="flex flex-col h-full min-h-0">
+            <Tabs items={TABS} active={tab} onChange={setTab} ariaLabel="User settings" />
+
+            <div className="flex-1 overflow-y-auto pt-5">
+                <div className="space-y-6 max-w-3xl">
+                    {tab === 'signin' && <AuthPolicySection form={auth} uncovered={uncovered} />}
+                    {tab === 'email' && <MailSection />}
+                    {tab === 'accounts' && (
+                        <>
+                            <AccountPolicyCard />
+                            {featureFlags.store && <DemoAccountSection />}
+                        </>
+                    )}
+                    {tab === 'retention' && (
+                        <>
+                            <AutoDeleteSection form={auth} />
+                            <AuditPolicySection />
+                        </>
+                    )}
+                    {tab === 'questions' && <SecurityQuestionsPoolSection />}
+                </div>
+            </div>
         </div>
     );
 }
@@ -49,112 +116,64 @@ export default function UserManagementTab() {
 // Designates a single read-only account that sees the demo servers and is
 // forced GET-only server-side. Create a normal user first, then name it here.
 function DemoAccountSection() {
-    const [username, setUsername] = useState('');
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-    useEffect(() => {
-        getDemoAccount().then(res => {
-            if (res.success) setUsername(res.username || '');
-        }).finally(() => setLoading(false));
-    }, []);
-
-    const save = async () => {
-        setSaving(true);
-        setMsg(null);
-        const res = await setDemoAccount(username.trim());
-        setSaving(false);
-        if (res.success) {
-            setUsername(res.username || '');
-            setMsg({ ok: true, text: res.username ? `Demo account set to "${res.username}".` : 'Demo account cleared.' });
-        } else {
-            setMsg({ ok: false, text: res.message || res.error || 'Failed to save.' });
-        }
-    };
+    const form = useSettingsForm<{ username: string }>({
+        load: async () => {
+            const res = await getDemoAccount();
+            return res.success ? { username: res.username || '' } : null;
+        },
+        save: async v => {
+            const res = await setDemoAccount(v.username.trim());
+            return {
+                ok: !!res.success,
+                message: res.message || res.error,
+                value: res.success ? { username: res.username || '' } : undefined,
+            };
+        },
+        successMessage: 'Demo account saved',
+    });
 
     return (
         <section className="card p-5 space-y-4">
             <div className="flex items-center gap-2">
                 <ShieldCheck size={16} className="text-(--accent-light)" />
-                <h3 className="font-medium text-sm text-(--base-09)">Public Demo Account</h3>
+                <h3 className="font-medium text-sm text-(--base-09)">Public demo account</h3>
             </div>
             <p className="text-xs text-(--base-06)">
                 A single read-only account that sees every server flagged as a demo. It is forced
                 GET-only (cannot edit, power, create or download anything). Reachable with its own
                 password, or one-click via the public demo session. Leave empty to disable.
             </p>
-            {loading ? (
+            {form.loading || !form.value ? (
                 <SkeletonFormRow />
             ) : (
-                <div className="flex gap-2 items-end">
-                    <div className="flex flex-col gap-[5px] flex-1">
-                        <label className="input-label">Demo account username</label>
-                        <input
-                            type="text"
-                            value={username}
-                            onChange={e => setUsername(e.target.value)}
-                            placeholder="demo"
-                            className="input-field w-full"
-                            spellCheck={false}
-                        />
-                    </div>
-                    <button onClick={save} disabled={saving} className="btn btn-primary btn-sm shrink-0">
-                        {saving ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
-                    </button>
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Demo account username</label>
+                    <input
+                        type="text"
+                        value={form.value.username}
+                        onChange={e => form.patch({ username: e.target.value })}
+                        placeholder="demo"
+                        className="input-field w-full"
+                        spellCheck={false}
+                    />
                 </div>
-            )}
-            {msg && (
-                <p className={`text-xs flex items-center gap-1.5 ${msg.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
-                    {msg.ok ? <CircleCheck size={13} /> : <CircleAlert size={13} />}
-                    {msg.text}
-                </p>
             )}
         </section>
     );
 }
 
-// ── Auth Policy section (registration + 2FA enforcement) ──────────────
-// Renders one card so admin saves both groups in a single round-trip.
+// ── Auth policy section (registration + 2FA + reset) ──────────────────
 
-function AuthPolicySection() {
-    const [policy, setPolicy] = useState<AuthPolicy | null>(null);
-    // How many accounts the reset requirement does not actually cover. Core
-    // sends it alongside the policy; see the note on that toggle below.
-    const [uncovered, setUncovered] = useState<{ missing: number; total: number } | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+function AuthPolicySection({
+    form,
+    uncovered,
+}: {
+    form: SettingsForm<AuthPolicy>;
+    uncovered: { missing: number; total: number } | null;
+}) {
+    const policy = form.value;
 
-    useEffect(() => {
-        getAuthPolicy().then(res => {
-            if (res.success) setPolicy(res.policy);
-            if (typeof res.accountsMissingSecurityQuestions === 'number') {
-                setUncovered({ missing: res.accountsMissingSecurityQuestions, total: res.accountsTotal ?? 0 });
-            }
-            setLoading(false);
-        });
-    }, []);
-
-    const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 2800);
-    };
-
-    const handleSave = async () => {
-        if (!policy) return;
-        setSaving(true);
-        const res = await saveAuthPolicy(policy);
-        setSaving(false);
-        if (res.success) {
-            if (res.policy) setPolicy(res.policy);
-            flash('Saved.');
-        } else {
-            flash(res.message || 'Save failed.', false);
-        }
-    };
-
-    if (loading || !policy) {
+    if (form.loading || !policy) {
         return (
             <section className="card p-5 border border-(--base-03) space-y-4">
                 <h3 className="mono-label mb-3 flex items-center gap-2"><Mail size={14} /> Authentication policy</h3>
@@ -165,42 +184,46 @@ function AuthPolicySection() {
                     <Skeleton className="h-10 w-full" />
                     <SkeletonFormRow />
                 </div>
-                <div className="pt-4 border-t border-(--base-03) space-y-3">
-                    <SkeletonText width="w-1/3" className="h-3.5" />
-                    <Skeleton className="h-10 w-full" />
-                    <Skeleton className="h-10 w-full" />
-                </div>
             </section>
         );
     }
 
+    const set = (patch: Partial<AuthPolicy>) => form.patch(patch);
+
     return (
         <section className="card p-5 border border-(--base-03) space-y-6 relative">
-            <header className="flex items-center justify-between gap-3">
-                <h3 className="mono-label flex items-center gap-2"><Mail size={14} /> Authentication policy</h3>
-                {/* Always in force - these switches have no off state of their own. */}
-                <StatusBadge active />
-            </header>
-
             <div className="space-y-4">
                 <h4 className="mono-label text-(--base-07)">Registration</h4>
                 <ToggleRow
                     label="Allow self-registration"
                     description="When enabled, anyone with access to the panel can create an account at /register."
                     value={policy.registrationEnabled}
-                    onChange={v => setPolicy({ ...policy, registrationEnabled: v })}
+                    onChange={v => set({ registrationEnabled: v })}
                 />
                 <ToggleRow
                     label="Require email verification"
-                    description="New users must click a confirmation link before they can sign in. Requires SMTP to be configured below."
+                    description="New users must click a confirmation link before they can sign in."
                     value={policy.emailVerifyRequired}
-                    onChange={v => setPolicy({ ...policy, emailVerifyRequired: v })}
+                    onChange={v => set({ emailVerifyRequired: v })}
+                    help={
+                        <>
+                            <p className="mb-2">
+                                This needs working mail. With nothing configured under the{' '}
+                                <strong>Email</strong> tab, the confirmation link is never sent and
+                                nobody can finish registering.
+                            </p>
+                            <p>
+                                Existing accounts are unaffected: the requirement applies at
+                                registration, not at the next sign-in.
+                            </p>
+                        </>
+                    }
                 />
                 <ToggleRow
                     label="New users get all-regions access by default"
                     description="Off (default): self-registered users see no servers until an admin grants region access. Admin-created users still default to all-regions."
                     value={policy.defaultNewUserAllRegions}
-                    onChange={v => setPolicy({ ...policy, defaultNewUserAllRegions: v })}
+                    onChange={v => set({ defaultNewUserAllRegions: v })}
                 />
                 <div className="flex items-center gap-3">
                     <label className="input-label mb-0 shrink-0">Password min length</label>
@@ -209,7 +232,7 @@ function AuthPolicySection() {
                         min={4}
                         max={128}
                         value={policy.passwordMinLength}
-                        onChange={e => setPolicy({ ...policy, passwordMinLength: Number(e.target.value) || 0 })}
+                        onChange={e => set({ passwordMinLength: Number(e.target.value) || 0 })}
                         className="input-field w-24"
                     />
                     <p className="text-xs text-(--base-06) leading-tight">Enforced on registration and password reset (4–128).</p>
@@ -224,13 +247,13 @@ function AuthPolicySection() {
                     label="Require 2FA for administrators"
                     description="Admin accounts that haven't enrolled get a short-lived enrollment token at login instead of a full session. They must complete 2FA setup before accessing the panel."
                     value={policy.require2FAForAdmins}
-                    onChange={v => setPolicy({ ...policy, require2FAForAdmins: v })}
+                    onChange={v => set({ require2FAForAdmins: v })}
                 />
                 <ToggleRow
                     label="Require 2FA for all users"
                     description="Same enforcement as above, applied to every account on the platform — including regular users. Stronger guarantee, more friction at first login. Implies the admin toggle."
                     value={policy.require2FAForAllUsers}
-                    onChange={v => setPolicy({ ...policy, require2FAForAllUsers: v })}
+                    onChange={v => set({ require2FAForAllUsers: v })}
                 />
                 <p className="text-xs text-(--base-06)">
                     Existing sessions remain valid — enforcement triggers at the next login. Backup codes are generated automatically as part of enrollment.
@@ -245,19 +268,19 @@ function AuthPolicySection() {
                     label="Enable security questions"
                     description="Master toggle. When off, the picker is hidden everywhere — registration, profile, and reset all skip it."
                     value={policy.securityQuestionsEnabled}
-                    onChange={v => setPolicy({ ...policy, securityQuestionsEnabled: v })}
+                    onChange={v => set({ securityQuestionsEnabled: v })}
                 />
                 <ToggleRow
                     label="Require at signup"
                     description="New users must pick + answer questions during registration. Existing users keep working without them."
                     value={policy.securityQuestionsRequiredAtSignup}
-                    onChange={v => setPolicy({ ...policy, securityQuestionsRequiredAtSignup: v })}
+                    onChange={v => set({ securityQuestionsRequiredAtSignup: v })}
                 />
                 <ToggleRow
                     label="Require during password reset"
                     description="Reset flow asks for the answers before consuming the email link. Users without questions stored skip this step — otherwise the policy would lock them out."
                     value={policy.securityQuestionsRequiredAtReset}
-                    onChange={v => setPolicy({ ...policy, securityQuestionsRequiredAtReset: v })}
+                    onChange={v => set({ securityQuestionsRequiredAtReset: v })}
                 />
                 {/* "Users without questions skip this step" and "37 of 40 accounts
                     skip this step" are the same sentence and very different facts.
@@ -265,7 +288,7 @@ function AuthPolicySection() {
                     that existed before it. */}
                 {policy.securityQuestionsRequiredAtReset && uncovered && uncovered.missing > 0 && (
                     <p className="flex items-start gap-1.5 text-xs text-(--warning-light) -mt-1">
-                        <CircleAlert size={12} className="mt-0.5 shrink-0" />
+                        <HelpCircle size={12} className="mt-0.5 shrink-0" />
                         <span>
                             {uncovered.missing} of {uncovered.total} accounts have no questions stored,
                             so their password reset still needs nothing but the email link.
@@ -279,7 +302,7 @@ function AuthPolicySection() {
                         min={1}
                         max={10}
                         value={policy.securityQuestionsCount}
-                        onChange={e => setPolicy({ ...policy, securityQuestionsCount: Number(e.target.value) || 0 })}
+                        onChange={e => set({ securityQuestionsCount: Number(e.target.value) || 0 })}
                         className="input-field w-24"
                     />
                     <p className="text-xs text-(--base-06) leading-tight">How many questions a user must pick + answer (1–10).</p>
@@ -297,141 +320,168 @@ function AuthPolicySection() {
                         min={5}
                         max={1440}
                         value={policy.passwordResetLinkTTLMinutes}
-                        onChange={e => setPolicy({ ...policy, passwordResetLinkTTLMinutes: Number(e.target.value) || 0 })}
+                        onChange={e => set({ passwordResetLinkTTLMinutes: Number(e.target.value) || 0 })}
                         className="input-field w-24"
                     />
                     <span className="text-sm text-(--base-07)">minutes</span>
                     <p className="text-xs text-(--base-06) leading-tight">Range 5–1440. Shorter is safer if links leak; longer is friendlier for users with slow inbox delivery.</p>
                 </div>
                 <p className="text-xs text-(--base-06)">
-                    The reset link itself goes out via the SMTP profile configured below — the same one used for email verification.
+                    The reset link goes out through whatever is configured under the Email tab — the same
+                    transport used for verification.
                 </p>
             </div>
-
-            <div className="flex justify-end pt-2">
-                <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40"
-                >
-                    {saving && <Loader2 size={14} className="animate-spin" />}
-                    Save authentication policy
-                </button>
-            </div>
-
-            {toast && (
-                <p className={`text-xs ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'} flex items-center gap-1`}>
-                    {toast.ok ? <CircleCheck size={12} /> : <CircleAlert size={12} />}
-                    {toast.msg}
-                </p>
-            )}
         </section>
     );
 }
 
-// ── SMTP section ──────────────────────────────────────────────────────
+// ── Mail section ──────────────────────────────────────────────────────
 
-function SMTPSection() {
-    const [cfg, setCfg] = useState<SMTPConfig | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [testing, setTesting] = useState(false);
+function MailSection() {
     const [testTo, setTestTo] = useState('');
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-    // What the mailer would actually use right now, so the header badge reports
-    // the stored profile rather than the form being typed into. mailer.LoadConfig
-    // has no env fallback and refuses on an empty host or from-address, so those
-    // two are exactly the line between "sends mail" and "every mail fails".
-    const [sending, setSending] = useState(false);
-    const smtpUsable = (c: SMTPConfig | null) => !!c && !!c.host.trim() && !!c.fromEmail.trim();
+    const [testing, setTesting] = useState(false);
 
-    useEffect(() => {
-        getSMTPConfig().then(res => {
-            if (res.success) {
-                setCfg(res.config);
-                setSending(smtpUsable(res.config));
-            }
-            setLoading(false);
-        });
-    }, []);
+    const form = useSettingsForm<SMTPConfig>({
+        load: async () => {
+            const res = await getSMTPConfig();
+            if (!res.success || !res.config) return null;
+            const c = res.config as SMTPConfig;
+            return { ...c, provider: c.provider || 'smtp', password: '', resendApiKey: '' };
+        },
+        save: async cfg => {
+            const res = await saveSMTPConfig(cfg);
+            const stored = res.config as SMTPConfig | undefined;
+            return {
+                ok: !!res.success,
+                message: res.message,
+                // Blank the write-only fields again after a save, so the form
+                // does not read dirty against a value the server never returns.
+                value: stored ? { ...stored, provider: stored.provider || 'smtp', password: '', resendApiKey: '' } : undefined,
+            };
+        },
+        successMessage: 'Email settings saved',
+    });
 
-    const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 4000);
-    };
+    const cfg = form.value;
 
-    const handleSave = async () => {
-        if (!cfg) return;
-        setSaving(true);
-        const res = await saveSMTPConfig(cfg);
-        setSaving(false);
-        if (res.success) {
-            if (res.config) setCfg(res.config);
-            setSending(smtpUsable(res.config ?? cfg));
-            flash('Saved.');
-        } else {
-            flash(res.message || 'Save failed.', false);
-        }
-    };
-
-    const handleTest = async () => {
-        setTesting(true);
-        const res = await testSendSMTP(testTo.trim() || undefined);
-        setTesting(false);
-        flash(res.message || (res.success ? 'Test sent.' : 'Test failed.'), !!res.success);
-    };
-
-    if (loading || !cfg) {
+    if (form.loading || !cfg) {
         return (
             <section className="card p-5 border border-(--base-03) space-y-4">
-                <h3 className="mono-label mb-3 flex items-center gap-2"><Send size={14} /> SMTP — Outgoing Email</h3>
+                <h3 className="mono-label mb-3 flex items-center gap-2"><Send size={14} /> Outgoing email</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <SkeletonFormRow />
                     <SkeletonFormRow />
                     <SkeletonFormRow />
                     <SkeletonFormRow />
-                    <SkeletonFormRow />
-                    <SkeletonFormRow />
                 </div>
-                <SkeletonFormRow />
             </section>
         );
     }
 
+    const isResend = cfg.provider === 'resend';
+    // What the mailer would use RIGHT NOW - the STORED profile, not the form
+    // being typed into. A badge that turns green while you type has only moved
+    // the lie earlier, which is why this reads form.saved and not cfg.
+    const stored = form.saved;
+    const sending = !!stored && (
+        stored.provider === 'resend'
+            ? !!stored.resendApiKeySet && !!stored.fromEmail.trim()
+            : !!stored.host.trim() && !!stored.fromEmail.trim()
+    );
+
+    const handleTest = async () => {
+        setTesting(true);
+        const res = await testSendSMTP(testTo.trim() || undefined);
+        setTesting(false);
+        toast(res.message || (res.success ? 'Test sent.' : 'Test failed.'), !!res.success);
+    };
+
     return (
         <section className="card p-5 border border-(--base-03) space-y-4 relative">
             <header className="flex items-center justify-between gap-3">
-                <h3 className="mono-label flex items-center gap-2"><Send size={14} /> SMTP — Outgoing Email</h3>
+                <h3 className="mono-label flex items-center gap-2"><Send size={14} /> Outgoing email</h3>
                 <StatusBadge active={sending} inactiveLabel="Not configured" />
             </header>
             <p className="text-xs text-(--base-06)">
-                The default SMTP profile is used for verification, password reset and ticket notifications. Per-purpose
-                overrides ship in later sub-phases.
+                Used for email verification, password resets, deletion warnings and billing notices.
+                With nothing configured here, every one of those silently does not arrive.
             </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field label="Host" value={cfg.host} onChange={v => setCfg({ ...cfg, host: v })} placeholder="smtp.example.com" />
-                <Field label="Port" type="number" value={String(cfg.port || '')} onChange={v => setCfg({ ...cfg, port: Number(v) || 0 })} placeholder="587 / 465 / 25" />
-                <Field label="Username" value={cfg.username} onChange={v => setCfg({ ...cfg, username: v })} autoComplete="off" />
-                <PasswordField
-                    label="Password"
-                    value={cfg.password || ''}
-                    placeholder={cfg.passwordSet ? '(stored — leave blank to keep)' : ''}
-                    onChange={v => setCfg({ ...cfg, password: v })}
-                />
-                <Field label="From email" value={cfg.fromEmail} onChange={v => setCfg({ ...cfg, fromEmail: v })} placeholder="noreply@example.com" />
-                <Field label="From name" value={cfg.fromName} onChange={v => setCfg({ ...cfg, fromName: v })} placeholder="Dylaris" />
-                <div className="flex flex-col gap-[5px] sm:col-span-2">
-                    <label className="input-label">Encryption</label>
-                    <select
-                        value={cfg.encryption || 'starttls'}
-                        onChange={e => setCfg({ ...cfg, encryption: e.target.value })}
-                        className="input-field w-full"
-                    >
-                        {ENCRYPTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
+            <div className="flex flex-col gap-[5px]">
+                <label className="input-label flex items-center gap-1.5">
+                    Provider
+                    <HelpTip label="About the mail providers">
+                        <p className="mb-2">
+                            <strong>SMTP</strong> talks to a mail server you already have. It is the
+                            right answer if you run one, and the wrong one if setting it up means a
+                            server, a reverse DNS entry and an SPF record first.
+                        </p>
+                        <p className="mb-2">
+                            <strong>Resend</strong> is an HTTP mail API: verify your domain once in
+                            their dashboard, paste an API key here, done. No port 25, no TLS
+                            negotiation, and it works from hosts that block outbound SMTP - which
+                            many do.
+                        </p>
+                        <p>
+                            The sender address below is shared, so switching does not mean retyping
+                            it, and switching back does not lose the other one&apos;s credential.
+                        </p>
+                    </HelpTip>
+                </label>
+                <select
+                    value={cfg.provider}
+                    onChange={e => form.patch({ provider: e.target.value as MailProvider })}
+                    className="input-field w-full"
+                >
+                    <option value="smtp">SMTP server</option>
+                    <option value="resend">Resend (API)</option>
+                </select>
+            </div>
+
+            {isResend ? (
+                <div className="flex flex-col gap-[5px]">
+                    <label className="input-label">Resend API key</label>
+                    <input
+                        type="password"
+                        value={cfg.resendApiKey || ''}
+                        placeholder={cfg.resendApiKeySet ? '(stored — leave blank to keep)' : 're_...'}
+                        autoComplete="new-password"
+                        onChange={e => form.patch({ resendApiKey: e.target.value })}
+                        className="input-field input-mono w-full"
+                    />
+                    <p className="text-xs text-(--base-06)">
+                        From the Resend dashboard under API Keys. Sending permission is enough. The
+                        domain in the sender address below has to be verified there, or Resend
+                        refuses the message and says so in the test result.
+                    </p>
                 </div>
+            ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Field label="Host" value={cfg.host} onChange={v => form.patch({ host: v })} placeholder="smtp.example.com" />
+                    <Field label="Port" type="number" value={String(cfg.port || '')} onChange={v => form.patch({ port: Number(v) || 0 })} placeholder="587 / 465 / 25" />
+                    <Field label="Username" value={cfg.username} onChange={v => form.patch({ username: v })} autoComplete="off" />
+                    <PasswordField
+                        label="Password"
+                        value={cfg.password || ''}
+                        placeholder={cfg.passwordSet ? '(stored — leave blank to keep)' : ''}
+                        onChange={v => form.patch({ password: v })}
+                    />
+                    <div className="flex flex-col gap-[5px] sm:col-span-2">
+                        <label className="input-label">Encryption</label>
+                        <select
+                            value={cfg.encryption || 'starttls'}
+                            onChange={e => form.patch({ encryption: e.target.value })}
+                            className="input-field w-full"
+                        >
+                            {ENCRYPTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                    </div>
+                </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-(--base-03)">
+                <Field label="From email" value={cfg.fromEmail} onChange={v => form.patch({ fromEmail: v })} placeholder="noreply@example.com" />
+                <Field label="From name" value={cfg.fromName} onChange={v => form.patch({ fromName: v })} placeholder="Dylaris" />
             </div>
 
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-2 border-t border-(--base-03)">
@@ -445,27 +495,19 @@ function SMTPSection() {
                 <button
                     type="button"
                     onClick={handleTest}
-                    disabled={testing}
+                    disabled={testing || form.dirty}
                     className="btn btn-secondary inline-flex items-center gap-2 disabled:opacity-40"
                 >
                     {testing && <Loader2 size={14} className="animate-spin" />}
                     Send test email
                 </button>
-                <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40"
-                >
-                    {saving && <Loader2 size={14} className="animate-spin" />}
-                    Save SMTP
-                </button>
             </div>
-
-            {toast && (
-                <p className={`text-xs ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'} flex items-center gap-1`}>
-                    {toast.ok ? <CircleCheck size={12} /> : <CircleAlert size={12} />}
-                    {toast.msg}
+            {/* The test uses what is STORED, not what is on screen. Sending one
+                against a half-typed form and reporting the old configuration's
+                result is how a broken setup passes its own test. */}
+            {form.dirty && (
+                <p className="text-xs text-(--base-06)">
+                    Save first — the test sends with the stored configuration, not the one on screen.
                 </p>
             )}
         </section>
@@ -474,20 +516,30 @@ function SMTPSection() {
 
 // ── Small UI helpers ──────────────────────────────────────────────────
 
-function ToggleRow({ label, description, value, onChange }: { label: string; description: string; value: boolean; onChange: (v: boolean) => void }) {
+function ToggleRow({
+    label,
+    description,
+    value,
+    onChange,
+    help,
+}: {
+    label: string;
+    description: string;
+    value: boolean;
+    onChange: (v: boolean) => void;
+    help?: React.ReactNode;
+}) {
     return (
-        <label className="flex items-start justify-between gap-4 cursor-pointer">
+        <div className="flex items-start justify-between gap-4">
             <div>
-                <p className="text-sm font-medium">{label}</p>
+                <p className="text-sm font-medium flex items-center gap-1.5">
+                    {label}
+                    {help && <HelpTip label={`About: ${label}`}>{help}</HelpTip>}
+                </p>
                 <p className="text-xs text-(--base-06) leading-snug mt-0.5">{description}</p>
             </div>
-            <input
-                type="checkbox"
-                checked={value}
-                onChange={e => onChange(e.target.checked)}
-                className="w-4 h-4 accent-(--accent) shrink-0 mt-1"
-            />
-        </label>
+            <Switch checked={value} onChange={onChange} ariaLabel={label} />
+        </div>
     );
 }
 
@@ -513,63 +565,26 @@ function StatusBadge({ active, activeLabel = 'Active', inactiveLabel = 'Off' }: 
 }
 
 // ── Auto-delete inactive users section ────────────────────────────────
-// Mirrors the auth-policy save pattern: one card, loads/saves the whole
-// AuthPolicy DTO. Lives outside AuthPolicySection because it has a
-// distinct concern (lifecycle vs gate) and would crowd that card otherwise.
+// Shares the AuthPolicy form with the sign-in tab: it is the same DTO, and two
+// copies of it is how one card silently reverted the other.
 
-function AutoDeleteSection() {
-    const [policy, setPolicy] = useState<AuthPolicy | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-    // The stored master toggle, not the checkbox: flipping it off and walking
-    // away without saving leaves the daily job running.
-    const [running, setRunning] = useState(false);
+function AutoDeleteSection({ form }: { form: SettingsForm<AuthPolicy> }) {
+    const policy = form.value;
+    // The stored master toggle, not the switch on screen: flipping it off and
+    // walking away without saving leaves the daily job running.
+    const running = !!form.saved?.inactiveDeleteEnabled;
 
-    useEffect(() => {
-        getAuthPolicy().then(res => {
-            if (res.success) {
-                setPolicy(res.policy);
-                setRunning(!!res.policy?.inactiveDeleteEnabled);
-            }
-            setLoading(false);
-        });
-    }, []);
-
-    const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 2800);
-    };
-
-    const handleSave = async () => {
-        if (!policy) return;
-        setSaving(true);
-        const res = await saveAuthPolicy(policy);
-        setSaving(false);
-        if (res.success) {
-            if (res.policy) setPolicy(res.policy);
-            setRunning(!!(res.policy ?? policy).inactiveDeleteEnabled);
-            flash('Saved.');
-        } else {
-            flash(res.message || 'Save failed.', false);
-        }
-    };
-
-    if (loading || !policy) {
+    if (form.loading || !policy) {
         return (
             <section className="card p-5 border border-(--base-03) space-y-4">
                 <h3 className="mono-label mb-3 flex items-center gap-2"><Trash2 size={14} /> Auto-delete inactive users</h3>
                 <SkeletonText width="w-3/4" />
                 <Skeleton className="h-10 w-full" />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <SkeletonFormRow />
-                    <SkeletonFormRow />
-                    <SkeletonFormRow />
-                    <SkeletonFormRow />
-                </div>
             </section>
         );
     }
+
+    const set = (patch: Partial<AuthPolicy>) => form.patch(patch);
 
     return (
         <section className="card p-5 border border-(--base-03) space-y-4">
@@ -585,7 +600,20 @@ function AutoDeleteSection() {
                 label="Enable auto-delete"
                 description="Master toggle. When off, the daily job is a no-op."
                 value={policy.inactiveDeleteEnabled}
-                onChange={v => setPolicy({ ...policy, inactiveDeleteEnabled: v })}
+                onChange={v => set({ inactiveDeleteEnabled: v })}
+                help={
+                    <>
+                        <p className="mb-2">
+                            This is the one setting on this page that acts on its own after you close
+                            the tab, so it asks before it is switched on.
+                        </p>
+                        <p>
+                            The warning email goes out through the Email tab. With no mail configured
+                            the accounts are still deleted, silently and without notice - set the
+                            lead time to 0 deliberately, or configure mail first.
+                        </p>
+                    </>
+                }
             />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -596,7 +624,7 @@ function AutoDeleteSection() {
                         min={7}
                         max={3650}
                         value={policy.inactiveDaysBeforeDelete}
-                        onChange={e => setPolicy({ ...policy, inactiveDaysBeforeDelete: Number(e.target.value) || 0 })}
+                        onChange={e => set({ inactiveDaysBeforeDelete: Number(e.target.value) || 0 })}
                         className="input-field w-full"
                     />
                     <p className="text-xs text-(--base-06)">Days since last login (or account creation when never logged in). 7–3650.</p>
@@ -608,7 +636,7 @@ function AutoDeleteSection() {
                         min={0}
                         max={3650}
                         value={policy.historyGraceExtraDays}
-                        onChange={e => setPolicy({ ...policy, historyGraceExtraDays: Number(e.target.value) || 0 })}
+                        onChange={e => set({ historyGraceExtraDays: Number(e.target.value) || 0 })}
                         className="input-field w-full"
                     />
                     <p className="text-xs text-(--base-06)">Additional days for accounts with server history (owns or invited).</p>
@@ -620,7 +648,7 @@ function AutoDeleteSection() {
                         min={0}
                         max={30}
                         value={policy.deleteEmailWarningDays}
-                        onChange={e => setPolicy({ ...policy, deleteEmailWarningDays: Number(e.target.value) || 0 })}
+                        onChange={e => set({ deleteEmailWarningDays: Number(e.target.value) || 0 })}
                         className="input-field w-full"
                     />
                     <p className="text-xs text-(--base-06)">Days between warning email and execution. 0 = no warning, immediate.</p>
@@ -629,7 +657,7 @@ function AutoDeleteSection() {
                     <label className="input-label">Deletion mode</label>
                     <select
                         value={policy.deletionMode}
-                        onChange={e => setPolicy({ ...policy, deletionMode: e.target.value as 'anonymize' | 'hard_delete' })}
+                        onChange={e => set({ deletionMode: e.target.value as 'anonymize' | 'hard_delete' })}
                         className="input-field w-full"
                     >
                         <option value="anonymize">Anonymize (DSGVO-friendly, keeps row + id)</option>
@@ -638,25 +666,6 @@ function AutoDeleteSection() {
                     <p className="text-xs text-(--base-06)">Anonymize wipes PII but preserves audit references. Hard delete removes the row.</p>
                 </div>
             </div>
-
-            <div className="flex justify-end pt-1">
-                <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40"
-                >
-                    {saving && <Loader2 size={14} className="animate-spin" />}
-                    Save auto-delete settings
-                </button>
-            </div>
-
-            {toast && (
-                <p className={`text-xs ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'} flex items-center gap-1`}>
-                    {toast.ok ? <CircleCheck size={12} /> : <CircleAlert size={12} />}
-                    {toast.msg}
-                </p>
-            )}
         </section>
     );
 }
@@ -666,52 +675,29 @@ function AutoDeleteSection() {
 // each server's Audit tab so admins can flip them in context.
 
 function AuditPolicySection() {
-    const [policy, setPolicy] = useState<AuditPolicy | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+    const form = useSettingsForm<AuditPolicy>({
+        load: async () => {
+            const res = await getAuditPolicy();
+            return res.success && res.policy ? (res.policy as AuditPolicy) : null;
+        },
+        save: async policy => {
+            const res = await saveAuditPolicy(policy);
+            return { ok: !!res.success, message: res.message, value: res.policy as AuditPolicy | undefined };
+        },
+        successMessage: 'Audit retention saved',
+    });
+
+    const policy = form.value;
     // The horizon the sweep is actually applying. 0 means it deletes nothing,
     // which is also what an install that never saved this card gets.
-    const [inForceDays, setInForceDays] = useState(0);
+    const inForceDays = form.saved?.serverRetentionDays ?? 0;
 
-    useEffect(() => {
-        getAuditPolicy().then(res => {
-            if (res.success) {
-                setPolicy(res.policy);
-                setInForceDays(res.policy?.serverRetentionDays ?? 0);
-            }
-            setLoading(false);
-        });
-    }, []);
-
-    const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 2800);
-    };
-
-    const handleSave = async () => {
-        if (!policy) return;
-        setSaving(true);
-        const res = await saveAuditPolicy(policy);
-        setSaving(false);
-        if (res.success) {
-            if (res.policy) setPolicy(res.policy);
-            setInForceDays((res.policy ?? policy).serverRetentionDays);
-            flash('Saved.');
-        } else {
-            flash(res.message || 'Save failed.', false);
-        }
-    };
-
-    if (loading || !policy) {
+    if (form.loading || !policy) {
         return (
             <section className="card p-5 border border-(--base-03) space-y-4">
                 <h3 className="mono-label mb-3 flex items-center gap-2"><FileText size={14} /> Audit retention</h3>
                 <SkeletonText width="w-3/4" />
-                <div className="flex items-center gap-3">
-                    <SkeletonText width="w-32" />
-                    <Skeleton className="h-9 w-24" />
-                </div>
+                <Skeleton className="h-9 w-24" />
             </section>
         );
     }
@@ -734,89 +720,57 @@ function AuditPolicySection() {
                     min={0}
                     max={3650}
                     value={policy.serverRetentionDays}
-                    onChange={e => setPolicy({ ...policy, serverRetentionDays: Number(e.target.value) || 0 })}
+                    onChange={e => form.patch({ serverRetentionDays: Number(e.target.value) || 0 })}
                     className="input-field w-24"
                 />
                 <span className="text-sm text-(--base-07)">days</span>
                 <p className="text-xs text-(--base-06) leading-tight">0 = unlimited. Range 0–3650.</p>
             </div>
-            <div className="flex justify-end pt-1">
-                <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40"
-                >
-                    {saving && <Loader2 size={14} className="animate-spin" />}
-                    Save audit policy
-                </button>
-            </div>
-            {toast && (
-                <p className={`text-xs ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'} flex items-center gap-1`}>
-                    {toast.ok ? <CircleCheck size={12} /> : <CircleAlert size={12} />}
-                    {toast.msg}
-                </p>
-            )}
         </section>
     );
 }
 
-// ── Security Questions Pool section ───────────────────────────────────
-// Editor for the admin-curated list of available questions. Lives in its
-// own card so the AuthPolicySection stays focused on toggles, and so the
-// editor's add/remove rows don't clutter the policy form.
+// ── Security questions pool section ───────────────────────────────────
 
 function SecurityQuestionsPoolSection() {
-    const [pool, setPool] = useState<string[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
     const [newQuestion, setNewQuestion] = useState('');
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    useEffect(() => {
-        getAdminSecurityQuestionPool().then(res => {
-            if (res.success && Array.isArray(res.pool)) setPool(res.pool);
-            setLoading(false);
-        });
-    }, []);
+    const form = useSettingsForm<{ pool: string[] }>({
+        load: async () => {
+            const res = await getAdminSecurityQuestionPool();
+            return res.success && Array.isArray(res.pool) ? { pool: res.pool as string[] } : null;
+        },
+        save: async v => {
+            // Refused here rather than at the server, because the server's own
+            // refusal would arrive as a toast on a form that still shows two
+            // questions and looks saveable.
+            if (v.pool.length < 3) {
+                return { ok: false, message: 'The pool needs at least 3 questions.' };
+            }
+            const res = await setAdminSecurityQuestionPool(v.pool);
+            return {
+                ok: !!res.success,
+                message: res.message,
+                value: Array.isArray(res.pool) ? { pool: res.pool as string[] } : undefined,
+            };
+        },
+        successMessage: 'Question pool saved',
+    });
 
-    const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 2800);
-    };
+    const pool = form.value?.pool ?? [];
 
     const handleAdd = () => {
         const q = newQuestion.trim();
         if (!q) return;
         if (pool.some(p => p.toLowerCase() === q.toLowerCase())) {
-            flash('That question is already in the pool.', false);
+            toast('That question is already in the pool.', false);
             return;
         }
-        setPool([...pool, q]);
+        form.patch({ pool: [...pool, q] });
         setNewQuestion('');
     };
 
-    const handleRemove = (idx: number) => {
-        setPool(pool.filter((_, i) => i !== idx));
-    };
-
-    const handleSave = async () => {
-        if (pool.length < 3) {
-            flash('Pool must contain at least 3 questions.', false);
-            return;
-        }
-        setSaving(true);
-        const res = await setAdminSecurityQuestionPool(pool);
-        setSaving(false);
-        if (res.success) {
-            if (Array.isArray(res.pool)) setPool(res.pool);
-            flash('Pool saved.');
-        } else {
-            flash(res.message || 'Save failed.', false);
-        }
-    };
-
-    if (loading) {
+    if (form.loading || !form.value) {
         return (
             <section className="card p-5 border border-(--base-03) space-y-4">
                 <h3 className="mono-label mb-3 flex items-center gap-2"><HelpCircle size={14} /> Security questions pool</h3>
@@ -826,10 +780,6 @@ function SecurityQuestionsPoolSection() {
                         <Skeleton key={i} className="h-9 w-full" />
                     ))}
                 </div>
-                <div className="flex gap-2">
-                    <Skeleton className="h-9 flex-1" />
-                    <Skeleton className="h-9 w-20" />
-                </div>
             </section>
         );
     }
@@ -838,7 +788,7 @@ function SecurityQuestionsPoolSection() {
         <section className="card p-5 border border-(--base-03) space-y-4">
             <header className="flex items-center justify-between gap-3">
                 <h3 className="mono-label flex items-center gap-2"><HelpCircle size={14} /> Security questions pool</h3>
-                {/* Always in force - the pool is whatever it contains. */}
+                {/* Always in force - the pool is whatever it contains, so there is no state to be wrong about. */}
                 <StatusBadge active />
             </header>
             <p className="text-xs text-(--base-06)">
@@ -855,11 +805,9 @@ function SecurityQuestionsPoolSection() {
                         <span className="flex-1 text-sm text-(--base-09)">{q}</span>
                         <button
                             type="button"
-                            onClick={() => handleRemove(idx)}
-                            disabled={saving}
-                            title="Remove"
+                            onClick={() => form.patch({ pool: pool.filter((_, i) => i !== idx) })}
                             aria-label={`Remove question ${idx + 1}`}
-                            className="p-1.5 rounded text-(--error-light) hover:bg-(--error-ghost) disabled:opacity-40"
+                            className="p-1.5 rounded text-(--error-light) hover:bg-(--error-ghost)"
                         >
                             <X size={13} />
                         </button>
@@ -880,31 +828,16 @@ function SecurityQuestionsPoolSection() {
                 <button
                     type="button"
                     onClick={handleAdd}
-                    disabled={!newQuestion.trim() || saving}
+                    disabled={!newQuestion.trim()}
                     className="btn btn-secondary inline-flex items-center gap-1.5 disabled:opacity-40"
                 >
                     <Plus size={14} /> Add
                 </button>
             </div>
-
-            <div className="flex justify-end pt-1">
-                <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40"
-                >
-                    {saving && <Loader2 size={14} className="animate-spin" />}
-                    Save pool
-                </button>
-            </div>
-
-            {toast && (
-                <p className={`text-xs ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'} flex items-center gap-1`}>
-                    {toast.ok ? <CircleCheck size={12} /> : <CircleAlert size={12} />}
-                    {toast.msg}
-                </p>
-            )}
+            <p className="text-xs text-(--base-06)">
+                Adding and removing are edits like any other here — the save bar at the bottom of the
+                page commits them.
+            </p>
         </section>
     );
 }

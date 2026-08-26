@@ -368,9 +368,9 @@ func randomToken(nBytes int) (string, error) {
 // Pure helper so the test endpoint and the production flow can be kept in
 // sync (both go through mailer.Send).
 func sendVerificationEmail(state *AppState, to, username, token string) error {
-	cfg, err := mailer.LoadConfig(state.Store, "auth")
+	transport, err := mailer.Load(state.Store, "auth")
 	if err != nil {
-		return fmt.Errorf("smtp not configured: %w", err)
+		return fmt.Errorf("mail not configured: %w", err)
 	}
 	link := strings.TrimRight(state.FrontendURL, "/") + "/verify-email?token=" + token
 	body := fmt.Sprintf(`Hi %s,
@@ -383,7 +383,7 @@ This link is single-use and was issued just now. If you did not register, you ca
 
 — Dylaris
 `, username, link)
-	return mailer.Send(cfg, mailer.Message{
+	return transport.Send(mailer.Message{
 		To:      to,
 		Subject: "Confirm your Dylaris account",
 		Body:    body,

@@ -244,9 +244,9 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 // Mirror of sendVerificationEmail (registration.go) — kept separate so the
 // templates can diverge (we'll likely want different copy/CTAs eventually).
 func sendPasswordResetEmail(state *AppState, to, username, token string, ttlMinutes int) error {
-	cfg, err := mailer.LoadConfig(state.Store, "auth")
+	transport, err := mailer.Load(state.Store, "auth")
 	if err != nil {
-		return fmt.Errorf("smtp not configured: %w", err)
+		return fmt.Errorf("mail not configured: %w", err)
 	}
 	link := strings.TrimRight(state.FrontendURL, "/") + "/reset-password?token=" + token
 	body := fmt.Sprintf(`Hi %s,
@@ -259,7 +259,7 @@ This link is valid for %d minute(s) and works exactly once. If you did not reque
 
 — Dylaris
 `, username, link, ttlMinutes)
-	return mailer.Send(cfg, mailer.Message{
+	return transport.Send(mailer.Message{
 		To:      to,
 		Subject: "Reset your Dylaris password",
 		Body:    body,
