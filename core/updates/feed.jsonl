@@ -264,3 +264,7 @@
 {"date":"2026-08-26","service":"core","type":"fix","summary":"A Minecraft version move the node could not carry out now puts the server's recorded version and mod list back, instead of leaving them describing a move that never happened."}
 {"date":"2026-08-26","service":"core","type":"fix","summary":"Copying a sub-server onto a name that already exists is refused instead of merging the copy's mod list into the existing one."}
 {"date":"2026-08-26","service":"panel","type":"fix","summary":"Migrating a modpack build now says which mods could not be added to the new build, instead of reporting a plain success."}
+{"date":"2026-08-27","service":"node","type":"security","summary":"Identifying unknown jars no longer follows a symlink out of the server directory, which could reveal the size and checksums of files elsewhere on the node."}
+{"date":"2026-08-27","service":"core","type":"fix","summary":"Identifying a jar that is a second copy of a mod you already have is now refused and explained, instead of quietly pointing the existing mod at the stray file."}
+{"date":"2026-08-27","service":"core","type":"fix","summary":"When Modrinth cannot be reached, identifying jars now says so instead of reporting that the files are not on Modrinth."}
+{"date":"2026-08-27","service":"core","type":"fix","summary":"Identifying more than 200 unknown jars at once now works; it used to be refused outright, which is the case an imported server hits first."}

@@ -34,8 +34,11 @@ const hashFilesMaxSize = 512 << 20
 // directory it already asked for, and a path there would be an attempt to leave
 // it.
 func (h *StreamHandler) handleHashFiles(reqID, serverUUID string, req *pb.HashFilesReq) *pb.NodeMessage {
-	dirPath, err := h.validatePath(req.Path, serverUUID)
-	if err != nil {
+	// The directory is validated up front so a traversal in Path is refused as
+	// one error rather than as a per-file "not found" for every name in it. The
+	// result is deliberately unused: each name is re-validated below, against
+	// the server directory.
+	if _, err := h.validatePath(req.Path, serverUUID); err != nil {
 		return errorMsg(reqID, 403, err.Error())
 	}
 	if len(req.Names) > hashFilesMaxCount {
@@ -50,7 +53,28 @@ func (h *StreamHandler) handleHashFiles(reqID, serverUUID string, req *pb.HashFi
 			out = append(out, fh)
 			continue
 		}
-		full := filepath.Join(dirPath, name)
+		// Re-validated, not filepath.Join'd: os.Stat and os.Open both FOLLOW
+		// symlinks, so joining a name onto a validated directory reaches
+		// wherever a planted link points. The directory in the request goes
+		// through validatePath; the names have to as well.
+		//
+		// Against the SERVER directory rather than against dirPath. A link from
+		// mods/ to something else inside the same server is ordinary content -
+		// the rule is about leaving the tenant's own tree, not about links - and
+		// measuring from the subdirectory would refuse it.
+		//
+		// A tenant plants the link from inside their own Minecraft container -
+		// the server directory is bind-mounted into it - or over SFTP, then
+		// presses "identify unknown jars". What came back for a path that
+		// exists only on the node was its size and both digests: a filesystem
+		// oracle over the whole host, other tenants' directories included, plus
+		// offline confirmation of any file whose content can be guessed.
+		full, perr := h.validatePath(filepath.Join(req.Path, name), serverUUID)
+		if perr != nil {
+			fh.Error = "not found"
+			out = append(out, fh)
+			continue
+		}
 		stat, err := os.Stat(full)
 		if err != nil {
 			fh.Error = "not found"

@@ -185,6 +185,24 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 		byDir[f.Directory] = append(byDir[f.Directory], f.Name)
 	}
 
+	// Which projects this sub-server already has a row for, and under which
+	// file name.
+	//
+	// server_mods conflicts on (server_id, sub_server_name, modrinth_project_id),
+	// so identifying a stray jar as a project that is ALREADY installed did not
+	// add a row - it rewrote the existing one onto the stray's file name. The
+	// managed jar then read as unmanaged, and the next version move removed the
+	// stray while leaving the real one behind: two copies of one mod, and a
+	// server that will not start.
+	claimedBy := map[string]string{}
+	if existing, lerr := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer); lerr == nil {
+		for _, m := range existing {
+			if m.ModrinthProjectID != "" {
+				claimedBy[m.ModrinthProjectID] = m.FileName
+			}
+		}
+	}
+
 	userID, _ := r.Context().Value("userID").(string)
 	results := []identifyResult{}
 	linked := 0
@@ -201,9 +219,24 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 				results = append(results, res)
 				continue
 			}
-			v := services.ModrinthByHash(fh.Sha1)
+			v, lookupErr := services.ModrinthByHashErr(fh.Sha1)
+			if lookupErr != nil && !services.ModrinthNotFound(lookupErr) {
+				// Not the same answer as "unknown", and it must not read like
+				// one: an operator told a jar is not on Modrinth may well
+				// delete it.
+				res.Reason = "Modrinth could not be reached, so this file was not identified: " + lookupErr.Error()
+				results = append(results, res)
+				continue
+			}
 			if v == nil || v.ID == "" {
 				res.Reason = "no Modrinth version has this file's hash"
+				results = append(results, res)
+				continue
+			}
+			if other, dup := duplicateOfInstalled(claimedBy, v.ProjectID, fh.Name); dup {
+				res.Title = v.Name
+				res.ProjectID = v.ProjectID
+				res.Reason = "already installed as " + other + ", so this is a second copy: remove one of them"
 				results = append(results, res)
 				continue
 			}
@@ -227,6 +260,10 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 			linked++
+			// Claim it, so a SECOND stray copy of the same project inside this
+			// one request is refused too rather than overwriting the row that
+			// was just written.
+			claimedBy[v.ProjectID] = fh.Name
 			res.Matched = true
 			res.Title = v.Name
 			res.ProjectID = v.ProjectID
@@ -429,6 +466,26 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		"installed": len(install),
 		"removed":   unavailable,
 	})
+}
+
+// duplicateOfInstalled reports whether identifying fileName as projectID would
+// collide with a mod this sub-server already has, and under which name.
+//
+// server_mods conflicts on (server_id, sub_server_name, modrinth_project_id), so
+// an upsert here does not add a row - it REWRITES the existing one onto the new
+// file name. Identifying a stray copy of an installed mod therefore pointed the
+// managed row at the stray, the real jar read as unmanaged, and the next version
+// move removed the stray while leaving the real one behind: two copies of one
+// mod and a server that will not start.
+//
+// Re-identifying the SAME file is not a duplicate. It refreshes the row, which
+// is what someone repairing a broken link is asking for.
+func duplicateOfInstalled(claimedBy map[string]string, projectID, fileName string) (string, bool) {
+	other, taken := claimedBy[projectID]
+	if !taken || other == fileName {
+		return "", false
+	}
+	return other, true
 }
 
 // buildVersionUpdateUndo captures everything the optimistic writes are about to
@@ -673,7 +730,30 @@ func (h *ServerModsHandler) listServerDir(nodeID int, serverUUID, dir string) ([
 	return list.Files, nil
 }
 
+// hashFilesBatch must not exceed the node's own hashFilesMaxCount (200 in
+// node/grpc_hash_files.go). Core cannot import that constant, so it is repeated
+// here rather than left to be discovered: without the batching, identifying the
+// jars of an imported server - which is the whole reason this endpoint exists,
+// and routinely means a few hundred files - was refused wholesale by the node
+// with "too many files in one request".
+const hashFilesBatch = 200
+
 func (h *ServerModsHandler) hashServerFiles(nodeID int, serverUUID, dir string, names []string) ([]*pb.FileHash, error) {
+	if len(names) > hashFilesBatch {
+		out := make([]*pb.FileHash, 0, len(names))
+		for start := 0; start < len(names); start += hashFilesBatch {
+			end := start + hashFilesBatch
+			if end > len(names) {
+				end = len(names)
+			}
+			part, err := h.hashServerFiles(nodeID, serverUUID, dir, names[start:end])
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, part...)
+		}
+		return out, nil
+	}
 	if h.state.GRPCRegistry == nil {
 		return nil, fmt.Errorf("node connection not available")
 	}

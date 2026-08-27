@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,6 +50,29 @@ const modrinthUA = "Dylaris/1.0 (dylaris panel)"
 
 var modrinthHTTP = &http.Client{Timeout: 15 * time.Second}
 
+// ModrinthHTTPError is a non-200 answer from Modrinth, with the status kept.
+//
+// It used to be a formatted string, which erased the one distinction that
+// matters to anything showing the result to a person: 404 means "Modrinth does
+// not know this", and everything else means "Modrinth did not answer". Both
+// arrived as a nil and were reported as the former.
+type ModrinthHTTPError struct {
+	Path   string
+	Status int
+	Body   string
+}
+
+func (e *ModrinthHTTPError) Error() string {
+	return fmt.Sprintf("modrinth %s: %d %s", e.Path, e.Status, e.Body)
+}
+
+// ModrinthNotFound reports whether err is Modrinth saying it does not know the
+// thing that was asked for, as opposed to not answering at all.
+func ModrinthNotFound(err error) bool {
+	var httpErr *ModrinthHTTPError
+	return errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound
+}
+
 func modrinthGet(path string, out interface{}) error {
 	req, _ := http.NewRequest("GET", modrinthAPI+path, nil)
 	req.Header.Set("User-Agent", modrinthUA)
@@ -59,7 +83,7 @@ func modrinthGet(path string, out interface{}) error {
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
 		b, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("modrinth %s: %d %s", path, res.StatusCode, string(b))
+		return &ModrinthHTTPError{Path: path, Status: res.StatusCode, Body: string(b)}
 	}
 	return json.NewDecoder(res.Body).Decode(out)
 }
@@ -75,11 +99,23 @@ func FetchModrinthVersion(versionID string) (*modrinthVersion, error) {
 
 // ModrinthByHash returns the version matching an sha1 hash, or nil.
 func ModrinthByHash(sha1hex string) *modrinthVersion {
+	v, _ := ModrinthByHashErr(sha1hex)
+	return v
+}
+
+// ModrinthByHashErr is ModrinthByHash with the reason kept.
+//
+// The nil-on-anything version above is right for the two import paths, where a
+// miss just leaves a file unlinked. It is wrong wherever the answer is shown to
+// someone: "no Modrinth version has this hash" and "Modrinth did not answer"
+// look identical from a nil, so an outage told every operator their jars were
+// not on Modrinth - advice they might act on by deleting them.
+func ModrinthByHashErr(sha1hex string) (*modrinthVersion, error) {
 	var v modrinthVersion
 	if err := modrinthGet("/version_file/"+url.PathEscape(sha1hex)+"?algorithm=sha1", &v); err != nil {
-		return nil
+		return nil, err
 	}
-	return &v
+	return &v, nil
 }
 
 // CheckLatestVersions batch-queries Modrinth for the latest version matching the

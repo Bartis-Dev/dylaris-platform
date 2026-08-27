@@ -181,3 +181,53 @@ func TestSubServerNameTakenOnAnEmptyDirectory(t *testing.T) {
 		t.Error("reported a collision against an empty listing")
 	}
 }
+
+// Identifying a stray copy of a mod that is already installed must be refused,
+// not written.
+//
+// server_mods conflicts on (server_id, sub_server_name, modrinth_project_id), so
+// the upsert did not add a row - it rewrote the existing one onto the stray's
+// file name. The managed jar then read as unmanaged, and the next version move
+// removed the stray while leaving the real one behind: two copies of one mod in
+// the mods directory, and a server that will not start.
+func TestDuplicateOfInstalled(t *testing.T) {
+	claimed := map[string]string{
+		"AANobbMI": "sodium-0.5.8.jar",
+		"gvQqBUqZ": "lithium-0.11.2.jar",
+	}
+	tests := []struct {
+		name      string
+		projectID string
+		fileName  string
+		wantOther string
+		wantDup   bool
+	}{
+		{"a second copy under another name is a duplicate",
+			"AANobbMI", "sodium-old.jar", "sodium-0.5.8.jar", true},
+		{"a project nobody has installed is fine",
+			"P7dR8mSH", "fabric-api.jar", "", false},
+
+		// Re-identifying the SAME file refreshes the row, which is exactly what
+		// someone repairing a broken link is asking for.
+		{"the same file is not a duplicate of itself",
+			"AANobbMI", "sodium-0.5.8.jar", "", false},
+
+		{"an empty claim map never collides",
+			"AANobbMI", "sodium-0.5.8.jar", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := claimed
+			if tt.name == "an empty claim map never collides" {
+				m = map[string]string{}
+			}
+			other, dup := duplicateOfInstalled(m, tt.projectID, tt.fileName)
+			if dup != tt.wantDup {
+				t.Fatalf("duplicate = %v, want %v", dup, tt.wantDup)
+			}
+			if other != tt.wantOther {
+				t.Errorf("other = %q, want %q", other, tt.wantOther)
+			}
+		})
+	}
+}
