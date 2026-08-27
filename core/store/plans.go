@@ -236,10 +236,31 @@ func (s *PostgresStore) CountNodesByOwner(ownerID string) (int, error) {
 // minted key is a node that has not connected YET - capping only on nodes that
 // already exist would let a tenant with a one-node plan mint keys without limit
 // and stand up as many machines as they liked.
+//
+// UNREDEEMED is the whole word, and it used to be only a word: the query counted
+// every live key. A BYON machine needs BOTH secrets, as the panel that mints
+// them says - a warp key to reach the overlay and an enroll token to become a
+// node - and neither is retired when the machine connects, because warp
+// re-enrols with that key for the life of the machine. So one running machine
+// was one nodes row PLUS one live key, and every consumer of this sum counted it
+// twice: the mint gate refused the second machine on a two-node plan, the panel
+// showed 2 of 2 for one box, and the over-limit sweep read a tenant who was
+// exactly within their plan as over it - which stops everything they own 72
+// hours later. Measured against Postgres: one machine, counted as two.
+//
+// A key is redeemed once it has enrolled a warp peer. warp_peers.api_key_id is
+// NOT NULL and written at enrolment, so this is exact rather than a heuristic,
+// and it is the index idx_warp_peers_key exists for.
+//
+// It under-counts for the seconds between a machine joining the overlay and its
+// node agent pairing: the key is redeemed and the nodes row does not exist yet.
+// That direction is deliberate. Being briefly generous costs a tenant nothing;
+// being briefly wrong the other way cuts off a customer who is paid up.
 func (s *PostgresStore) CountNodeWarpKeysByOwner(ownerID string) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM warp_api_keys
-		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND node_id LIKE 'node-%'`, ownerID).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM warp_api_keys k
+		WHERE k.owner_id = $1::uuid AND k.revoked_at IS NULL AND k.node_id LIKE 'node-%'
+		  AND NOT EXISTS (SELECT 1 FROM warp_peers p WHERE p.api_key_id = k.id)`, ownerID).Scan(&n)
 	return n, err
 }
 

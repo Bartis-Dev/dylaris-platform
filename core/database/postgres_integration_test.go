@@ -890,3 +890,80 @@ func TestIntegrationUsernameCaseReservation(t *testing.T) {
 		}
 	})
 }
+
+// A BYON machine must count as ONE machine against the node cap.
+//
+// It needs two secrets, and the panel that mints them says so: a warp key to
+// reach the overlay and an enroll token to become a node. Neither is retired
+// when the machine connects - warp re-enrols with that key for the life of the
+// box - so a running machine is a nodes row AND a live warp key, and the cap
+// was the sum of the two.
+//
+// Every consumer of that sum was wrong by the same factor: the mint gate
+// refused the second machine on a two-node plan, the panel's "used" showed 2
+// of 2 for one box, and the over-limit sweep read a tenant who was exactly
+// within their plan as over it - which stops everything they own 72 hours
+// later, by email, for being compliant.
+//
+// Against a real database rather than a mocked row, because the defect is in
+// what the query MEANS. A test asserting the SQL string would have passed
+// against the broken version, which is what "UNREDEEMED" in its comment did.
+func TestIntegrationBYONMachineCountsOnceAgainstTheNodeCap(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	if err := st.SetNodeOwner(f.node.ID, &f.user.ID); err != nil {
+		t.Fatalf("SetNodeOwner: %v", err)
+	}
+
+	mintKey := func(name string) int {
+		t.Helper()
+		id, err := st.CreateWarpAPIKey(store.WarpAPIKey{
+			Name: uniqueName(name), KeyHash: uniqueName("h_"), Policy: "general",
+			MaxConns: 1, OnNewConn: "kill_old", NodeID: uniqueName("node-"),
+			OwnerID: f.user.ID,
+		})
+		if err != nil {
+			t.Fatalf("CreateWarpAPIKey: %v", err)
+		}
+		return id
+	}
+	count := func() int {
+		t.Helper()
+		nodes, err := st.CountNodesByOwner(f.user.ID)
+		if err != nil {
+			t.Fatalf("CountNodesByOwner: %v", err)
+		}
+		keys, err := st.CountNodeWarpKeysByOwner(f.user.ID)
+		if err != nil {
+			t.Fatalf("CountNodeWarpKeysByOwner: %v", err)
+		}
+		return nodes + keys
+	}
+
+	// The key is minted and the machine has not connected yet. It still has to
+	// count, or a one-node plan mints keys without limit.
+	keyID := mintKey("k_")
+	if got := count(); got != 2 {
+		// One node from the fixture (now owned) plus one unredeemed key.
+		t.Fatalf("a minted, unconnected key plus one node counted as %d, want 2", got)
+	}
+
+	// The machine joins the overlay: the key is now redeemed. Together with the
+	// nodes row it is ONE machine, not two.
+	if _, err := st.InsertWarpPeer(store.WarpPeer{
+		APIKeyID: keyID, Pubkey: uniqueName("pk_"), WGIP: uniqueName("10.44.0."), Region: "leader-01",
+	}); err != nil {
+		t.Fatalf("InsertWarpPeer: %v", err)
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("one connected BYON machine counted as %d, want 1 - the sweep cuts off a tenant who is within their plan", got)
+	}
+
+	// A second machine mid-setup is counted again, which is the behaviour the
+	// key half exists for.
+	mintKey("k2_")
+	if got := count(); got != 2 {
+		t.Fatalf("one connected machine plus one being set up counted as %d, want 2", got)
+	}
+}

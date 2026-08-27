@@ -270,3 +270,4 @@
 {"date":"2026-08-27","service":"core","type":"fix","summary":"Identifying more than 200 unknown jars at once now works; it used to be refused outright, which is the case an imported server hits first."}
 {"date":"2026-08-27","service":"core","type":"security","summary":"The panel no longer sends its signed request, or the DNS credential with it, to whatever answers when the gateway hub name has not resolved yet."}
 {"date":"2026-08-27","service":"panel","type":"fix","summary":"Clicking Settings in the top bar, or a server in the sidebar, while editing a form on that page no longer discards the edits without asking."}
+{"date":"2026-08-27","service":"core","type":"fix","summary":"A connected bring-your-own-node machine counted twice against the node limit. Customers were refused a second machine, shown the wrong usage, and could be warned and cut off while exactly within their plan."}
