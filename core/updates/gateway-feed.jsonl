@@ -56,3 +56,5 @@
 {"date":"2026-08-27","service":"hub","type":"fix","summary":"Two hubs can no longer end up ordering a certificate for the same name at once after a Redis outage, which used to spend the weekly duplicate-certificate allowance."}
 {"date":"2026-08-27","service":"hub","type":"security","summary":"A link name or subnet list containing unusual characters can no longer inject anything into the deploy kit a customer runs."}
 {"date":"2026-08-27","service":"hub","type":"fix","summary":"Switching a DNS zone off in the panel now just stops writing to it. It used to delete every record the gateway had created there once the grace period passed, including ones still carrying players."}
+{"date":"2026-08-27","service":"hub","type":"security","summary":"The hub admin interface now verifies the request token on the three DNS and certificate forms, the way it already did on every other form there."}
+{"date":"2026-08-27","service":"beam","type":"fix","summary":"Setting only one of TLS_CERT_PATH and TLS_KEY_PATH on a beam relay left it serving a self-signed certificate permanently. It now says so and asks the hub for a real one instead."}
