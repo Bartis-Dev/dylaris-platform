@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -9,35 +8,45 @@ import (
 	"strings"
 )
 
-// --- Handshake / Auth (v1) ---
+// --- Handshake / Auth ---
+
+// maxTokenLen bounds the byte-by-byte handshake read so a misbehaving or
+// malicious peer can't stream unbounded bytes before sending a newline.
+const maxTokenLen = 4096
 
 // ReadToken reads the auth token (String + Newline) from the stream.
 // This is used by the Gate to authenticate the Link.
 //
-// UNUSED IN THIS REPO, AND DO NOT START USING IT AS WRITTEN. platform imports
-// exactly one symbol from this package (WriteBeamHeader); the rest is a copy of
-// gateway/pkg/protocol that was taken before gateway fixed this function, and
-// the fix did not travel back. gateway's version reads the conn ONE BYTE AT A
-// TIME and caps the read at 4096 bytes, for two reasons this copy still gets
-// wrong:
-//
-//   - bufio reads AHEAD past the newline and buffers bytes belonging to the
-//     next protocol phase (the yamux preface). Those bytes are dropped when
-//     this returns, which surfaces as "error reading server preface: EOF".
-//   - there is no length bound here, so a peer that never sends a newline
-//     streams unbounded bytes into memory.
-//
-// If platform ever needs a token handshake, port gateway's implementation
-// rather than this one.
+// It reads one byte at a time directly from r and stops at the first '\n'.
+// A buffered reader (bufio) must NOT be used here: it can read ahead past the
+// newline and buffer bytes that belong to the next protocol phase (the yamux
+// preface), which would then be silently dropped when this function returns —
+// corrupting the session ("error reading server preface: EOF"). Reading the
+// raw conn byte-by-byte leaves any post-newline bytes untouched on the conn
+// for yamux.Server/Client to consume.
 func ReadToken(r io.Reader) (string, error) {
-	// We use bufio for efficient reading until the newline
-	reader := bufio.NewReader(r)
-	token, err := reader.ReadString('\n')
-	if err != nil {
-		return "", err
+	var b [1]byte
+	buf := make([]byte, 0, 64)
+	for {
+		n, err := r.Read(b[:])
+		if n > 0 {
+			if b[0] == '\n' {
+				break
+			}
+			buf = append(buf, b[0])
+			if len(buf) > maxTokenLen {
+				return "", fmt.Errorf("token exceeds %d bytes without newline", maxTokenLen)
+			}
+		}
+		if err != nil {
+			if err == io.EOF && len(buf) > 0 {
+				break
+			}
+			return "", err
+		}
 	}
-	// Remove whitespace (like \n or \r)
-	return strings.TrimSpace(token), nil
+	// Remove whitespace (like \r)
+	return strings.TrimSpace(string(buf)), nil
 }
 
 // WriteToken writes the token (String + Newline) to the stream.
