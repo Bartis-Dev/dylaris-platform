@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -386,43 +388,51 @@ func TestCap_TabsReadVsWrite(t *testing.T) {
 	}
 }
 
-// TestCap_ProxyAuthNeedsTabsRead: minting a tab-proxy ticket takes the same cap
-// as listing the tabs.
+// Minting a tab-proxy ticket takes the same capability as listing the tabs.
 //
-// The assertion for the overview.read holder is inverted from what it used to
-// be ("overview.read holder must reach proxy-auth"). That left the tabs guarded
-// inconsistently: TestCap_TabsReadVsWrite above proves a member without
-// tabs.read is refused when asking which tabs exist, yet the same member could
-// mint a ticket for one and reach its proxied content in full. The ticket is
-// the access, not a hint about it - the proxy runs on the root router and
-// checks nothing but the cookie.
-func TestCap_ProxyAuthNeedsTabsRead(t *testing.T) {
-	fs := &authzFakeStore{settings: map[string]string{"feature_tab_proxy_enabled": "true"}}
-	fs.addUser("owner-id", "owner", false)
-	fs.addUser("viewer-id", "viewer", false)
-	fs.addUser("tabreader-id", "tabreader", false)
-	fs.addUser("stranger-id", "stranger", false)
-	fs.servers = map[int]*models.Server{8: {ID: 8, OwnerID: "owner-id", OwnerName: "owner"}}
-	fs.serverRoles = map[int]*store.ServerRole{
-		22: {ID: 22, Capabilities: []string{"overview.read"}},
-		23: {ID: 23, Capabilities: []string{"tabs.read"}},
+// This used to run through the route table, because the mint was a route with
+// RequireCap("tabs.read") on it. It is not any more: a cookie can only be set
+// for the host that answers the request, and a tab is served on its own host,
+// so the mint moved there (handlers.HostMint) and its authorization moved
+// in-handler with it.
+//
+// The invariant did not move, and it is the important half. The ticket is not a
+// hint about access, it IS the access - the content handler checks nothing but
+// the cookie - so a member who may not ask WHICH tabs exist must not be able to
+// mint one and read a tab in full. That was a real regression once, when this
+// gate said overview.read while the listing said tabs.read.
+//
+// Asserting it against the source is deliberate: HostMint resolves its tab from
+// the request Host through the database, so there is no route to drive and no
+// handler call that reaches the authz check without one. The ORDER is asserted
+// too - a capability check after the ticket is issued would be decoration.
+func TestHostMintStillRequiresTabsRead(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("handlers", "tab_proxy_host.go"))
+	if err != nil {
+		t.Fatalf("read tab_proxy_host.go: %v", err)
 	}
-	fs.serverGrants = map[string]*store.ServerGrant{
-		skey(8, "viewer-id"):    {UserID: "viewer-id", ServerRoleID: intPtr(22)},
-		skey(8, "tabreader-id"): {UserID: "tabreader-id", ServerRoleID: intPtr(23)},
+	body := string(src)
+	i := strings.Index(body, "func (h *ProxyHandler) HostMint(")
+	if i < 0 {
+		t.Fatal("HostMint is gone; if the mint moved again, move this assertion with it")
 	}
-	srv := newAuthzTestServer(t, fs)
-	if c := doAs(t, srv, "GET", "/api/servers/8/tabs/1/proxy-auth", testIdentity{UserID: "tabreader-id", Username: "tabreader"}); c == 403 {
-		t.Error("tabs.read holder must reach proxy-auth")
+	body = body[i:]
+	if j := strings.Index(body, "\nfunc "); j > 0 {
+		body = body[:j]
 	}
-	if c := doAs(t, srv, "GET", "/api/servers/8/tabs/1/proxy-auth", testIdentity{UserID: "owner-id", Username: "owner"}); c == 403 {
-		t.Error("the owner must reach proxy-auth on their own server")
-	}
-	if c := doAs(t, srv, "GET", "/api/servers/8/tabs/1/proxy-auth", testIdentity{UserID: "viewer-id", Username: "viewer"}); c != 403 {
-		t.Errorf("overview.read-only holder must be 403 on proxy-auth (needs tabs.read), got %d", c)
-	}
-	if c := doAs(t, srv, "GET", "/api/servers/8/tabs/1/proxy-auth", testIdentity{UserID: "stranger-id", Username: "stranger"}); c != 403 {
-		t.Errorf("ungranted user must be 403 on proxy-auth, got %d", c)
+
+	resolve := strings.Index(body, "h.state.Authz.Resolve(")
+	hasCap := strings.Index(body, "HasCap(tabsReadCap)")
+	issue := strings.Index(body, "IssueTabProxyTicket(")
+	switch {
+	case resolve < 0:
+		t.Error("HostMint no longer resolves the caller's capabilities on the tab's server")
+	case hasCap < 0:
+		t.Error("HostMint no longer requires tabs.read; a member refused the tab LIST could mint a ticket and read the tab in full")
+	case issue < 0:
+		t.Error("HostMint no longer issues a ticket - this assertion is checking the wrong function")
+	case hasCap > issue:
+		t.Error("the capability check runs AFTER the ticket is issued, so it decides nothing")
 	}
 }
 

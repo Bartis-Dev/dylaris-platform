@@ -33,6 +33,10 @@ var ExemptRoutes = map[string]bool{
 	"/api/system/capabilities": true,
 	"/api/system/core-info":    true,
 	"/api/share/{token}":       true,
+	// The share token IS the credential, and this answers only "which host
+	// serves it, and will you be asked to sign in" - never a byte of the tab.
+	// Rate limited at the route because it is anonymous.
+	"/api/tabproxy/{token}/resolve": true,
 
 	"/api/auth/registration-status":     true,
 	"/api/auth/register":                true,

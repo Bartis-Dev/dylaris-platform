@@ -42,6 +42,11 @@ type serverTabResponse struct {
 	Visibility     string     `json:"visibility"`
 	ShareToken     string     `json:"shareToken"`
 	ShareExpiresAt *time.Time `json:"shareExpiresAt"`
+	// ProxyOrigin is the browser-facing origin this tab is served on, built
+	// from its host label. Empty for a direct tab and for any tab while
+	// TAB_PROXY_HOST_SUFFIX is unset - which is also how the panel knows not to
+	// render a frame that could never load.
+	ProxyOrigin string `json:"proxyOrigin"`
 }
 
 type serverTabRequest struct {
@@ -128,7 +133,7 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := db.Query(`SELECT id, server_id, name, icon, url, position, enabled, open_in_panel,
 		mode, COALESCE(target_port,0), target_path, surface, visibility,
-		COALESCE(share_token,''), share_expires_at
+		COALESCE(share_token,''), share_expires_at, COALESCE(proxy_host_label,'')
 		FROM server_tabs WHERE server_id=$1 ORDER BY position ASC, id ASC`, serverID)
 	if err != nil {
 		sendJSONError(w, "Query failed", http.StatusInternalServerError)
@@ -139,11 +144,13 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var t serverTabResponse
 		var expires sql.NullTime
+		var hostLabel string
 		// Dropping a row on a scan error hides a column/type mismatch as an
 		// empty list instead of an error - that is exactly how the spark
 		// profile list stayed silently empty. Fail loudly instead.
 		if err := rows.Scan(&t.ID, &t.ServerID, &t.Name, &t.Icon, &t.URL, &t.Position, &t.Enabled, &t.OpenInPanel,
-			&t.Mode, &t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareToken, &expires); err != nil {
+			&t.Mode, &t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareToken, &expires,
+			&hostLabel); err != nil {
 			sendJSONError(w, "Query failed", http.StatusInternalServerError)
 			return
 		}
@@ -151,6 +158,7 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 			et := expires.Time
 			t.ShareExpiresAt = &et
 		}
+		t.ProxyOrigin = TabProxyContentOrigin(h.state.FrontendURL, h.state.TabProxyHostSuffix, hostLabel)
 		out = append(out, t)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -284,16 +292,28 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		createdBy = userID
 	}
 	var portArg interface{}
+	// hostLabel is minted for EVERY proxied tab, not only a shareable one: the
+	// in-panel view frames the same content host, so a tab with surface="tab"
+	// needs one too. A direct tab gets NULL - it has no data plane of ours.
+	var hostLabel interface{}
 	if req.Mode == "proxied" {
 		portArg = targetPort
+		lbl, lerr := generateProxyHostLabel()
+		if lerr != nil {
+			sendJSONError(w, "Failed to allocate a tab host", http.StatusInternalServerError)
+			return
+		}
+		hostLabel = lbl
 	}
 	var id int
 	err := db.QueryRow(`INSERT INTO server_tabs
 		(server_id, name, icon, url, position, enabled, open_in_panel, created_by,
-		 mode, target_port, target_path, surface, visibility, share_token, share_expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+		 mode, target_port, target_path, surface, visibility, share_token, share_expires_at,
+		 proxy_host_label)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
 		serverID, req.Name, req.Icon, req.URL, req.Position, enabled, openInPanel, createdBy,
 		req.Mode, portArg, req.TargetPath, req.Surface, req.Visibility, shareToken, shareExpires,
+		hostLabel,
 	).Scan(&id)
 	if err != nil {
 		sendJSONError(w, "Failed to create tab", http.StatusInternalServerError)
@@ -400,6 +420,11 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 				sendJSONError(w, "This server has reached its proxied-tab limit.", http.StatusConflict)
 				return
 			}
+		}
+		// A tab that used to be direct has no content host yet.
+		if err := h.ensureProxyHostLabel(db, tabID); err != nil {
+			sendJSONError(w, "Failed to allocate a tab host", http.StatusInternalServerError)
+			return
 		}
 	}
 	// Patch-style: only fields the client sent are written. COALESCE keeps

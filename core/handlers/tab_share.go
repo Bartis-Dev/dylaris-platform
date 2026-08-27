@@ -34,9 +34,80 @@ func generateShareToken() (string, error) {
 	return string(out), nil
 }
 
+// proxyHostLabelAlphabet is lowercase base36, and the lowercase is the point.
+//
+// The share token next to it is base62 WITH uppercase, which is fine for a URL
+// path and wrong for a hostname: DNS labels are case-insensitive, so two tokens
+// differing only in case would resolve to the same host and the proxy would have
+// to guess which tab a request meant. A separate alphabet makes that impossible
+// rather than unlikely.
+//
+// 20 characters of base36 is about 103 bits, and the alphabet keeps the result a
+// valid DNS label by construction: alphanumeric only, so it can never start or
+// end with a hyphen, and 20 is far inside the 63-character limit.
+const proxyHostLabelAlphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+const proxyHostLabelLen = 20
+
+// generateProxyHostLabel mints the hostname label a proxied tab is served on.
+// Same rejection sampling as generateShareToken, for the same reason: a plain
+// modulo would make the first few symbols of the alphabet more likely.
+func generateProxyHostLabel() (string, error) {
+	const limit = 256 - (256 % len(proxyHostLabelAlphabet))
+	out := make([]byte, proxyHostLabelLen)
+	var b [1]byte
+	for i := 0; i < proxyHostLabelLen; {
+		if _, err := rand.Read(b[:]); err != nil {
+			return "", err
+		}
+		if int(b[0]) >= limit {
+			continue
+		}
+		out[i] = proxyHostLabelAlphabet[int(b[0])%len(proxyHostLabelAlphabet)]
+		i++
+	}
+	return string(out), nil
+}
+
+// isProxyHostLabel reports whether s is one of our labels. Used on the request
+// path before any database lookup, so a hostile Host header cannot reach the
+// query at all.
+func isProxyHostLabel(s string) bool {
+	if len(s) != proxyHostLabelLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
+			return false
+		}
+	}
+	return true
+}
+
 // capReached reports whether an additive operation would exceed a max cap.
 func capReached(current, max int) bool {
 	return current >= max
+}
+
+// ensureProxyHostLabel gives a tab a content host if it does not have one.
+//
+// Idempotent on purpose. A label is public the moment somebody copies the link,
+// so re-minting it on an ordinary edit would silently break every link already
+// in circulation. Only the absence of one is filled in.
+func (h *ServerTabsHandler) ensureProxyHostLabel(db *sql.DB, tabID int) error {
+	var existing sql.NullString
+	if err := db.QueryRow(`SELECT proxy_host_label FROM server_tabs WHERE id=$1`, tabID).Scan(&existing); err != nil {
+		return err
+	}
+	if existing.Valid && existing.String != "" {
+		return nil
+	}
+	label, err := generateProxyHostLabel()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE server_tabs SET proxy_host_label=$2 WHERE id=$1`, tabID, label)
+	return err
 }
 
 func (h *ServerTabsHandler) countProxiedTabs(db *sql.DB, serverID int) (int, error) {

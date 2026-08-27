@@ -28,7 +28,6 @@ import (
 	beamauth "dylaris-pkg/beam/auth"
 
 	gorillaHandlers "github.com/gorilla/handlers"
-	"github.com/gorilla/mux"
 )
 
 // detectBeamPlatform maps a browser User-Agent header to one of the platform
@@ -218,19 +217,19 @@ func main() {
 	grpcRegistry := nodegrpc.NewRegistry()
 
 	appState := &handlers.AppState{
-		Store:                   pgStore,
-		GRPCRegistry:            grpcRegistry,
-		FrontendURL:             cfg.FrontendURL,
-		ExternalTicketDBURL:     cfg.ExternalTicketDBURL,
-		FeatureFlags:            services.NewFeatureFlags(pgStore),
-		Authz:                   authz.NewResolver(pgStore),
-		DBType:                  cfg.DBType,
-		StoreEnabled:            cfg.StoreEnabled,
-		StoreURL:                cfg.StoreURL,
-		StoreSharedKey:          cfg.StoreSharedKey,
-		TabProxyIsolationActive: cfg.TabProxyIsolationActive,
-		UpdatesFeedURLPlatform:  cfg.UpdatesFeedURLPlatform,
-		UpdatesFeedURLGateway:   cfg.UpdatesFeedURLGateway,
+		Store:                  pgStore,
+		GRPCRegistry:           grpcRegistry,
+		FrontendURL:            cfg.FrontendURL,
+		ExternalTicketDBURL:    cfg.ExternalTicketDBURL,
+		FeatureFlags:           services.NewFeatureFlags(pgStore),
+		Authz:                  authz.NewResolver(pgStore),
+		DBType:                 cfg.DBType,
+		StoreEnabled:           cfg.StoreEnabled,
+		StoreURL:               cfg.StoreURL,
+		StoreSharedKey:         cfg.StoreSharedKey,
+		TabProxyHostSuffix:     cfg.TabProxyHostSuffix,
+		UpdatesFeedURLPlatform: cfg.UpdatesFeedURLPlatform,
+		UpdatesFeedURLGateway:  cfg.UpdatesFeedURLGateway,
 	}
 
 	// Demo showcase read access flows through the resolver so the RequireCap
@@ -505,14 +504,13 @@ func main() {
 	}
 
 	root, extras := buildAPIRouter(appState, authHandler, routeCfg{
-		JWTSecret:               cfg.JWTSecret,
-		Region:                  cfg.Region,
-		CoreID:                  cfg.CoreID,
-		TabProxyOrigin:          cfg.TabProxyOrigin,
-		ClusterSecret:           cfg.ClusterSecret,
-		GatewayHubURL:           cfg.GatewayHubURL,
-		ModrinthUA:              "Dylaris/0.10 (+https://github.com/Bartis-Dev/dylaris-platform)",
-		TabProxyIsolationActive: cfg.TabProxyIsolationActive,
+		JWTSecret:          cfg.JWTSecret,
+		Region:             cfg.Region,
+		CoreID:             cfg.CoreID,
+		TabProxyHostSuffix: cfg.TabProxyHostSuffix,
+		ClusterSecret:      cfg.ClusterSecret,
+		GatewayHubURL:      cfg.GatewayHubURL,
+		ModrinthUA:         "Dylaris/0.10 (+https://github.com/Bartis-Dev/dylaris-platform)",
 	})
 	// boot-time warp resync watcher + firewall-allowlist publish use the
 	// handlers/service buildAPIRouter just constructed.
@@ -693,10 +691,19 @@ func main() {
 	//   3. The Beam Desktop App, which runs the Panel inside a Wails webview
 	//      whose origin is http://wails.localhost (Windows) or wails://wails.localhost
 	//      (macOS/Linux).
+	//   4. The share-wrapper origin, when TAB_PROXY_HOST_SUFFIX is set. The
+	//      wrapper is the same panel bundle reached at the bare suffix, and it
+	//      asks Core which content host a share token belongs to. It is NOT a
+	//      tab-content host - those never reach this router at all, they are
+	//      taken by the host mux before CORS.
 	// Auth is Bearer-token (no cookies), so a wider CORS surface grants no
 	// ambient privilege.
+	shareWrapperOrigin := handlers.TabProxyWrapperOrigin(cfg.FrontendURL, cfg.TabProxyHostSuffix)
 	allowedOrigin := func(origin string) bool {
 		if origin != "" && origin == cfg.FrontendURL {
+			return true
+		}
+		if origin != "" && shareWrapperOrigin != "" && origin == shareWrapperOrigin {
 			return true
 		}
 		if config.IsLocalOrigin(origin) {
@@ -727,9 +734,15 @@ func main() {
 	// capping body read/write time — Core serves SSE streams and multi-GB
 	// uploads/downloads, so ReadTimeout/WriteTimeout are deliberately left
 	// unset. IdleTimeout reaps idle keep-alive connections.
+	// Tab-content hosts are dispatched on the WHOLE request, ahead of CORS and
+	// ahead of the router. Adding them as routes instead would leave the API and
+	// every panel route answering on an origin that serves a tenant's container,
+	// one fetch away from anything else this process exposes. No suffix
+	// configured returns the handler untouched.
 	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           corsObj(root),
+		Addr: ":" + port,
+		Handler: handlers.TabProxyHostMux(
+			appState, extras.proxyHandler, authHandler, corsObj(root)),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
@@ -739,43 +752,6 @@ func main() {
 			log.Fatalf("Core API crashed: %v", err)
 		}
 	}()
-
-	// Origin-isolated tab-proxy data plane (spec B5). When TAB_PROXY_PORT is set,
-	// Core binds a SECOND HTTP server on that port serving ONLY the proxy data
-	// plane (InDashboard + Public + their {rest:.*} variants) with the SAME
-	// proxyHandler. It carries NO CORS and NO AuthMiddleware: those routes trust
-	// only the host-only dyl_tabproxy ticket cookie (which the browser delivers
-	// to this same-host port), and the browser reaches this port as a distinct
-	// ORIGIN (different port), so a proxied container's JS runs on this origin and
-	// can never read the panel token from the panel origin's localStorage. Route
-	// patterns mirror the root-router registrations exactly. The mint endpoints
-	// stay on the panel origin's main listener (behind AuthMiddleware) and are
-	// deliberately NOT served here. ReadHeaderTimeout/IdleTimeout mirror the main
-	// server; ReadTimeout/WriteTimeout stay unset because the proxy streams.
-	var tabProxySrv *http.Server
-	if cfg.TabProxyPort != "" {
-		tpRouter := mux.NewRouter()
-		tpRouter.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy", extras.proxyHandler.InDashboard)
-		tpRouter.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}", extras.proxyHandler.InDashboard)
-		// PublicIsolated, not Public: this listener is the only origin that may
-		// serve a share's CONTENT. The root router's Public runs the same gates
-		// and answers status-only, so the panel-origin preflight keeps working
-		// without putting a tenant's container on the panel origin.
-		tpRouter.HandleFunc("/api/tabproxy/{token}", extras.proxyHandler.PublicIsolated)
-		tpRouter.HandleFunc("/api/tabproxy/{token}/{rest:.*}", extras.proxyHandler.PublicIsolated)
-		tabProxySrv = &http.Server{
-			Addr:              ":" + cfg.TabProxyPort,
-			Handler:           tpRouter,
-			ReadHeaderTimeout: 15 * time.Second,
-			IdleTimeout:       120 * time.Second,
-		}
-		log.Printf("Dylaris Core tab-proxy (origin-isolated) listener running on port %s", cfg.TabProxyPort)
-		go func() {
-			if err := tabProxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("Core tab-proxy listener crashed: %v", err)
-			}
-		}()
-	}
 
 	// Graceful shutdown: mirrors node/main.go's signal handling. Rolling
 	// deploys (docker-stack.yml start-first, 2 core replicas) SIGTERM the
@@ -810,21 +786,6 @@ func main() {
 			log.Printf("Core listener close error: %v", cerr)
 		}
 	}
-	if tabProxySrv != nil {
-		// Own fresh timeout: the main server's Shutdown above may have already
-		// consumed most/all of shutdownCtx's budget, which would leave the
-		// tab-proxy listener no drain window and hard-kill in-flight proxied
-		// streams. Give it an independent 30s to drain.
-		tpCtx, tpCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer tpCancel()
-		if err := tabProxySrv.Shutdown(tpCtx); err != nil {
-			log.Printf("Core tab-proxy graceful shutdown error, closing remaining connections: %v", err)
-			if cerr := tabProxySrv.Close(); cerr != nil {
-				log.Printf("Core tab-proxy listener close error: %v", cerr)
-			}
-		}
-	}
-
 	// GracefulStop sends GOAWAY and then waits for every pending RPC. A node
 	// stream is a long-lived RPC, so a node that has gone silent rather than
 	// disconnected keeps this waiting until server keepalive tears its

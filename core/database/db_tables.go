@@ -261,6 +261,10 @@ func seedSystemModules(db *sql.DB) {
 		// Settings → Modules. Once enabled it appears in the user-facing
 		// sidebar via the standard module loader.
 		{"Tickets", "internal", "life-buoy", "/tickets", "all", 5, false, false},
+		// Custom tabs across every server the viewer may see, full width.
+		// Default disabled like Tickets: it is only useful once the operator
+		// has configured a proxy host and someone has actually made a tab.
+		{"Custom Tabs", "internal", "layout-dashboard", "/tabs", "all", 6, false, false},
 	}
 	for _, m := range modules {
 		db.Exec(`

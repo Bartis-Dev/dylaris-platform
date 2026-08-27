@@ -14,11 +14,12 @@ import { getMyEntitlement, Entitlement } from '@/lib/api/entitlement';
 interface CoreInfo {
     region: string;
     coreId: string;
-    // Origin-isolation for the WS5 tab proxy (spec B5): the browser-facing
-    // isolated proxy origin the panel builds proxied-iframe srcs against, and
-    // whether isolation is active. Empty origin = same-origin fallback.
-    tabProxyOrigin: string;
-    tabProxyIsolationActive: boolean;
+    // The DNS suffix each proxied custom tab is served under, one host per
+    // tab, and whether that is configured at all. Without it a proxied tab has
+    // nowhere safe to be shown and the UI says so instead of framing a URL
+    // that cannot load.
+    tabProxyHostSuffix: string;
+    tabProxyAvailable: boolean;
 }
 
 interface AppData {
@@ -163,8 +164,8 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             if (data.success) setCoreInfo({
                 region: data.region,
                 coreId: data.coreId,
-                tabProxyOrigin: data.tabProxyOrigin || '',
-                tabProxyIsolationActive: !!data.tabProxyIsolationActive,
+                tabProxyHostSuffix: data.tabProxyHostSuffix || '',
+                tabProxyAvailable: !!data.tabProxyAvailable,
             });
         } catch { /* network blip — keep last known state */ }
     }, []);

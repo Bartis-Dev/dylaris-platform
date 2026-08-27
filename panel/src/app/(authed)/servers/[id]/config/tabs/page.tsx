@@ -320,10 +320,10 @@ export default function ServerConfigTabsPage() {
                                                 : `Expires ${new Date(t.shareExpiresAt).toLocaleString()}`}
                                         </span>
                                     )}
-                                    {t.shareToken && !coreInfo?.tabProxyIsolationActive && (
+                                    {t.shareToken && !coreInfo?.tabProxyAvailable && (
                                         <span className="inline-flex items-start gap-1 text-xs text-(--warning-light)">
                                             <AlertTriangle size={11} className="mt-0.5 shrink-0" />
-                                            Share links need their own origin on Core (TAB_PROXY_PORT + TAB_PROXY_ORIGIN).
+                                            Share links need a proxy host on Core (TAB_PROXY_HOST_SUFFIX).
                                             Until an admin sets that up this link answers &quot;not valid&quot;.
                                         </span>
                                     )}
@@ -473,7 +473,7 @@ export default function ServerConfigTabsPage() {
                                             </p>
                                         </div>
                                     )}
-                                    {editingSurfaceHasPage && !coreInfo?.tabProxyIsolationActive && (
+                                    {editingSurfaceHasPage && !coreInfo?.tabProxyAvailable && (
                                         <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
                                             <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                                             <span>

@@ -490,24 +490,24 @@ export default function FeaturesTab() {
                     session. When it is NOT active (older Core, or disabled),
                     proxied content still runs on the panel's own origin and the
                     original warning applies. */}
-                {coreInfo?.tabProxyIsolationActive ? (
+                {coreInfo?.tabProxyAvailable ? (
                     <p className="flex items-start gap-1.5 text-xs text-(--success-light)">
                         <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                         <span>
-                            Origin isolation is active: proxied tab content is served from a
-                            dedicated, different-origin proxy host, not the panel&apos;s own origin.
-                            Public share links are safe to enable on a multi-tenant instance.
+                            Each proxied tab is served on its own host, so a container&apos;s
+                            scripts run on an origin that is not the panel&apos;s and cannot read a
+                            viewer&apos;s session. Public share links are safe to enable here.
                         </span>
                     </p>
                 ) : (
                     <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
                         <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                         <span>
-                            Proxied tab content runs on this panel&apos;s own origin. On a shared or
-                            multi-tenant instance, a malicious server container could read a viewer&apos;s
-                            panel session. Safe for single-operator / self-host. Do not enable public
-                            share links (or expose proxied tabs to users who do not fully trust the
-                            target container) on a multi-user instance until origin-isolated proxying ships.
+                            Proxied tabs are unavailable: Core has no
+                            <code className="mx-1">TAB_PROXY_HOST_SUFFIX</code>
+                            set, so there is no host to serve a container on. Point a wildcard
+                            record and certificate at Core and set it, then proxied tabs and share
+                            links start working. Direct tabs are unaffected.
                         </span>
                     </p>
                 )}

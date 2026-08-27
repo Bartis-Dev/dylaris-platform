@@ -5,16 +5,18 @@ import { useParams } from 'next/navigation';
 import { AlertTriangle, ExternalLink, Link2 } from 'lucide-react';
 import { listServerTabs, mintTabProxyAuth, type ServerTab } from '@/lib/api/serverTabs';
 import { systemEvents } from '@/lib/systemEvents';
-import { tabDashboardProxySrc } from '@/lib/tabProxy';
+import { tabContentSrc } from '@/lib/tabProxy';
 import { useAppData } from '@/lib/AppDataContext';
 import { Skeleton } from '@/components/Skeleton';
 
 // dynamic renderer for custom tabs. Loads the tab metadata, then either:
 //  - direct: embeds the configured URL in an iframe (open_in_panel=true) or
 //    shows a landing card with a popout button (false).
-//  - proxied, surface tab|both: mints the dyl_tabproxy cookie (see
-//    core/handlers/tab_proxy.go MintProxyAuth) and then embeds Core's
-//    same-origin proxy endpoint - the iframe src never carries a token.
+//  - proxied, surface tab|both: mints the dyl_tabproxy cookie on the tab's OWN
+//    host (core/handlers/tab_proxy_host.go HostMint) and then embeds that host.
+//    The iframe src never carries a token, and the container runs on an origin
+//    that is not the panel's, so its JavaScript cannot read the session token
+//    out of the panel origin's localStorage.
 //  - proxied, surface page: not embeddable here, points at the share link.
 // Reacts to server_tabs.changed SSE so edits in another tab refresh here
 // without reload.
@@ -32,10 +34,9 @@ export default function ServerCustomTabPage() {
     const params = useParams();
     const serverId = Number(params?.id);
     const tabId = Number(params?.tabId);
-    // spec B5: when origin-isolation is active, coreInfo.tabProxyOrigin is the
-    // dedicated proxy origin; the builder then emits an absolute src on it. When
-    // inactive it is '' and the builder falls back to the relative same-origin
-    // path. This page is inside AppDataProvider ((authed)/layout.tsx).
+    // Each proxied tab carries its own content origin, computed by Core from
+    // the tab's host label. There is no same-origin fallback: without one there
+    // is nowhere safe to serve the container, and the page says so.
     const { coreInfo } = useAppData();
     const [tab, setTab] = useState<ServerTab | null | undefined>(undefined);
     const [proxyAuth, setProxyAuth] = useState<ProxyAuthState>('pending');
@@ -61,7 +62,10 @@ export default function ServerCustomTabPage() {
     // this page stays mounted. Every other branch (not-found/disabled/
     // page-only/direct) leaves isEmbeddedProxy false, so no proxy-auth call
     // is ever made for a tab that isn't actually going to be proxy-embedded.
-    const isEmbeddedProxy = !!tab && tab.enabled && tab.mode === 'proxied' && tab.surface !== 'page';
+    // A proxied tab with no content origin is NOT embeddable: the feature is
+    // unconfigured on this deployment, or this row predates its host. Refusing
+    // here is what keeps the mint from being attempted against an empty URL.
+    const isEmbeddedProxy = !!tab && tab.enabled && tab.mode === 'proxied' && tab.surface !== 'page' && !!tab.proxyOrigin;
     useEffect(() => {
         if (!isEmbeddedProxy) return;
         let cancelled = false;
@@ -75,7 +79,7 @@ export default function ServerCustomTabPage() {
         // never tear down an iframe that is already loaded and working, so
         // it just leaves the state alone and lets the next interval tick retry.
         const mint = async (isInitial: boolean) => {
-            const res = await mintTabProxyAuth(serverId, tabId);
+            const res = await mintTabProxyAuth(tab?.proxyOrigin || '');
             if (cancelled) return;
             if (res.success) {
                 setProxyAuth('ready');
@@ -89,7 +93,7 @@ export default function ServerCustomTabPage() {
         mint(true);
         const interval = setInterval(() => mint(false), PROXY_AUTH_REFRESH_MS);
         return () => { cancelled = true; clearInterval(interval); };
-    }, [isEmbeddedProxy, serverId, tabId]);
+    }, [isEmbeddedProxy, tab?.proxyOrigin]);
 
     if (tab === undefined) {
         return (
@@ -157,7 +161,7 @@ export default function ServerCustomTabPage() {
         return (
             <main className="flex-1 overflow-hidden bg-(--base-01)">
                 <iframe
-                    src={tabDashboardProxySrc(serverId, tabId, coreInfo?.tabProxyOrigin || undefined)}
+                    src={tabContentSrc(tab.proxyOrigin) || undefined}
                     title={tab.name}
                     className="w-full h-full border-0"
                     referrerPolicy="no-referrer"

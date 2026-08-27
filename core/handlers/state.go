@@ -185,12 +185,10 @@ type AppState struct {
 	// cutoff so a link is refused exactly when its ACL is actually gone.
 	SuspendGrace time.Duration
 
-	// TabProxyIsolationActive mirrors config.TabProxyIsolationActive (spec B5):
-	// true iff TAB_PROXY_ORIGIN is set and host-matches the panel. The
-	// standalone share data plane (Public) and its mint (MintPublicProxyAuth)
-	// refuse unless this is true, because a same-origin public share is the C1
-	// cross-tenant token-theft vector. InDashboard is NOT gated by it.
-	TabProxyIsolationActive bool
+	// TabProxyHostSuffix mirrors config.TabProxyHostSuffix: the DNS suffix each
+	// proxied tab is served under, one host per tab. Empty means proxied tabs
+	// are not available at all - there is nowhere safe to serve them.
+	TabProxyHostSuffix string
 
 	// UpdatesFeedURLPlatform / UpdatesFeedURLGateway mirror config: the public raw
 	// URLs the admin update-feed bell fetches (platform always; gateway only when

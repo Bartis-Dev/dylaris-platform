@@ -131,21 +131,23 @@ type Config struct {
 	// hourly lifecycle tick (no grace).
 	SuspendGrace time.Duration
 
-	// TabProxyPort, if set, makes Core bind a SECOND HTTP listener on this port
-	// serving ONLY the WS5 tab-proxy data plane (spec B5). The browser reaches
-	// it as a distinct ORIGIN (same host, different port) so a proxied
-	// container's JS runs on that origin and can never read the panel token from
-	// the panel origin's localStorage. Empty = the second listener is not started.
-	TabProxyPort string
-	// TabProxyOrigin is the browser-facing absolute base URL of that isolated
-	// origin (what the panel builds proxied-iframe srcs against; behind a front
-	// proxy it maps to TabProxyPort). Normalized scheme://host[:port], no
-	// trailing slash; "" whenever origin-isolation is inactive.
-	TabProxyOrigin string
-	// TabProxyIsolationActive is true iff TAB_PROXY_ORIGIN is set AND host-matches
-	// FRONTEND_URL. Gates the public-share mint/serve refusal (Core) and drives
-	// the panel's absolute-vs-relative iframe src choice.
-	TabProxyIsolationActive bool
+	// TabProxyHostSuffix is the DNS suffix each proxied custom tab is served
+	// under, one host per tab: "<label>.share.example.com". REQUIRED for proxied
+	// tabs; empty turns the whole proxied-tab feature off.
+	//
+	// A host, not a path prefix, and not a second port. Under a prefix the proxy
+	// has to rewrite the HTML with a <base href>, which only fixes RELATIVE urls -
+	// the path-absolute "/js/app.js" that BlueMap and Dynmap emit resolves against
+	// the origin ROOT and misses the prefix entirely. Serving each tab at the root
+	// of its own host removes the rewriting and the breakage together, and a
+	// different hostname is already a different ORIGIN, so the container's JS
+	// cannot reach the panel token in the panel origin's localStorage either.
+	//
+	// This replaced TAB_PROXY_PORT + TAB_PROXY_ORIGIN. Those were read
+	// independently and never compared, so setting only the origin switched
+	// isolation on and pointed every iframe at a port nothing was listening on,
+	// silently. One variable cannot be half-set.
+	TabProxyHostSuffix string
 
 	// UpdatesFeedURLPlatform / UpdatesFeedURLGateway are the PUBLIC raw URLs of
 	// the append-only JSONL update feeds the admin "what's new" bell diffs against
@@ -206,11 +208,8 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	// FRONTEND_URL is read once here so both the Config field and the
-	// TAB_PROXY_ORIGIN host-match validation below use the exact same value.
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:25510")
-	tabProxyPort := strings.TrimSpace(getEnv("TAB_PROXY_PORT", ""))
-	tabProxyOrigin, tabProxyIsolationActive := resolveTabProxyOrigin(getEnv("TAB_PROXY_ORIGIN", ""), frontendURL)
+	tabProxyHostSuffix := normalizeTabProxyHostSuffix(getEnv("TAB_PROXY_HOST_SUFFIX", ""))
 
 	// An unparseable SETUP is treated as off, matching the default. The value is
 	// a door: "SETUP=yes" not parsing must not swing it open.
@@ -260,9 +259,7 @@ func LoadConfig() (Config, error) {
 
 		SuspendGrace: suspendGrace,
 
-		TabProxyPort:            tabProxyPort,
-		TabProxyOrigin:          tabProxyOrigin,
-		TabProxyIsolationActive: tabProxyIsolationActive,
+		TabProxyHostSuffix: tabProxyHostSuffix,
 
 		// Platform defaults to its own public repo's raw feed (works once the repo
 		// is public + the feed is populated); gateway stays empty until the feed is
@@ -391,64 +388,38 @@ func validateAdminSecret(s string) error {
 	return nil
 }
 
-// effectivePort returns the URL's explicit port, or the scheme default (443 for
-// https, 80 for http) when none is given. This normalizes so that e.g.
-// "https://h" and "https://h:443" compare equal - both address the SAME origin.
-func effectivePort(u *url.URL) string {
-	if p := u.Port(); p != "" {
-		return p
-	}
-	if strings.EqualFold(u.Scheme, "https") {
-		return "443"
-	}
-	return "80"
-}
-
-// resolveTabProxyOrigin decides whether origin-isolation for the WS5 custom-tab
-// reverse proxy (spec B5) is active and returns the normalized browser-facing
-// proxy origin the panel builds iframe srcs against.
+// normalizeTabProxyHostSuffix cleans TAB_PROXY_HOST_SUFFIX into the bare DNS
+// suffix the host matcher compares against: lowercase, no scheme, no port, no
+// leading dot, no trailing dot.
 //
-// Origin-isolation is active only when TAB_PROXY_ORIGIN is set, parses as an
-// absolute http(s) URL, shares the panel's (FRONTEND_URL) SCHEME and HOST, and
-// resolves to a DIFFERENT effective PORT than the panel. The browser-facing
-// proxy origin must differ from the panel ONLY in port: the dyl_tabproxy ticket
-// cookie is host-only, so a different host would drop the cookie and break proxy
-// auth; and a proxy origin equal to the panel origin is not isolation at all - a
-// proxied container's JS would run on the panel origin and could read the panel
-// token from localStorage, silently reopening the very vector B5 closes. Rather
-// than silently break auth OR silently reopen the token-theft vector, any
-// mismatch (scheme, host, or an identical effective port) logs a clear warning
-// and disables isolation, falling back to today's same-origin behavior. The
-// returned origin is scheme://host[:port] with no trailing slash; it is ""
-// whenever isolation is inactive.
-func resolveTabProxyOrigin(rawOrigin, frontendURL string) (origin string, active bool) {
-	rawOrigin = strings.TrimSpace(rawOrigin)
-	if rawOrigin == "" {
-		return "", false
+// Every one of those is a shape an operator plausibly types - "https://share.x",
+// ".share.x", "share.x." - and each would make the suffix match nothing at all
+// while reading correct in the compose file. A tab that silently never resolves
+// is a worse failure than a rejected value, so the input is repaired rather than
+// refused. A value with no dot at all IS refused: a bare label cannot be a
+// suffix under which per-tab subdomains live.
+func normalizeTabProxyHostSuffix(raw string) string {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	if v == "" {
+		return ""
 	}
-	u, err := url.Parse(rawOrigin)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		log.Printf("config: TAB_PROXY_ORIGIN %q is not a valid absolute http(s) origin; origin-isolation disabled (same-origin fallback)", rawOrigin)
-		return "", false
+	if i := strings.Index(v, "://"); i >= 0 {
+		v = v[i+3:]
 	}
-	fu, ferr := url.Parse(strings.TrimSpace(frontendURL))
-	if ferr != nil || fu.Hostname() == "" {
-		log.Printf("config: FRONTEND_URL %q is not parseable; cannot host-match TAB_PROXY_ORIGIN; origin-isolation disabled", frontendURL)
-		return "", false
+	if i := strings.IndexByte(v, '/'); i >= 0 {
+		v = v[:i]
 	}
-	if !strings.EqualFold(u.Scheme, fu.Scheme) {
-		log.Printf("config: TAB_PROXY_ORIGIN scheme %q != FRONTEND_URL scheme %q; a different scheme is a different origin the cookie cannot follow, so origin-isolation is disabled (same-origin fallback)", u.Scheme, fu.Scheme)
-		return "", false
+	if h, _, err := net.SplitHostPort(v); err == nil {
+		v = h
 	}
-	if !strings.EqualFold(u.Hostname(), fu.Hostname()) {
-		log.Printf("config: TAB_PROXY_ORIGIN host %q != FRONTEND_URL host %q; the host-only dyl_tabproxy cookie cannot reach a different host, so origin-isolation is disabled (same-origin fallback)", u.Hostname(), fu.Hostname())
-		return "", false
+	v = strings.Trim(v, ".")
+	if !strings.Contains(v, ".") {
+		if v != "" {
+			log.Printf("config: TAB_PROXY_HOST_SUFFIX %q is a single label, not a domain suffix; proxied custom tabs stay disabled", raw)
+		}
+		return ""
 	}
-	if effectivePort(u) == effectivePort(fu) {
-		log.Printf("config: TAB_PROXY_ORIGIN %q resolves to the SAME origin as FRONTEND_URL %q (same scheme, host and effective port); origin isolation needs a DIFFERENT port or a proxied container's JS could read the panel token, so it is disabled (same-origin fallback)", rawOrigin, frontendURL)
-		return "", false
-	}
-	return u.Scheme + "://" + u.Host, true
+	return v
 }
 
 // IsLocalOrigin reports whether a CORS Origin header points at the local machine

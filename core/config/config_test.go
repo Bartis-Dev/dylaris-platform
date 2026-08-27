@@ -143,37 +143,36 @@ func TestGetSecret_FilePrecedence(t *testing.T) {
 	})
 }
 
-func TestResolveTabProxyOrigin(t *testing.T) {
+// TAB_PROXY_HOST_SUFFIX is the whole configuration now, and an operator will
+// type it in whatever shape their other variables use. Every one of these
+// reaches the host matcher, which compares a BARE suffix, so anything left
+// unrepaired matches nothing at all while reading perfectly correct in the
+// compose file - the exact silent failure the two-variable pair it replaced
+// used to produce.
+func TestNormalizeTabProxyHostSuffix(t *testing.T) {
 	cases := []struct {
-		name        string
-		rawOrigin   string
-		frontendURL string
-		wantOrigin  string
-		wantActive  bool
+		name string
+		in   string
+		want string
 	}{
-		{"empty origin disables", "", "https://mc.example.com", "", false},
-		{"same host different port active", "https://mc.example.com:25502", "https://mc.example.com", "https://mc.example.com:25502", true},
-		// B5 fix: a proxy origin IDENTICAL to the panel origin is not isolation -
-		// a proxied container's JS would run on the panel origin and could read the
-		// panel token. Same effective port (incl. the default) must DISABLE.
-		{"same host no port disabled (same effective origin)", "https://mc.example.com", "https://mc.example.com", "", false},
-		{"same host explicit different ports active", "https://mc.example.com:8443", "https://mc.example.com:25510", "https://mc.example.com:8443", true},
-		{"same host explicit 443 vs default https disabled", "https://mc.example.com:443", "https://mc.example.com", "", false},
-		{"scheme mismatch same host different port disabled", "http://mc.example.com:25502", "https://mc.example.com", "", false},
-		{"host mismatch disables", "https://proxy.other.com:25502", "https://mc.example.com", "", false},
-		{"frontend has port, origin host-matches", "http://localhost:25502", "http://localhost:25510", "http://localhost:25502", true},
-		{"non-http scheme disables", "ftp://mc.example.com:25502", "https://mc.example.com", "", false},
-		{"unparseable origin disables", "://bad", "https://mc.example.com", "", false},
-		{"origin missing host disables", "http://", "https://mc.example.com", "", false},
-		{"case-insensitive host match", "https://MC.example.com:25502", "https://mc.example.com", "https://MC.example.com:25502", true},
-		{"whitespace trimmed", "  https://mc.example.com:25502  ", "https://mc.example.com", "https://mc.example.com:25502", true},
+		{"plain", "share.example.com", "share.example.com"},
+		{"empty stays empty", "", ""},
+		{"uppercase folded", "Share.Example.COM", "share.example.com"},
+		{"whitespace trimmed", "  share.example.com  ", "share.example.com"},
+		{"https scheme stripped", "https://share.example.com", "share.example.com"},
+		{"http scheme stripped", "http://share.example.com", "share.example.com"},
+		{"trailing slash stripped", "https://share.example.com/", "share.example.com"},
+		{"path stripped", "https://share.example.com/tabs", "share.example.com"},
+		{"port stripped", "share.example.com:8443", "share.example.com"},
+		{"leading dot stripped", ".share.example.com", "share.example.com"},
+		{"trailing dot stripped", "share.example.com.", "share.example.com"},
+		{"single label refused", "share", ""},
+		{"scheme only refused", "https://", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotOrigin, gotActive := resolveTabProxyOrigin(tc.rawOrigin, tc.frontendURL)
-			if gotOrigin != tc.wantOrigin || gotActive != tc.wantActive {
-				t.Errorf("resolveTabProxyOrigin(%q, %q) = (%q, %v), want (%q, %v)",
-					tc.rawOrigin, tc.frontendURL, gotOrigin, gotActive, tc.wantOrigin, tc.wantActive)
+			if got := normalizeTabProxyHostSuffix(tc.in); got != tc.want {
+				t.Errorf("normalizeTabProxyHostSuffix(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

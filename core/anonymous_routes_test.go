@@ -45,10 +45,6 @@ var anonymousUnlimitedRoutes = map[string]string{
 	// The tab proxy is reached only with an unguessable token, which is the
 	// credential. Bounding it per IP would throttle the legitimate embedded
 	// session, which issues many requests by design.
-	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy":           "token-gated tab proxy",
-	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}": "token-gated tab proxy",
-	"/api/tabproxy/{token}":                                        "token-gated public tab proxy",
-	"/api/tabproxy/{token}/{rest:.*}":                              "token-gated public tab proxy",
 
 	// The Solder API answers the Technic Launcher, which carries no session,
 	// and sits outside all middleware on purpose. These four are metadata

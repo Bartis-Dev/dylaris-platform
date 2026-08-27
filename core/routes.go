@@ -15,14 +15,13 @@ import (
 // constructors and routes need, threaded explicitly (instead of a raw
 // *config.Config) so this file's dependency surface stays small and testable.
 type routeCfg struct {
-	JWTSecret               string
-	Region                  string
-	CoreID                  string
-	TabProxyOrigin          string
-	ClusterSecret           string
-	GatewayHubURL           string
-	ModrinthUA              string
-	TabProxyIsolationActive bool
+	JWTSecret          string
+	Region             string
+	CoreID             string
+	TabProxyHostSuffix string
+	ClusterSecret      string
+	GatewayHubURL      string
+	ModrinthUA         string
 }
 
 // routeExtras carries the handler/service instances main() still needs after
@@ -97,9 +96,6 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/tabs":                           "tabs.read",
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}":            "tabs.write",
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link": "tabs.write",
-	// proxy-auth mints the ticket that IS the access to a tab's proxied content,
-	// so it takes tabs.read like the listing does - see the route registration.
-	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth": "tabs.read",
 
 	// Phase 4 Task 7: scheduled tasks + spark. GET+POST /scheduled-tasks share
 	// one template -> schedule.read representative; the fine POST->schedule.write
@@ -480,7 +476,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
 	serverRolesHandler := handlers.NewServerRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
-	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyOrigin, cfg.TabProxyIsolationActive)
+	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyHostSuffix)
 	fileHandler := handlers.NewFileHandler(appState)
 	libraryHandler := handlers.NewLibraryHandler(appState)
 	settingsHandler := handlers.NewSettingsHandler(appState)
@@ -652,33 +648,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	shareLimiter := handlers.NewIPRateLimiter()
 	r.HandleFunc("/api/share/{token}", shareLimiter.Limit(30, packsHandler.ServeShare)).Methods("GET")
 
-	// WS5 custom-tab reverse proxy. On the ROOT router (like /api/share) so it
-	// bypasses the /api subrouter's StrictSlash + setup-lock + maintenance
-	// middleware. Auth is cookie-only: the handler trusts ONLY the
-	// dyl_tabproxy ticket cookie minted by proxy-auth below (registered on the
-	// normal /api subrouter behind AuthMiddleware) - no session JWT is ever
-	// accepted here via header or query (WS5 Task 8 fast-follow).
-	r.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy", proxyHandler.InDashboard)
-	r.HandleFunc("/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}", proxyHandler.InDashboard)
-
-	// Standalone share-token twin of the above (Task 9): same bypass reasoning,
-	// but auth is per-share-link instead of per-dashboard-session. Public alone
-	// decides public-vs-private visibility. On THIS router it answers the gate's
-	// status and nothing else - the share's CONTENT is served only by
-	// PublicIsolated on the origin-isolated listener (main.go), because a
-	// container's HTML on the panel origin is the exact cross-tenant vector
-	// origin isolation exists to close. The /c page preflights this URL for the
-	// status alone, which is why the registration stays. The mint route that
-	// sets its ticket cookie is registered on the /api subrouter instead
-	// (proxy-auth's sibling, see below), which is NOT shadowed by the {rest:.*} catch-all
-	// here: gorilla/mux tried the whole /api subrouter (added to this root
-	// router once, at its own PathPrefix("/api") registration point, which is
-	// earlier in this router's route list than these two lines) before ever
-	// reaching these root-level routes, so a request under /api that the
-	// subrouter itself can match (like GET /api/tabproxy/{token}/auth) never
-	// falls through to {rest:.*} here at all.
-	r.HandleFunc("/api/tabproxy/{token}", proxyHandler.Public)
-	r.HandleFunc("/api/tabproxy/{token}/{rest:.*}", proxyHandler.Public)
+	// Custom-tab reverse proxy: the CONTENT never appears on this router.
+	//
+	// A proxied tab is served at the root of its own host ("<label>.<suffix>"),
+	// which handlers.TabProxyHostMux takes off the wire before this router or
+	// CORS ever sees it. That is the point - a tenant's container must not share
+	// an origin with the panel or the API. What stays here is the one lookup the
+	// share-wrapper page needs: token to content host. Anonymous, because the
+	// token is the credential for a public link and this answers nothing else,
+	// and rate limited because the endpoint is anonymous.
+	r.HandleFunc("/api/tabproxy/{token}/resolve", shareLimiter.Limit(30, proxyHandler.ResolveShare)).Methods("GET")
 
 	// Per-IP rate limiter for public auth endpoints - blunts brute-force and
 	// credential-stuffing on login/register/reset/setup.
@@ -825,26 +804,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.write")(serverTabsHandler.Delete))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.write")(serverTabsHandler.RotateShareLink))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.write")(serverTabsHandler.RevokeShareLink))).Methods("DELETE")
-	// Mints the dyl_tabproxy cookie the root-router proxy below trusts.
-	// Registered on the normal /api subrouter (unlike the proxy itself) so it
-	// runs through AuthMiddleware and inherits 2FA-setup-lock + demo
-	// read-only gating instead of re-implementing them (WS5 Task 8 fast-follow).
+	// The ticket cookie is NOT minted here.
 	//
-	// tabs.read, matching the listing on line 720. This was overview.read, which
-	// left the tabs guarded inconsistently: a member without tabs.read got a 403
-	// asking WHICH tabs exist, yet could mint a ticket for one and reach its
-	// proxied content in full. The ticket is not a hint, it is the access - the
-	// proxy below is registered on the ROOT router and deliberately re-checks
-	// nothing but the cookie (see resolveProxyTicket), because minting is where
-	// authorization was supposed to happen. A tab points at a container port the
-	// owner chose, so that content is whatever they run there.
-	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.read")(proxyHandler.MintProxyAuth))).Methods("GET")
-	// Mints the same dyl_tabproxy cookie, but Path-scoped to a share token's
-	// proxy prefix (/api/tabproxy/{token}/) for the standalone Public path
-	// (Task 9) instead of the in-dashboard one. Registered here (not on the
-	// root router with Public) for the same reason as proxy-auth above: it
-	// must run through AuthMiddleware.
-	api.HandleFunc("/tabproxy/{token}/auth", authHandler.AuthMiddleware(proxyHandler.MintPublicProxyAuth)).Methods("GET")
+	// It is minted on the tab's own content host (handlers.HostMint, behind the
+	// same AuthMiddleware), because a cookie can only be set for the host that
+	// answers the request and the content host is not this one. The panel
+	// reaches it cross-origin with its session as a Bearer HEADER, which works
+	// precisely because the panel token lives in localStorage and not in a
+	// cookie: the other origin cannot read it, but the panel can send it.
 
 	// --- Modrinth PAT ---
 	// Phase 4 Task 20: OWNER modpack.* - chokepoint-open by design (serverID==0

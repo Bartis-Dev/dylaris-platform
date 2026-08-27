@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **478 routes** in 49 sections: 213 GET, 140 POST, 36 PUT, 34 PATCH, 52 DELETE, 4 (any).
-- **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **325** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **473 routes** in 49 sections: 212 GET, 140 POST, 36 PUT, 34 PATCH, 52 DELETE.
+- **33** accept no credential at all; read the Gates column before assuming any of them is open.
+- **324** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **33** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **7** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (75)
+- [/api/servers](#apiservers) (72)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -179,7 +179,7 @@ can still show what exists.
 - [/api/storage-connections](#apistorage-connections) (6)
 - [/api/store](#apistore) (6)
 - [/api/system](#apisystem) (4)
-- [/api/tabproxy](#apitabproxy) (3)
+- [/api/tabproxy](#apitabproxy) (1)
 - [/api/ticket-canned-responses](#apiticket-canned-responses) (1)
 - [/api/ticket-categories](#apiticket-categories) (1)
 - [/api/tickets](#apitickets) (15)
@@ -688,9 +688,6 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/tabs` | session | `tabs.write` | - | `ServerTabsHandler.Create` | adds a custom tab. |
 | PATCH | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Update` | edits a custom tab, applying the same proxied-tab gates as creation. |
 | DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Delete` | removes a custom tab from the server in the path. |
-| (any) | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy` | **none** | _public_ | - | `ProxyHandler.InDashboard` | ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth). |
-| GET | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth` | session | `tabs.read` | - | `ProxyHandler.MintProxyAuth` | registered on the NORMAL /api subrouter behind AuthMiddleware and the router's tabs.read RequireCap - this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) plus server-level access enforcement for free instead of re-implementing it here. |
-| (any) | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}` | **none** | _public_ | - | `ProxyHandler.InDashboard` | ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth). |
 | POST | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RotateShareLink` | (re)generate the unguessable slug for a proxied page tab. |
 | DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RevokeShareLink` | null the slug so the standalone page 404s. |
 | POST | `/api/servers/{id:[0-9]+}/transfer` | session | `server.settings.write` | RequireGatewayEnabled | `ServerHandler.TransferServer` | (tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on. |
@@ -806,9 +803,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| (any) | `/api/tabproxy/{token}` | **none** | _public_ | - | `ProxyHandler.Public` | serves the share data plane's STATUS, and only its status, as reached on the PANEL origin: it runs the full gate chain and answers with the resulting code alone, never with a byte of the container's response. |
-| GET | `/api/tabproxy/{token}/auth` | session | _in-handler_ | - | `ProxyHandler.MintPublicProxyAuth` | registered on the NORMAL /api subrouter behind AuthMiddleware - like MintProxyAuth, this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) for free instead of re-implementing it. |
-| (any) | `/api/tabproxy/{token}/{rest:.*}` | **none** | _public_ | - | `ProxyHandler.Public` | serves the share data plane's STATUS, and only its status, as reached on the PANEL origin: it runs the full gate chain and answers with the resulting code alone, never with a byte of the container's response. |
+| GET | `/api/tabproxy/{token}/resolve` | **none** | _public_ | Limit | `ProxyHandler.ResolveShare` | turns a share token into the content host that serves it. |
 
 ## /api/ticket-canned-responses
 

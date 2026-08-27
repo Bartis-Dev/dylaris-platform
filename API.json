@@ -3635,36 +3635,6 @@
       "external": false
     },
     {
-      "method": "ANY",
-      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy",
-      "auth": "none",
-      "authorization": "public",
-      "description": "ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth).",
-      "handler": "ProxyHandler.InDashboard",
-      "group": "servers",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-auth",
-      "auth": "session",
-      "authorization": "tabs.read",
-      "description": "registered on the NORMAL /api subrouter behind AuthMiddleware and the router's tabs.read RequireCap - this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) plus server-level access enforcement for free instead of re-implementing it here.",
-      "handler": "ProxyHandler.MintProxyAuth",
-      "group": "servers",
-      "external": false
-    },
-    {
-      "method": "ANY",
-      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}",
-      "auth": "none",
-      "authorization": "public",
-      "description": "ANY /api/servers/{id}/tabs/{tabId}/proxy/{rest...} - cookie-only ticket auth (see MintProxyAuth).",
-      "handler": "ProxyHandler.InDashboard",
-      "group": "servers",
-      "external": false
-    },
-    {
       "method": "DELETE",
       "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link",
       "auth": "session",
@@ -4324,32 +4294,12 @@
       "external": false
     },
     {
-      "method": "ANY",
-      "path": "/api/tabproxy/{token}",
-      "auth": "none",
-      "authorization": "public",
-      "description": "serves the share data plane's STATUS, and only its status, as reached on the PANEL origin: it runs the full gate chain and answers with the resulting code alone, never with a byte of the container's response.",
-      "handler": "ProxyHandler.Public",
-      "group": "tabproxy",
-      "external": false
-    },
-    {
       "method": "GET",
-      "path": "/api/tabproxy/{token}/auth",
-      "auth": "session",
-      "authorization": "checked in handler",
-      "description": "registered on the NORMAL /api subrouter behind AuthMiddleware - like MintProxyAuth, this inherits the full session gating (2FA-setup-lock, demo read-only, signature/expiry) for free instead of re-implementing it.",
-      "handler": "ProxyHandler.MintPublicProxyAuth",
-      "group": "tabproxy",
-      "external": false
-    },
-    {
-      "method": "ANY",
-      "path": "/api/tabproxy/{token}/{rest:.*}",
+      "path": "/api/tabproxy/{token}/resolve",
       "auth": "none",
       "authorization": "public",
-      "description": "serves the share data plane's STATUS, and only its status, as reached on the PANEL origin: it runs the full gate chain and answers with the resulting code alone, never with a byte of the container's response.",
-      "handler": "ProxyHandler.Public",
+      "description": "turns a share token into the content host that serves it.",
+      "handler": "ProxyHandler.ResolveShare",
       "group": "tabproxy",
       "external": false
     },
@@ -4785,10 +4735,10 @@
     }
   ],
   "counts": {
-    "total": 479,
+    "total": 474,
     "byAuth": {
-      "none": 36,
-      "session": 430,
+      "none": 33,
+      "session": 428,
       "user API key": 10,
       "warp key": 3
     },
@@ -4820,7 +4770,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 75,
+      "servers": 72,
       "settings": 28,
       "setup": 2,
       "share": 1,
@@ -4831,7 +4781,7 @@
       "storage-connections": 6,
       "store": 6,
       "system": 4,
-      "tabproxy": 3,
+      "tabproxy": 1,
       "ticket-canned-responses": 1,
       "ticket-categories": 1,
       "tickets": 15,

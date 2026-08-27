@@ -18,6 +18,11 @@ export interface ServerTab {
     visibility: string;    // "private" | "public"
     shareToken: string;    // "" when none
     shareExpiresAt: string | null;
+    // proxyOrigin is the browser-facing origin this tab is served on, built by
+    // Core from the tab's host label. "" for a direct tab and for any tab while
+    // the feature is unconfigured - which is exactly when no iframe should be
+    // rendered at all.
+    proxyOrigin: string;
 }
 
 export interface ServerTabInput {
@@ -98,54 +103,30 @@ export async function revokeShareLink(serverId: number, tabId: number): Promise<
     } catch (err) { return handleError(err); }
 }
 
-// mintTabProxyAuth authorizes the in-dashboard proxy iframe for one tab: it
-// calls Core's session-authed proxy-auth endpoint (core/handlers/tab_proxy.go
-// MintProxyAuth), which on success stamps a short-lived, path-scoped
-// dyl_tabproxy HttpOnly cookie (204 No Content, no body) instead of returning
-// a token - the proxy iframe src therefore never carries a session
-// credential. Unlike the rest of this file, this call needs credentials:
-// 'include' so the Set-Cookie actually sticks on the panel origin; that only
-// works same-origin (the production /api reverse-proxy layout), since Core's
-// CORS config grants no Access-Control-Allow-Credentials for a cross-origin
-// dev split (see main.go's allowedOrigin/corsObj - deliberately Bearer-only).
-export async function mintTabProxyAuth(serverId: number, tabId: number): Promise<{ success: boolean; message?: string }> {
+// mintTabProxyAuth authorizes one tab's iframe by setting the dyl_tabproxy
+// ticket cookie ON THAT TAB'S OWN HOST.
+//
+// The mint has to run there and nowhere else: a cookie can only be set for the
+// host that answered the request, and the content is served from
+// "<label>.<suffix>", not from the panel or the API host.
+//
+// It is reached cross-origin with the session as a Bearer HEADER, which is only
+// possible because the panel token lives in localStorage rather than in a
+// cookie - the content origin cannot READ it, but the panel can SEND it. The
+// response is 204 with a Set-Cookie and no body, so no credential ever lands in
+// an iframe src. credentials:'include' is what makes the Set-Cookie stick;
+// Core answers the matching Access-Control-Allow-Credentials for exactly the
+// panel and wrapper origins.
+export async function mintTabProxyAuth(proxyOrigin: string): Promise<{ success: boolean; status?: number; message?: string }> {
+    if (!proxyOrigin) {
+        return { success: false, message: 'This tab has no proxy host configured.' };
+    }
     try {
-        const res = await fetch(`${API_URL}/servers/${serverId}/tabs/${tabId}/proxy-auth`, {
+        const res = await fetch(`${proxyOrigin}/__dyl/mint`, {
             headers: getAuthHeader(),
             credentials: 'include',
         });
-        if (res.status === 204) return { success: true };
-        // Every non-success response from this endpoint (feature off, no
-        // access, expired/invalid session) carries a JSON {message} body -
-        // only the 204 success path above has none.
-        try {
-            const data = await res.json();
-            return { success: false, message: data?.message || 'Unknown error' };
-        } catch {
-            return { success: false, message: `Failed to authorize tab proxy (HTTP ${res.status})` };
-        }
-    } catch (err) { return handleError(err); }
-}
-
-// mintPublicTabProxyAuth authorizes the standalone /c/[token] share page
-// (WS5 Task 14) for a PRIVATE-visibility tab: it calls Core's session-authed
-// public proxy-auth endpoint (core/handlers/tab_proxy.go
-// MintPublicProxyAuth), which mirrors mintTabProxyAuth above but is scoped to
-// the share token's proxy prefix instead of a server/tab id pair. Same
-// 204-cookie-only contract - no token ever appears in the iframe src. Unlike
-// the sibling helper, callers here also need the HTTP status on failure
-// (401 = no/invalid panel session -> bounce to /login; 403 = logged in but
-// no access to this tab's server; anything else -> treat the link as
-// invalid), so this returns `status` alongside `success`/`message`.
-export async function mintPublicTabProxyAuth(token: string): Promise<{ success: boolean; status?: number; message?: string }> {
-    try {
-        const res = await fetch(`${API_URL}/tabproxy/${encodeURIComponent(token)}/auth`, {
-            headers: getAuthHeader(),
-            credentials: 'include',
-        });
-        if (res.status === 204) return { success: true };
-        // Same body-shape convention as mintTabProxyAuth: every non-success
-        // response carries a JSON {message} body.
+        if (res.status === 204) return { success: true, status: 204 };
         try {
             const data = await res.json();
             return { success: false, status: res.status, message: data?.message || 'Unknown error' };
@@ -153,4 +134,22 @@ export async function mintPublicTabProxyAuth(token: string): Promise<{ success: 
             return { success: false, status: res.status, message: `Failed to authorize tab proxy (HTTP ${res.status})` };
         }
     } catch (err) { return handleError(err); }
+}
+
+export interface ShareResolution {
+    contentOrigin: string;
+    requiresAuth: boolean;
+}
+
+// resolveShareLink turns a share token into the host that serves it. Anonymous:
+// the token is the credential for a public link, and for a private one this
+// says only "you will be asked to sign in", never a byte of the tab.
+export async function resolveShareLink(token: string): Promise<{ success: boolean; status: number; data?: ShareResolution }> {
+    try {
+        const res = await fetch(`${API_URL}/tabproxy/${encodeURIComponent(token)}/resolve`);
+        if (!res.ok) return { success: false, status: res.status };
+        return { success: true, status: res.status, data: await res.json() };
+    } catch {
+        return { success: false, status: 0 };
+    }
 }

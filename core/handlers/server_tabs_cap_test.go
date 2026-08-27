@@ -86,10 +86,14 @@ func TestUpdateTab_ProxiedCapAppliesToTheDirectToProxiedFlip(t *testing.T) {
 		maxPer      int
 		wantStatus  int
 		wantUpdate  bool
+		// hostLabel is what the row already carries. Empty means the flip has
+		// to mint one; a tab that was already proxied keeps the one it has,
+		// because the label is in circulation the moment a link is copied.
+		hostLabel string
 	}{
-		{"flip at the cap is refused", "direct", 2, 2, http.StatusConflict, false},
-		{"flip under the cap goes through", "direct", 1, 2, http.StatusOK, true},
-		{"editing an already-proxied tab is never blocked", "proxied", 2, 2, http.StatusOK, true},
+		{"flip at the cap is refused", "direct", 2, 2, http.StatusConflict, false, ""},
+		{"flip under the cap mints a host", "direct", 1, 2, http.StatusOK, true, ""},
+		{"editing an already-proxied tab keeps its host", "proxied", 2, 2, http.StatusOK, true, "abcdefghij0123456789"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -102,6 +106,15 @@ func TestUpdateTab_ProxiedCapAppliesToTheDirectToProxiedFlip(t *testing.T) {
 					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(c.proxiedNow))
 			}
 			if c.wantUpdate {
+				// A tab that survives the cap gets a content host if it has
+				// none: the host label is what the proxy routes on, so a
+				// proxied tab without one would exist and be unreachable.
+				mock.ExpectQuery(`SELECT proxy_host_label FROM server_tabs`).
+					WillReturnRows(sqlmock.NewRows([]string{"proxy_host_label"}).AddRow(c.hostLabel))
+				if c.hostLabel == "" {
+					mock.ExpectExec(`UPDATE server_tabs SET proxy_host_label`).
+						WillReturnResult(sqlmock.NewResult(0, 1))
+				}
 				mock.ExpectExec(`UPDATE server_tabs SET`).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			}

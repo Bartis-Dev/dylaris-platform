@@ -1,40 +1,28 @@
-// URL builders for the WS5 custom-tab reverse proxy. Same-origin paths (Core
-// is reached on the panel origin as /api in production).
+// URL builders for the custom-tab reverse proxy.
 //
-// Auth for both proxy surfaces is cookie-only (see
-// core/handlers/tab_proxy.go): the in-dashboard proxy trusts ONLY the
-// dyl_tabproxy ticket cookie minted by a separate GET .../proxy-auth call,
-// and the standalone share page trusts the same cookie minted by
-// GET /api/tabproxy/{token}/auth for a private link (a public link needs no
-// cookie at all). Neither builder below ever puts a session token or ticket
-// in the URL - the 24h session JWT must never be carried by an iframe src.
-
-// When origin-isolation is active (spec B5), Core serves the proxy data plane on
-// a dedicated same-host, different-PORT origin so a proxied container's JS runs
-// there and can never read the panel token from the panel origin's localStorage.
-// The panel then builds the iframe src as an ABSOLUTE URL on that origin
-// (`origin` is Core's normalized scheme://host[:port], no trailing slash).
+// A proxied tab is served at the ROOT of its own host ("<label>.<suffix>"),
+// which Core reports per tab as `proxyOrigin`. Two things follow, and both are
+// the reason it works at all:
 //
-// The IN-DASHBOARD builder keeps a relative same-origin fallback by design: that
-// surface is admin-only / self-host and is a documented best-effort limitation
-// (a single operator viewing their own containers). The PUBLIC builder does NOT
-// fall back - see tabProxyPageSrc. The mint / preflight fetches stay same-origin
-// to the panel and are unaffected.
-export function tabDashboardProxySrc(serverId: number, tabId: number, origin?: string): string {
-    const path = `/api/servers/${serverId}/tabs/${tabId}/proxy/`;
-    return origin ? origin + path : path;
-}
+//   - The container's own absolute paths resolve. Under the path prefix this
+//     replaced, a "/js/app.js" was resolved against the origin root and missed
+//     the prefix entirely - which is what BlueMap and Dynmap emit, so the two
+//     most deployed map plugins were the two that could not be shown.
+//   - A different hostname is a different ORIGIN, so a tenant's JavaScript
+//     cannot reach the panel session token in the panel origin's localStorage.
+//
+// Auth is cookie-only on the content host: the ticket is minted by a separate
+// call to that host (mintTabProxyAuth), and no builder here ever puts a session
+// token or a ticket in a URL.
 
-// PUBLIC share builder. Origin isolation is MANDATORY for public shares (spec
-// B5): a public /c/<token> page is served on the panel origin, so embedding the
-// proxied iframe on a relative (same-origin) src would let the container's JS
-// read the panel token from localStorage - the exact vector B5 closes. This
-// builder therefore FAILS CLOSED: with no isolated `origin` it returns null so
-// the caller refuses to render the iframe instead of silently falling back to
-// same-origin. It never emits a relative path.
-export function tabProxyPageSrc(token: string, origin?: string): string | null {
-    if (!origin) return null;
-    return origin + `/api/tabproxy/${encodeURIComponent(token)}/`;
+// tabContentSrc is the iframe src for a proxied tab. It FAILS CLOSED: without a
+// proxyOrigin there is no host that may serve this content, and falling back to
+// a same-origin path would put a tenant's container on the panel origin - the
+// exact vector the per-tab host exists to close. The caller renders an
+// explanation instead.
+export function tabContentSrc(proxyOrigin: string): string | null {
+    if (!proxyOrigin) return null;
+    return proxyOrigin + '/';
 }
 
 // shareLinkUrl builds the shareable standalone-page URL for a share token.

@@ -42,12 +42,20 @@ services:
       # are always Core-provisioned, never hand-set.
       REDIS_USER: "${REDIS_USER:-}"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
-      # Origin-isolated custom-tab reverse proxy (spec B5). OFF by default: with
-      # TAB_PROXY_PORT empty, Core never starts the second listener. To enable
-      # public tab-share links, set both and publish 25502 below - TAB_PROXY_ORIGIN
-      # MUST be the same host as FRONTEND_URL on a DIFFERENT port. See .env.example.
-      TAB_PROXY_PORT: "${TAB_PROXY_PORT:-}"
-      TAB_PROXY_ORIGIN: "${TAB_PROXY_ORIGIN:-}"
+      # Custom-tab reverse proxy. OFF by default: with no suffix there is no
+      # host to serve a container on, so proxied tabs and share links are
+      # unavailable and direct tabs are unaffected.
+      #
+      # Each proxied tab is served at the ROOT of "<label>.<suffix>". That is
+      # what makes BlueMap and Dynmap work - both request "/js/..." from the
+      # origin root and cannot run under a path prefix - and it puts a tenant's
+      # container on an origin that is not the panel's, where its scripts cannot
+      # reach the session token.
+      #
+      # Needs a wildcard DNS record for *.<suffix> pointing at Core, and a
+      # certificate covering BOTH <suffix> and *.<suffix> (a wildcard does not
+      # cover its own parent). Wildcards are DNS-01 only.
+      TAB_PROXY_HOST_SUFFIX: "${TAB_PROXY_HOST_SUFFIX:-}"
       # Everything below is forwarded ONLY so that setting it in .env actually
       # works. Compose uses a .env file for ${...} substitution, it does NOT
       # inject it into the container, so a documented variable that is missing
@@ -126,7 +134,6 @@ services:
     ports:
       - "25500:25500"   # REST API
       - "25501:25501"   # gRPC node mesh (Cluster-Sync)
-      # - "25502:25502" # tab-proxy data plane (uncomment when TAB_PROXY_PORT=25502)
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:25500/healthz"]
       interval: 30s
