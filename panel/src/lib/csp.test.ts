@@ -73,3 +73,34 @@ describe('buildCsp', () => {
     expect(imgSrc).toBe("img-src 'self' data: blob: https://cravatar.eu https://cdn.modrinth.com");
   });
 });
+
+// The panel mints each proxied tab's ticket by calling THAT TAB'S OWN HOST, so
+// connect-src has to allow the whole family. Without it the browser blocks the
+// mint and every proxied tab fails to authorize - a failure that passes tsc,
+// the unit tests and next build, because CSP only bites in a real browser.
+describe('buildCsp tab-proxy host', () => {
+    it('allows the whole tab host family when a suffix is configured', () => {
+        const csp = buildCsp('n0nce', false, 'https://api.example.com', 'tabs.example.com');
+        expect(csp).toContain('connect-src');
+        expect(csp).toContain('*.tabs.example.com');
+    });
+
+    it('writes the host WITHOUT a scheme, so one entry serves https and dev http', () => {
+        const csp = buildCsp('n0nce', false, undefined, 'tabs.example.com');
+        expect(csp).toContain(' *.tabs.example.com');
+        expect(csp).not.toContain('https://*.tabs.example.com');
+        expect(csp).not.toContain('http://*.tabs.example.com');
+    });
+
+    it('adds nothing when no suffix is configured', () => {
+        const csp = buildCsp('n0nce', false, 'https://api.example.com');
+        const connect = csp.split('; ').find(d => d.startsWith('connect-src'));
+        expect(connect).toBe("connect-src 'self' https://api.example.com");
+    });
+
+    it('keeps the api origin alongside it', () => {
+        const csp = buildCsp('n0nce', false, 'https://api.example.com', 'tabs.example.com');
+        const connect = csp.split('; ').find(d => d.startsWith('connect-src'));
+        expect(connect).toBe("connect-src 'self' https://api.example.com *.tabs.example.com");
+    });
+});

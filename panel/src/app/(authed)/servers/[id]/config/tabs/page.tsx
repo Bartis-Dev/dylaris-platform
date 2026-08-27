@@ -105,17 +105,20 @@ export default function ServerConfigTabsPage() {
     // SetupView enumerates them too, and there is no separate list endpoint.
     // A failed listing leaves the picker with just "every sub-server", which is
     // the safe default rather than an empty dropdown.
+    // Keyed on the UUID, not on the servers array: AppDataContext replaces that
+    // array on every status flip, and re-listing a server's directories each
+    // time one of its neighbours starts is a request for nothing.
+    const serverUuid = servers.find(s => s.id === serverId)?.uuid || '';
     useEffect(() => {
-        const srv = servers.find(s => s.id === serverId);
-        if (!srv?.uuid) return;
+        if (!serverUuid) return;
         let cancelled = false;
         (async () => {
-            const res = await getFiles('', srv.uuid);
+            const res = await getFiles('', serverUuid);
             if (cancelled || !res.success || !Array.isArray(res.files)) return;
             setSubServers((res.files as any[]).filter(f => f.is_dir).map(f => String(f.name)));
         })();
         return () => { cancelled = true; };
-    }, [servers, serverId]);
+    }, [serverUuid]);
 
     const openEdit = (t: ServerTab) => setEditing({ ...t });
 
@@ -219,7 +222,7 @@ export default function ServerConfigTabsPage() {
     };
 
     const handleCopy = (token: string) => {
-        navigator.clipboard.writeText(shareLinkUrl(token));
+        navigator.clipboard.writeText(shareLinkUrl(token, coreInfo?.tabProxyHostSuffix));
         showToast('Link copied.', true);
     };
 
@@ -330,7 +333,7 @@ export default function ServerConfigTabsPage() {
                                                 <code className={`text-xs font-mono truncate max-w-[240px] ${
                                                     shareLinkExpired(t.shareExpiresAt) ? 'text-(--base-06) line-through' : 'text-(--accent-light)'
                                                 }`}>
-                                                    {shareLinkUrl(t.shareToken)}
+                                                    {shareLinkUrl(t.shareToken, coreInfo?.tabProxyHostSuffix)}
                                                 </code>
                                                 <button onClick={() => handleCopy(t.shareToken)} className="btn btn-secondary btn-sm" title="Copy link">
                                                     <Copy size={11} />
@@ -377,7 +380,7 @@ export default function ServerConfigTabsPage() {
                                             <input
                                                 autoFocus
                                                 value={slugDraft}
-                                                onChange={e => setSlugDraft(e.target.value)}
+                                                onChange={e => setSlugDraft(e.target.value.toLowerCase())}
                                                 placeholder="max-survival-map"
                                                 minLength={4}
                                                 maxLength={40}

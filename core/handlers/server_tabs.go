@@ -437,6 +437,13 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			// billing anyone else would spend the wrong allowance.
 			var owner string
 			_ = db.QueryRow(`SELECT COALESCE(created_by::text,'') FROM server_tabs WHERE id=$1`, tabID).Scan(&owner)
+			if owner == "" {
+				// created_by is ON DELETE SET NULL, so a tab outlives the
+				// account that made it. With nobody to charge the caps were
+				// skipped outright, which turned "delete the creator" into a way
+				// to uncap a tab. The caller is who is asking for the work now.
+				owner, _ = r.Context().Value("userID").(string)
+			}
 			if msg := h.tabCapExceeded(db, r.Context(), serverID, owner); msg != "" {
 				sendJSONError(w, msg, http.StatusConflict)
 				return

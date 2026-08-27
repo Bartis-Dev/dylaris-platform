@@ -27,7 +27,8 @@ type routeCfg struct {
 // routeExtras carries the handler/service instances main() still needs after
 // buildAPIRouter returns: the warp service (boot-time resync watcher) and the
 // settings handler (boot-time firewall-allowlist publish), plus the proxy
-// handler for the origin-isolated tab-proxy second listener.
+// handler, which main wires into the host dispatch that takes tab-content
+// requests off the wire before this router sees them.
 type routeExtras struct {
 	settingsHandler *handlers.SettingsHandler
 	warpService     *services.WarpService

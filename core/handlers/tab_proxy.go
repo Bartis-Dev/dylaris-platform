@@ -496,8 +496,12 @@ func splitProxyBytes(data []byte, max int) [][]byte {
 // handshake, so "" means a non-browser client - which has no victim cookie to
 // carry. Both schemes are compared because Core is reached over plain http on a
 // LAN or localhost as often as over https behind a proxy, and r.Host is the host
-// the client actually addressed, which on the origin-isolated tab-proxy listener
-// is that port rather than the panel's.
+// the client actually addressed - which for a tab is its OWN content host.
+//
+// That last part got stronger when each tab moved to its own hostname. All tabs
+// used to share one origin, so a page inside tab A could open a WebSocket to
+// tab B's proxy and the check would pass. Now they are different origins and it
+// does not.
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")

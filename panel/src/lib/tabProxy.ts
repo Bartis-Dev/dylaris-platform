@@ -26,9 +26,19 @@ export function tabContentSrc(proxyOrigin: string): string | null {
 }
 
 // shareLinkUrl builds the shareable standalone-page URL for a share token.
-// Absolute (with the current origin) in the browser so it is copy/paste
-// shareable; a bare path during SSR/tests where window is unavailable.
-export function shareLinkUrl(token: string): string {
+//
+// It uses the SHARE host when one is configured, not the origin the admin
+// happens to be looking at. Copying it from the panel would otherwise hand the
+// panel's hostname to everyone the link reaches - including anonymous viewers
+// of a public link - and the share host exists precisely so that share traffic
+// does not arrive on the panel's address.
+//
+// The scheme follows the current page rather than being hardcoded, so a local
+// http panel produces a link that actually opens.
+export function shareLinkUrl(token: string, hostSuffix?: string): string {
     if (typeof window === 'undefined') return `/c/${token}`;
-    return `${window.location.origin}/c/${token}`;
+    const origin = hostSuffix
+        ? `${window.location.protocol}//${hostSuffix}`
+        : window.location.origin;
+    return `${origin}/c/${token}`;
 }

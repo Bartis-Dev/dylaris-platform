@@ -18,7 +18,18 @@
 // only cross-origin target is whatever the operator configures, so a self-host
 // build's policy lists solely its own origins. The hosted deployment sets
 // PANEL_API_URL like any other operator and is covered by the same path.
-export function buildCsp(nonce: string, isDev: boolean, apiOrigin?: string): string {
+// tabHostSuffix is the DNS suffix proxied custom tabs are served under
+// (TAB_PROXY_HOST_SUFFIX on Core). Each tab lives on its OWN host below it, and
+// the panel calls that host directly to mint the tab's ticket cookie - so
+// connect-src has to allow the whole family or the browser blocks the mint and
+// every proxied tab fails to authorize.
+//
+// It is written WITHOUT a scheme on purpose: a bare host-source takes the
+// document's own scheme (with a secure upgrade allowed), so one entry is
+// correct for the https panel in production and the http one in dev. Hardcoding
+// https would break local development silently, which is the same class of
+// mistake as leaving the suffix out entirely.
+export function buildCsp(nonce: string, isDev: boolean, apiOrigin?: string, tabHostSuffix?: string): string {
   const scriptSrc = [
     "'self'",
     `'nonce-${nonce}'`,
@@ -29,6 +40,7 @@ export function buildCsp(nonce: string, isDev: boolean, apiOrigin?: string): str
   const connectSrc = [
     "'self'",
     ...(apiOrigin ? [apiOrigin] : []),
+    ...(tabHostSuffix ? [`*.${tabHostSuffix}`] : []),
   ].join(' ');
   // img-src needs the API origin for the same reason connect-src does, and it
   // was missed when connect-src got it: the server-icon preview on

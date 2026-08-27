@@ -317,6 +317,12 @@ services:
       # /api. NEXT_PUBLIC_API_URL (build-time) is the separate SaaS-only path -
       # see the CI workflow.
       PANEL_API_URL: "${PANEL_API_URL:-}"
+      # The SAME value Core reads. It has to be here as well because the panel
+      # writes its Content-Security-Policy in middleware, long before the browser
+      # could ask Core for it, and connect-src must allow the per-tab hosts or
+      # the browser blocks the ticket mint and every proxied tab fails to load.
+      # Empty is fine and simply adds nothing to the policy.
+      TAB_PROXY_HOST_SUFFIX: "${TAB_PROXY_HOST_SUFFIX:-}"
     ports:
       - "25510:25510"
     healthcheck:

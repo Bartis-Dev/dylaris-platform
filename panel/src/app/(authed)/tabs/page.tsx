@@ -36,33 +36,45 @@ export default function CustomTabsPage() {
     const [authState, setAuthState] = useState<'pending' | 'ready' | 'error'>('pending');
     const [authError, setAuthError] = useState<string | null>(null);
 
+    // The dependency is the ID LIST, not the servers array.
+    //
+    // AppDataContext replaces that array on every servers.changed event, which
+    // fires on any status flip - a single server starting emits several. Keying
+    // the reload on the array identity therefore re-fetched every server's tabs
+    // several times per start, one request each. A tab list does not change when
+    // a server's status does; it changes on server_tabs.changed, subscribed
+    // below.
+    const serverIds = useMemo(() => servers.map(s => s.id), [servers]);
+    const serverKey = serverIds.join(',');
+
     // One request per server, in parallel. A tab list is a small read and the
     // sidebar has to show which servers have tabs before anything is clicked;
     // loading on expand instead would leave every group looking identical until
     // opened. If a fleet ever makes this heavy, the fix is a single
     // list-my-tabs endpoint, not lazier groups.
-    const load = useCallback(async () => {
-        if (servers.length === 0) {
+    const load = useCallback(async (ids: number[]) => {
+        if (ids.length === 0) {
             setTabsByServer({});
             setLoading(false);
             return;
         }
-        const lists = await Promise.all(servers.map(s => listServerTabs(s.id).catch(() => [] as ServerTab[])));
+        const lists = await Promise.all(ids.map(id => listServerTabs(id).catch(() => [] as ServerTab[])));
         const next: TabsByServer = {};
-        servers.forEach((s, i) => {
+        ids.forEach((id, i) => {
             const proxied = lists[i].filter(t => t.enabled && t.mode === 'proxied' && t.surface !== 'page');
-            if (proxied.length > 0) next[s.id] = proxied;
+            if (proxied.length > 0) next[id] = proxied;
         });
         setTabsByServer(next);
         setLoading(false);
-    }, [servers]);
+    }, []);
 
-    useEffect(() => { load(); }, [load]);
+    useEffect(() => { load(serverIds); }, [serverKey, load]);
 
     useEffect(() => {
-        const unsub = systemEvents.on('server_tabs.changed', () => { load(); });
+        const unsub = systemEvents.on('server_tabs.changed', () => { load(serverIds); });
         return () => { unsub(); };
-    }, [load]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [serverKey, load]);
 
     // Mint the ticket for the selected tab before its frame is allowed to load,
     // then keep it fresh. A failing background refresh must never tear down a

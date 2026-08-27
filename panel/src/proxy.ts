@@ -26,10 +26,30 @@ function apiConnectOrigin(): string | undefined {
   }
 }
 
+// tabProxyHostSuffix is the suffix proxied custom tabs are served under. It is
+// the same value Core reads as TAB_PROXY_HOST_SUFFIX, and it has to be here too
+// because the CSP header is written by this middleware, long before the browser
+// could ask Core for it.
+//
+// Cleaned the way Core cleans it, and for the same reason: an operator copying
+// the value from their reverse-proxy config brings a scheme, a port or a
+// trailing dot along, and any of those would make the CSP source match nothing
+// while reading correct in the compose file.
+function tabProxyHostSuffix(): string | undefined {
+  const raw = (process.env.TAB_PROXY_HOST_SUFFIX || '').trim().toLowerCase();
+  if (!raw) return undefined;
+  let v = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
+  v = v.split('/')[0].split(':')[0];
+  v = v.replace(/^\.+|\.+$/g, '');
+  // A single label cannot be a suffix under which per-tab subdomains live, and
+  // "*.localhost" as a connect-src would be a wide, silent allowance.
+  return v.includes('.') ? v : undefined;
+}
+
 export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
   const isDev = process.env.NODE_ENV === 'development';
-  const csp = buildCsp(nonce, isDev, apiConnectOrigin());
+  const csp = buildCsp(nonce, isDev, apiConnectOrigin(), tabProxyHostSuffix());
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-nonce', nonce);
