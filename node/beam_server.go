@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"os"
@@ -297,7 +298,13 @@ func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID, port st
 func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager) {
 	const (
 		grace = 15 * time.Second
-		every = 30 * time.Second
+		// Five minutes, not thirty seconds, because the pass below now walks
+		// the whole server tree instead of two directories. Nothing depends on
+		// a dead temp disappearing quickly - it is a leftover file, and the
+		// defer already removes it on every exit that runs one. Sweeping less
+		// often also makes it less likely to catch a live upload whose client
+		// stalled for longer than the grace period.
+		every = 5 * time.Minute
 	)
 	sweep := func() {
 		for _, base := range sm.Paths() {
@@ -305,36 +312,41 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager) {
 			if err != nil {
 				continue
 			}
+			now := time.Now()
 			for _, e := range entries {
 				if !e.IsDir() {
 					continue
 				}
-				// Each direct child of a storage path is a server UUID dir.
+				// Each direct child of a storage path is a server UUID dir, and
+				// the whole tree below it has to be searched.
+				//
+				// This used to glob the server dir and one level below it, on the
+				// note that "one level deep is enough". It is not: the temp is
+				// created next to the upload's DESTINATION (filepath.Dir(destPath)),
+				// and validateBeamPath puts no depth limit on that - an upload to
+				// "survival/plugins/BlueMap/config.conf" leaves its temp three
+				// levels down, where nothing ever looked. A kill mid-stream then
+				// left the partial file on the server's disk for good, counting
+				// against its limit.
 				serverDir := filepath.Join(base, e.Name())
-				matches, _ := filepath.Glob(filepath.Join(serverDir, ".beam-upload-*"))
-				// Also check sub-server dirs (uploads land in a path *within*
-				// the server dir, not at its root). One level deep is enough.
-				if subs, err := os.ReadDir(serverDir); err == nil {
-					for _, sub := range subs {
-						if sub.IsDir() {
-							more, _ := filepath.Glob(filepath.Join(serverDir, sub.Name(), ".beam-upload-*"))
-							matches = append(matches, more...)
-						}
+				_ = filepath.WalkDir(serverDir, func(path string, d fs.DirEntry, err error) error {
+					if err != nil || d.IsDir() {
+						// A directory that cannot be read is skipped, not fatal:
+						// one unreadable corner must not stop the rest of the sweep.
+						return nil
 					}
-				}
-				now := time.Now()
-				for _, m := range matches {
-					info, err := os.Stat(m)
-					if err != nil {
-						continue
+					if !strings.HasPrefix(d.Name(), ".beam-upload-") {
+						return nil
 					}
-					if now.Sub(info.ModTime()) < grace {
-						continue
+					info, ierr := d.Info()
+					if ierr != nil || now.Sub(info.ModTime()) < grace {
+						return nil
 					}
-					if err := os.Remove(m); err == nil {
-						log.Printf("beam-server: sweeper removed stale temp %s", m)
+					if rerr := os.Remove(path); rerr == nil {
+						log.Printf("beam-server: sweeper removed stale temp %s", path)
 					}
-				}
+					return nil
+				})
 			}
 		}
 	}
