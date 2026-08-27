@@ -53,3 +53,5 @@
 {"date":"2026-08-26","service":"hub","type":"fix","summary":"A DNS record the gateway could not update no longer gets deleted after the grace period; only names that are genuinely no longer in use are removed."}
 {"date":"2026-08-27","service":"hub","type":"fix","summary":"Removing a customer link on the platform's instruction now removes its routes too; they used to stay live and keep serving traffic for a customer who was gone."}
 {"date":"2026-08-27","service":"hub","type":"security","summary":"Gateway services no longer send their signed hub credential request to whatever answers when the hub name has not resolved yet, which could hand a working token to an unrelated host."}
+{"date":"2026-08-27","service":"hub","type":"fix","summary":"Two hubs can no longer end up ordering a certificate for the same name at once after a Redis outage, which used to spend the weekly duplicate-certificate allowance."}
+{"date":"2026-08-27","service":"hub","type":"security","summary":"A link name or subnet list containing unusual characters can no longer inject anything into the deploy kit a customer runs."}
