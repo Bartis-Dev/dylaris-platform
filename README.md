@@ -37,6 +37,7 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 - [Operations](#operations)
 - [HTTP API](#http-api)
 - [Beam desktop client](#beam-desktop-client)
+- [Custom tabs setup](CUSTOM-TABS.md)
 - [Development](#development)
 - [Tech stack](#tech-stack)
 - [No telemetry](#no-telemetry)
@@ -392,8 +393,7 @@ secrets:
 | `DYLARIS_REGION` | `default` | No | Region label stamped into heartbeat + system info. |
 | `FRONTEND_URL` | `http://localhost:25510` | No | Panel origin Core trusts for CORS and uses to build email links (verify/reset). **Must be externally reachable**: the previous compose default (`http://panel:25510`, an internal Docker-only hostname) made every emailed link unreachable outside the Docker network. For a **cross-origin** deployment set it to the public panel URL (e.g. `https://panel.example.com`) so CORS accepts it; for a **same-origin** reverse-proxy layout it is not needed for CORS. Host-level config, kept as env. |
 | `TRUSTED_PROXY_CIDRS` | *(private ranges)* | No | Which reverse-proxy networks' `X-Forwarded-For` Core believes for rate limiting and the audit log. Unset trusts the private ranges (RFC1918, loopback, IPv6 ULA), correct for the reference proxy on the private Docker network. A CIDR/IP list trusts exactly those (proxy on a public IP); `none` ignores XFF entirely (Core exposed directly). |
-| `TAB_PROXY_PORT` | *(empty)* | No | Origin-isolated custom-tab proxy (spec B5). When set, Core binds a SECOND HTTP listener on this port serving only the tab-proxy data plane. Front it on the SAME host as the panel, a different port (e.g. `25502`). Required for public tab share links; empty = second listener off (same-origin fallback). |
-| `TAB_PROXY_ORIGIN` | *(empty)* | No | Browser-facing absolute base URL of that isolated origin (e.g. `https://panel.example.com:25502`). Its HOST must equal `FRONTEND_URL`'s host (the `dyl_tabproxy` cookie is host-only); a mismatch logs a warning and disables isolation. Empty = same-origin fallback (public shares refused). |
+| `TAB_PROXY_HOST_SUFFIX` | *(empty)* | No | DNS suffix each proxied custom tab is served under, one hostname per tab (`<label>.tabs.example.com`). Needs a wildcard DNS record and a certificate covering BOTH the suffix and its wildcard; wildcards are DNS-01 only. Empty = proxied tabs unavailable (direct tabs unaffected). Full setup: [CUSTOM-TABS.md](CUSTOM-TABS.md). |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
 | `REDIS_USER` | *(empty)* | No | Redis/Valkey username (ACL). |
 | `REDIS_PASSWORD` | *(empty)* | Recommended | Redis/Valkey password for Core's admin login. Core is the Redis ACL authority: it connects as the aclfile `default` user and provisions per-node scoped users. The bundled Valkey runs the stock image (non-root) with `--aclfile` and is NOT auto-seeded, so this must match the `default` admin password you create in the aclfile before the first boot (see the redis service comment in the compose files). |
@@ -559,7 +559,6 @@ These are set by the Node when it launches a container; they are listed for comp
 | `25521` | node | Beam gRPC (`BEAM_GRPC_PORT`; overlay-only, JWT-gated) |
 | `25522` | node | Auto-move pull endpoint (`MIGRATION_PORT`; per-node-secret-HMAC) |
 | `25523` | node | Beam LAN fast-path (`BEAM_LAN_PORT`; pinned-TLS, direct client<->node). Publish on the node's LAN (self-host/BYON) to enable the fast path even when a gateway is present; unpublished simply falls back to relay/public. |
-| `25502` | core | Origin-isolated tab-proxy (`TAB_PROXY_PORT`, spec B5; opt-in, same host as panel, different port) |
 | `25600-25699` | node | MC server host ports (`PORT_RANGE`; `ip_port`/`both` routing) |
 | `5432` | postgres | Database (internal) |
 | `6379` | redis | Cache + queues (internal) |
@@ -714,37 +713,39 @@ registration exists that the generator did not recognise.
 Custom tabs can run in two modes. A **direct** tab renders a browser-reachable
 URL in an iframe (or popout). A **proxied** tab streams a Minecraft server
 container's own web UI (BlueMap, squaremap, Dynmap, plugin dashboards) through
-Core over the existing reverse gRPC mesh, so the browser only ever talks to Core
-on the panel origin - no public container port and no extra ingress needed. It
-works even on gateway-routed / BYON nodes with no browser-reachable node address.
+Core over the existing reverse gRPC mesh, so no public container port and no
+extra ingress is needed. It works even on gateway-routed / BYON nodes with no
+browser-reachable node address.
 
-- In-dashboard: `ANY /api/servers/{id}/tabs/{tabId}/proxy/...` (session + overview
-  access, same gate as reading the tab).
-- Standalone share link: `/c/<token>` -> `ANY /api/tabproxy/{token}/...`. A
-  `public` link serves anyone with the unguessable token; a `private` link needs
-  a logged-in session with access.
-- HTTP and WebSocket are both proxied. Proxied apps must use relative asset paths
-  or a configurable web base-path; Core injects `<base href>` into `text/html`.
-  Apps that hard-code absolute-root paths (`/tiles/...`) are a known V1 limitation.
+**Setup guide: [CUSTOM-TABS.md](CUSTOM-TABS.md).** Proxied tabs need a
+wildcard DNS record and a certificate; direct tabs need nothing.
+
+- Each proxied tab is served at the ROOT of its own hostname,
+  `<label>.$TAB_PROXY_HOST_SUFFIX`. The root is what makes an application's own
+  absolute asset paths resolve - BlueMap asks for `/js/app.*.js` and Dynmap for
+  `config.js` from the origin root, and neither can run under a path prefix. The
+  separate hostname is also a separate ORIGIN, so a container's scripts cannot
+  read the panel session token out of the panel origin's storage.
+- Reached in the panel under Custom Tabs (a module, off by default) or per
+  server; shared standalone as `/c/<token>`, where a `public` link serves anyone
+  holding the unguessable token and a `private` link needs a signed-in session
+  with access to that server.
+- HTTP and WebSocket are both proxied.
+- Cookies are NOT passed in either direction, deliberately: cookies are scoped
+  per domain rather than per hostname, so a container could otherwise set one the
+  panel host would receive. Applications whose login is a cookie (Plan with
+  authentication, Dynmap with `login-enabled`, Grafana) cannot be used this way -
+  use a direct tab with a real public URL for those.
 - Admin gates live in Settings -> Features: master toggle
   (`feature_tab_proxy_enabled`, default off), anonymous public links
   (`tab_proxy_allow_public_links`, default off), and per-server / per-user caps.
-- Origin isolation (spec B5): set `TAB_PROXY_PORT` + `TAB_PROXY_ORIGIN` to serve
-  proxied content from a dedicated same-host, different-port origin. This closes
-  the same-origin token-theft vector and is REQUIRED for public share links. Left
-  unset, the in-dashboard proxy still works same-origin (single-operator only).
 
-> **Security:** proxied content runs under `allow-same-origin`, so it must not
-> share the panel's origin. Set `TAB_PROXY_PORT` + `TAB_PROXY_ORIGIN` (same host,
-> different port) so proxied content is served from a dedicated origin - a
-> container's JS then runs on that origin and cannot read the panel token from
-> the panel origin's localStorage (spec B5). Public share links are REFUSED until
-> this origin isolation is active. Without it, only the in-dashboard proxy works,
-> same-origin, which is safe solely for a single-operator self-host where you
-> control your own containers. Origin isolation fully protects PUBLIC shares; the
-> in-dashboard proxy may briefly use the same origin during app-data load, so an
-> admin viewing another tenant's container in-dashboard is best-effort (the
-> single-operator / self-host assumption).
+> **Security:** a proxied page is software you or your customer chose, not
+> software this project wrote, and it runs with `allow-same-origin` inside its
+> frame. That is why it is served from its own hostname rather than the panel's:
+> a separate origin cannot reach the panel's storage. With no
+> `TAB_PROXY_HOST_SUFFIX` there is nowhere safe to serve it, so proxied tabs stay
+> switched off rather than falling back to the panel's origin.
 
 ## Beam desktop client
 
