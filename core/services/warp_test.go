@@ -10,17 +10,36 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
+// The name of this test is the invariant, so it has to actually check it.
+//
+// It used to assert only that the result was a valid key and that two calls
+// agreed - both of which stay true if the salt changes, if the HKDF arguments
+// are reordered, or if the KDF is swapped outright. Every one of those silently
+// re-keys every region: clients pin the leader's public key, so tunnels build
+// and never authenticate, and nothing names the derivation as the cause.
+//
+// The vectors are the ones pinned in the gateway's own
+// pkg/warpkey/warpkey_test.go, whose comment says they "stand in for Core, which
+// reimplements the same construction in another repo and has no way to be
+// compiled against this one". They only stand in for Core if Core asserts them.
 func TestDeriveLeaderPublicKey_MatchesGatewayDerivation(t *testing.T) {
-	pub, err := DeriveLeaderPublicKey("cluster-secret", "leader-01")
-	if err != nil {
-		t.Fatalf("derive: %v", err)
+	cases := []struct{ secret, region, wantPub string }{
+		{"cluster-secret", "leader-01", "VOHaju2R/VZjJycyWx41LGYpiRdtNDowsCsaKrO+pTo="},
+		{"dylaris-test-secret", "eu-central", "kGfkAg9XyAUdfmFh3n/5wdIgBSlhOp9EAiCK3qOEqB4="},
 	}
-	if _, err := wgtypes.ParseKey(pub); err != nil {
-		t.Fatalf("derived pub not a valid key: %v", err)
-	}
-	pub2, _ := DeriveLeaderPublicKey("cluster-secret", "leader-01")
-	if pub != pub2 {
-		t.Fatal("derivation must be deterministic")
+	for _, c := range cases {
+		pub, err := DeriveLeaderPublicKey(c.secret, c.region)
+		if err != nil {
+			t.Fatalf("derive(%q, %q): %v", c.secret, c.region, err)
+		}
+		if _, err := wgtypes.ParseKey(pub); err != nil {
+			t.Fatalf("derived pub not a valid key: %v", err)
+		}
+		if pub != c.wantPub {
+			t.Errorf("derive(%q, %q) = %q, want %q - Core and the gateway no longer derive the same leader key, "+
+				"so every client's pinned pubkey is wrong and every region is effectively re-keyed",
+				c.secret, c.region, pub, c.wantPub)
+		}
 	}
 }
 
