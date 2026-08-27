@@ -8,6 +8,7 @@ import (
 	"dylaris-core/store"
 	"encoding/json"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -119,7 +120,16 @@ func sftpNodeServersKey(node models.Node, username string) string {
 
 // pruneStaleAuthKeys removes any sftp:auth:* key whose user is no longer in
 // the valid set. SCAN keeps it O(batch) instead of blocking Redis with KEYS.
-func (s *SFTPSyncService) pruneStaleAuthKeys(ctx context.Context, valid map[string]bool) {
+//
+// unknown holds the "sftp:auth:<token>:" prefixes of nodes this tick could not
+// build an access list for, and keys under those are left alone. Deleting them
+// would turn a transient database error on ONE node's access query into an
+// immediate SFTP lockout for every user on that node: the loop below cannot
+// tell "this user lost access" from "Core did not get to ask". Withholding the
+// refresh is the correct fail-closed response there, and the 5-minute TTL still
+// applies - the prune exists to shorten the window after a revocation, not to
+// open one after a hiccup.
+func (s *SFTPSyncService) pruneStaleAuthKeys(ctx context.Context, valid map[string]bool, unknown []string) {
 	var cursor uint64
 	for {
 		keys, next, err := s.redis.Scan(ctx, cursor, "sftp:auth:*", 100).Result()
@@ -127,15 +137,26 @@ func (s *SFTPSyncService) pruneStaleAuthKeys(ctx context.Context, valid map[stri
 			return
 		}
 		for _, k := range keys {
-			if !valid[k] {
-				s.redis.Del(ctx, k)
+			if valid[k] || hasAnyPrefix(k, unknown) {
+				continue
 			}
+			s.redis.Del(ctx, k)
 		}
 		cursor = next
 		if cursor == 0 {
 			return
 		}
 	}
+}
+
+// hasAnyPrefix reports whether k starts with any of the given prefixes.
+func hasAnyPrefix(k string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *SFTPSyncService) sync() {
@@ -181,9 +202,14 @@ func (s *SFTPSyncService) sync() {
 		return
 	}
 
+	// Prefixes of nodes whose access list this tick could not read. The prune
+	// below skips them instead of treating "no rows" and "no answer" alike.
+	var unknown []string
 	for _, node := range nodes {
 		accesses, err := s.store.GetSFTPAccessByNode(node.ID)
 		if err != nil {
+			log.Printf("SFTPSync: could not read SFTP access for node %s, leaving its published hashes in place: %v", node.Name, err)
+			unknown = append(unknown, redisacl.SFTPAuthKeyPrefix(node.Token))
 			continue
 		}
 
@@ -233,5 +259,5 @@ func (s *SFTPSyncService) sync() {
 	// loop had just written. It also clears the old fleet-wide
 	// "sftp:auth:<username>" keys from before this was node-scoped, since those
 	// can never appear in `valid` again.
-	s.pruneStaleAuthKeys(ctx, valid)
+	s.pruneStaleAuthKeys(ctx, valid, unknown)
 }

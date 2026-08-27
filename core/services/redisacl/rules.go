@@ -146,9 +146,15 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 	return rules
 }
 
-// BuildShipperACLRules returns the ACL rules for the per-node shipper user:
-// ONLY the assigned servers' keys + their stats:live channel. No node-scoped
-// keys, no global reads, no :cmds.
+// BuildShipperACLRules returns the ACL rules for ONE container's log-shipper
+// user: only that server's keys + its stats:live channel. No node-scoped keys,
+// no global reads, no :cmds.
+//
+// One user per SERVER, not per node - the signature takes a single serverUUID
+// for that reason. The comment here used to say "the per-node shipper user"
+// with a plural "assigned servers' keys", describing the shape this replaced:
+// one user holding ~dylaris:server:<u>:* for every server on the machine, where
+// dylaris:server:<u>:input is a stdin bridge into a neighbouring tenant's JVM.
 func BuildShipperACLRules(password, serverUUID string) []interface{} {
 	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
 	rules = append(rules, "~dylaris:server:"+serverUUID+":*")
