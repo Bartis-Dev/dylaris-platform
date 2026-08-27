@@ -171,3 +171,45 @@ func TestRestoreCleanupRemovesAbandonedStagingDirs(t *testing.T) {
 		t.Errorf("deleted a user directory that only looks like ours: %v", err)
 	}
 }
+
+// The producer and the matcher have to agree for EVERY random MkdirTemp can
+// pick, not just a typical one.
+//
+// The matcher used to require six or more digits because MkdirTemp's random was
+// described as "a long run". It is a uint32 printed in decimal, so it is one to
+// ten digits wide, and a short one produced a staging dir the sweep did not
+// recognise - a full copy of a world left in the server directory for good.
+// TestTheCleanupRecognisesTheNameARestoreActuallyProduces calls the real
+// producer, so it only fails on the runs that happen to draw a short random:
+// it took a 1-in-tens-of-thousands CI run to surface this. These cases pin the
+// same property without waiting for the dice.
+func TestTheStagingNameIsRecognisedAtEveryRandomWidth(t *testing.T) {
+	for _, random := range []string{"0", "7", "92106", "999999", "1000000", "4294967295"} {
+		name := "survival" + stageDirInfix + random + stageDirSuffix
+		if !restoreStage.MatchString(name) {
+			t.Errorf("the cleanup does not recognise %q, so a staging dir with that random is never swept", name)
+		}
+		if preRestoreStash.MatchString(name) {
+			t.Errorf("%q is matched as a pre-restore stash", name)
+		}
+	}
+}
+
+// The width rule the suffix replaced was protecting something real: the server
+// directory is writable by the tenant over SFTP, so a hand-made "world.restore-2"
+// must not be swept 24 hours later without a word. The suffix has to be
+// NARROWER than the rule it replaced, not wider.
+func TestAHandMadeDirectoryIsNotMistakenForStaging(t *testing.T) {
+	for _, name := range []string{
+		"world.restore-2",
+		"world.restore-20260827",
+		"world.restore-",
+		"world.stage",
+		"world.restore-12.stage.bak",
+		"world.restore-abc.stage",
+	} {
+		if restoreStage.MatchString(name) {
+			t.Errorf("%q is matched as a staging dir and would be deleted", name)
+		}
+	}
+}

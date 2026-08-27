@@ -41,17 +41,32 @@ var preRestoreStash = regexp.MustCompile(`\.pre-restore-\d{8}-\d{6}$`)
 // cannot drift apart.
 const stageDirInfix = ".restore-"
 
-// restoreStage matches a staging directory left behind by RunRestore:
-// "<target>.restore-<random>". MkdirTemp's suffix is a long run of digits, so
-// requiring six of them keeps a directory a user could plausibly create by hand
-// ("world.restore-2") out of reach of the sweep.
+// stageDirSuffix is appended AFTER MkdirTemp's random run of digits, and it is
+// what makes the name recognisable without counting them.
 //
-// This is the second directory a restore creates, and until now only the first
-// was swept. A restore killed mid-extraction (SIGKILL, node redeploy, OOM) left
-// its whole staging tree behind for good - a full copy of the world, inside the
-// server directory, counting against the server's own disk limit, with nothing
-// that would ever remove it.
-var restoreStage = regexp.MustCompile(`\` + stageDirInfix + `\d{6,}$`)
+// The matcher used to require six or more digits, on the reasoning that
+// MkdirTemp's suffix is "a long run". It is not: the random is a uint32
+// printed in decimal, so it is anywhere from one to ten digits, and a run that
+// came out short produced a staging dir the sweep did not recognise. CI caught
+// exactly that with "survival.restore-92106". The consequence is the one this
+// sweep exists to prevent: a full copy of the world left inside the server
+// directory for good, counting against the server's disk limit.
+//
+// The width requirement was there for a real reason - a user may plausibly
+// create "world.restore-2" by hand over SFTP, and sweeping it 24 hours later
+// without a word is data loss. So the fix is to make the PRODUCED name
+// unmistakable rather than to loosen the match: this suffix is narrower than
+// the old rule, not wider.
+const stageDirSuffix = ".stage"
+
+// restoreStage matches a staging directory left behind by RunRestore:
+// "<target>.restore-<random>.stage".
+//
+// This is the second directory a restore creates, and until it was added only
+// the first was swept. A restore killed mid-extraction (SIGKILL, node redeploy,
+// OOM) left its whole staging tree behind for good, with nothing that would
+// ever remove it.
+var restoreStage = regexp.MustCompile(`\` + stageDirInfix + `\d+\` + stageDirSuffix + `$`)
 
 // StartRestoreCleanup runs a background goroutine that periodically deletes
 // .pre-restore-<timestamp> directories left behind by RunRestore once they

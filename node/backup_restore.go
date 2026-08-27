@@ -50,7 +50,10 @@ type BackupRestoreCommand struct {
 // is predictable enough to plant a minute of candidates for. MkdirTemp picks the
 // name itself and fails on anything that already exists, so neither half works.
 func createStageDir(targetDir string) (string, error) {
-	dir, err := os.MkdirTemp(filepath.Dir(targetDir), filepath.Base(targetDir)+stageDirInfix+"*")
+	// The "*" is where MkdirTemp puts its random; stageDirSuffix rides after
+	// it so restore_cleanup.go can recognise the name without depending on how
+	// many digits that random happened to have.
+	dir, err := os.MkdirTemp(filepath.Dir(targetDir), filepath.Base(targetDir)+stageDirInfix+"*"+stageDirSuffix)
 	if err != nil {
 		return "", err
 	}
