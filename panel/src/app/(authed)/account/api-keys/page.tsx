@@ -7,6 +7,7 @@ import { listAPIKeys, createAPIKey, revokeAPIKey, type APIKey, type APIKeyOption
 import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
+import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 import { toast } from '@/components/ui/Toast';
 
 // per-user API key management. Lives under /account/ because
@@ -33,6 +34,12 @@ export default function ApiKeysPage() {
         permissions: string[];
         ratePerMin: number;
     }>({ name: '', servers: [], permissions: [], ratePerMin: 60 });
+
+    // Kept OUT of `form` so it is never carried across a second create: the
+    // form is reset on success, and a password lingering in component state
+    // after the dialog closes is a credential nobody asked us to hold.
+    const [reauthPassword, setReauthPassword] = useState('');
+    const [reauthCode, setReauthCode] = useState('');
 
     const [revealedKey, setRevealedKey] = useState<{ plaintext: string; name: string } | null>(null);
     const [revoking, setRevoking] = useState<APIKey | null>(null);
@@ -85,10 +92,14 @@ export default function ApiKeysPage() {
             servers: form.servers,
             permissions: form.permissions,
             ratePerMin: form.ratePerMin,
+            password: reauthPassword,
+            code: reauthCode.replace(/\s/g, '') || undefined,
         });
         if (res.success && res.plaintext) {
             setCreating(false);
             setForm({ name: '', servers: [], permissions: ['rcon.exec'], ratePerMin: 60 });
+            setReauthPassword('');
+            setReauthCode('');
             setRevealedKey({ plaintext: res.plaintext, name });
             refresh();
         } else {
@@ -344,9 +355,18 @@ export default function ApiKeysPage() {
                                 />
                             </div>
                         </div>
+                        <ReauthFields
+                            idPrefix="apikey"
+                            twoFactorEnabled={!!user?.is2FAEnabled}
+                            password={reauthPassword}
+                            code={reauthCode}
+                            onPassword={setReauthPassword}
+                            onCode={setReauthCode}
+                            disabled={creatingKey}
+                        />
                         <div className="modal-footer">
-                            <button onClick={() => setCreating(false)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={() => runCreate(handleCreate)} disabled={creatingKey} className="btn btn-primary disabled:opacity-40">Create key</button>
+                            <button onClick={() => { setCreating(false); setReauthPassword(''); setReauthCode(''); }} className="btn btn-secondary">Cancel</button>
+                            <button onClick={() => runCreate(handleCreate)} disabled={creatingKey || !reauthReady(!!user?.is2FAEnabled, reauthPassword, reauthCode)} className="btn btn-primary disabled:opacity-40">Create key</button>
                         </div>
                     </div>
                 </div>

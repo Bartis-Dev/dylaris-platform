@@ -105,6 +105,9 @@ func (h *SecurityQuestionsHandler) GetMyQuestions(w http.ResponseWriter, r *http
 
 type setMyQuestionsRequest struct {
 	Items []securityQARequest `json:"items"`
+	// These answers ARE the password-reset path, so overwriting them survives
+	// a password change and even revoking every API key. See requireReauth.
+	reauthFields
 }
 
 // SetMyQuestions PUT /api/me/security-questions — auth required.
@@ -131,6 +134,17 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 	hashedJSON, err := buildHashedQAJSON(req.Items, LoadSecurityQuestionPool(h.state), policy.SecurityQuestionsCount)
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Re-authenticate immediately before the write, and after every cheap check.
+	// A stolen session that can rewrite these owns the recovery path from then
+	// on, whatever the owner does to their password afterwards.
+	//
+	// Last rather than first for the same reason as APIKeysHandler.Create: a
+	// bcrypt comparison ahead of the request validation would let a malformed
+	// body buy CPU time, and nothing above this line writes anything.
+	if rerr := requireReauth(h.state, userID, req.Password, req.Code); rerr != nil {
+		writeReauthError(w, rerr)
 		return
 	}
 	if err := h.state.Store.SetUserSecurityQuestions(userID, hashedJSON); err != nil {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"golang.org/x/crypto/bcrypt"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -41,6 +42,13 @@ type apiKeysAuthFakeStore struct {
 	// owner holds NOW. Absent = the owner's account is gone.
 	users      map[string]*models.User
 	getUserErr error
+	// anyUserReauths lets an unseeded caller satisfy Create's requireReauth with
+	// reauthTestPassword. Set by newAPIKeysAuthHandler, because the tests below are
+	// about the DELEGATION maths and would otherwise each have to restate a
+	// credential that is not what they are asserting. The gate itself is covered
+	// by reauth_test.go and by TestAPIKeysCreate_RefusesTheWrongAccountPassword,
+	// which is what fails if it is ever taken out of Create.
+	anyUserReauths bool
 
 	createCalls []*models.APIKey
 	createErr   error
@@ -89,6 +97,12 @@ func (f *apiKeysAuthFakeStore) GetUserByID(id string) (*models.User, error) {
 	}
 	u, ok := f.users[id]
 	if !ok {
+		// Only when a test configured NO users at all. A test that builds a users
+		// map and leaves an id out of it is saying "this account is gone", which
+		// is the middleware's owner re-check - that meaning has to survive.
+		if f.anyUserReauths && f.users == nil && id != "" {
+			return &models.User{ID: id, Password: reauthTestHash}, nil
+		}
 		return nil, errors.New("user not found")
 	}
 	return u, nil
@@ -153,7 +167,21 @@ func (f *apiKeysAuthFakeStore) CreateAPIKey(k *models.APIKey) (int, error) {
 // almost every case here is about some other branch. The operator gate itself is
 // covered by TestAPIKeyMiddleware_OperatorGate and TestAPIKeysCreate_OperatorGate,
 // which set the flag themselves.
+// reauthTestPassword is what createAPIKeyReq sends by default, and what an
+// unseeded fake user answers to. Cost 4 rather than the real cost: these are
+// unit tests, not a password-strength exercise.
+const reauthTestPassword = "test-account-password"
+
+var reauthTestHash = func() string {
+	h, err := bcrypt.GenerateFromPassword([]byte(reauthTestPassword), 4)
+	if err != nil {
+		panic(err)
+	}
+	return string(h)
+}()
+
 func newAPIKeysAuthHandler(fs *apiKeysAuthFakeStore) *APIKeysHandler {
+	fs.anyUserReauths = true
 	if fs.settings == nil {
 		fs.settings = map[string]string{}
 	}
@@ -513,6 +541,12 @@ func TestAPIKeyMiddleware_PerIPThrottleExceeded(t *testing.T) {
 // --- Create ---
 
 func createAPIKeyReq(userID, username string, isAdmin bool, body map[string]interface{}) *http.Request {
+	// Create re-authenticates before minting. A test that is asserting something
+	// else should not have to say so; one that IS asserting the gate passes its
+	// own password and overrides this.
+	if _, set := body["password"]; !set {
+		body["password"] = reauthTestPassword
+	}
 	b, _ := json.Marshal(body)
 	r := httptest.NewRequest("POST", "/api/api-keys", bytes.NewReader(b))
 	ctx := context.WithValue(r.Context(), "isAdmin", isAdmin)
@@ -968,6 +1002,41 @@ func TestAPIKeyMiddleware_OwnerAccessIsRecheckedAtUse(t *testing.T) {
 			}
 			if !strings.Contains(rec.Body.String(), tt.wantBodySub) {
 				t.Errorf("body = %q, want it to mention %q", rec.Body.String(), tt.wantBodySub)
+			}
+		})
+	}
+}
+
+// The gate on Create, asserted where it lives.
+//
+// An API key authenticates by its OWN hash, so it keeps working after the
+// password change that kills every session - which makes minting one the way a
+// borrowed session turns into a permanent one. The other Create tests send the
+// password through createAPIKeyReq's default because they are asserting the
+// delegation maths; this one is what fails if requireReauth is ever taken back
+// out of Create.
+func TestAPIKeysCreate_RefusesTheWrongAccountPassword(t *testing.T) {
+	for name, password := range map[string]string{
+		"wrong":   "not-the-password",
+		"missing": "",
+	} {
+		t.Run(name+" password", func(t *testing.T) {
+			fs := &apiKeysAuthFakeStore{servers: map[string]*models.Server{
+				"srv-1": {ID: 1, UUID: "srv-1", OwnerID: "u1"},
+			}}
+			h := newAPIKeysAuthHandler(fs)
+			rec := httptest.NewRecorder()
+
+			h.Create(rec, createAPIKeyReq("u1", "alice", false, map[string]interface{}{
+				"name": "k", "permissions": []string{"rcon.exec"},
+				"servers": []string{"srv-1"}, "password": password,
+			}))
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("status = %d, want 401: %s", rec.Code, rec.Body.String())
+			}
+			if len(fs.createCalls) != 0 {
+				t.Errorf("a key was minted without the account password: %+v", fs.createCalls)
 			}
 		})
 	}

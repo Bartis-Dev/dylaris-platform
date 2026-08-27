@@ -26,6 +26,11 @@ export interface CreateAPIKeyInput {
     servers: string[];
     permissions: string[];
     ratePerMin?: number;
+    // Core re-authenticates this one: the key it mints authenticates by its own
+    // hash, so it keeps working after the password change that kills every
+    // session. code is only required when the account has 2FA.
+    password: string;
+    code?: string;
 }
 
 export interface CreateAPIKeyResponse {

@@ -42,6 +42,10 @@ type createAPIKeyRequest struct {
 	Servers     []string `json:"servers"`
 	Permissions []string `json:"permissions"`
 	RatePerMin  int      `json:"ratePerMin,omitempty"`
+	// A key outlives the session that minted it: it authenticates by its own
+	// hash, so the password change that kills every session leaves it working.
+	// See requireReauth.
+	reauthFields
 }
 
 type createAPIKeyResponse struct {
@@ -76,6 +80,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "At least one permission required", http.StatusBadRequest)
 		return
 	}
+
 	for _, p := range req.Permissions {
 		if !authz.ValidKeyCap(p) {
 			sendJSONError(w, "Unknown permission: "+p, http.StatusBadRequest)
@@ -140,6 +145,19 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	// Re-authenticate immediately before minting, and after every cheap check.
+	// What is created here survives the password change that kills every session,
+	// so the question is not what this session may do but whether the account
+	// holder is the one asking.
+	//
+	// Last rather than first on purpose: nothing above this line writes anything,
+	// and a bcrypt comparison in front of the request validation would let a
+	// malformed body buy CPU time. Nothing is persisted before it either way.
+	if rerr := requireReauth(h.state, userID, req.Password, req.Code); rerr != nil {
+		writeReauthError(w, rerr)
+		return
 	}
 
 	plaintext, err := generatePlaintextKey()

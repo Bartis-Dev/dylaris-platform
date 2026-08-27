@@ -481,7 +481,7 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/me/api-keys` | session | `apikeys.read` | - | `APIKeysHandler.List` | the calling user's own API keys, plus what they are allowed to mint. |
-| POST | `/api/me/api-keys` | session | `apikeys.write` | - | `APIKeysHandler.Create` | mints a key and returns its plaintext exactly once. |
+| POST | `/api/me/api-keys` | session | `apikeys.write` | Limit, LimitBody | `APIKeysHandler.Create` | mints a key and returns its plaintext exactly once. |
 | DELETE | `/api/me/api-keys/{id:[0-9]+}` | session | `apikeys.delete` | - | `APIKeysHandler.Revoke` | revokes one of the caller's own keys. |
 | GET | `/api/me/billing` | session | _no capability_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
 | GET | `/api/me/entitlement` | session | _no capability_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |
@@ -494,7 +494,7 @@ can still show what exists.
 | POST | `/api/me/packs/import-solder/preview` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportSolderPreview` | reads the pack index of an external Solder instance so the UI can list what is importable. |
 | GET | `/api/me/regions` | session | _no capability_ | - | `UserRegionsHandler.GetMyRegions` | current user's own region assignment (any authenticated user). |
 | GET | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.GetMyQuestions` | auth required. |
-| PUT | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
+| PUT | `/api/me/security-questions` | session | _no capability_ | Limit, LimitBody | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
 | GET | `/api/me/servers/via-tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.ListMyServersViaTickets` | Drives the sidebar tab. |
 | PUT | `/api/me/updates-seen` | session | _no capability_ | - | `UpdatesHandler.MarkUpdatesSeen` | acknowledge the current feeds so the caller's navbar badge clears. |
 | GET | `/api/me/usage` | session | _no capability_ | - | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |

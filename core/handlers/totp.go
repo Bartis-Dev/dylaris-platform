@@ -363,6 +363,14 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 // the matched code is removed and the updated list is persisted, ensuring
 // it can't be reused.
 func (h *AuthHandler) verifyTOTPOrBackup(user *models.User, code string) (bool, error) {
+	return verifyTOTPOrBackupFor(h.state, user, code)
+}
+
+// verifyTOTPOrBackupFor is the same check without an AuthHandler, so the
+// re-authentication helper can reach it from handlers that have only the
+// AppState. Splitting it was the alternative to plumbing an AuthHandler into
+// two more structs for one call each.
+func verifyTOTPOrBackupFor(state *AppState, user *models.User, code string) (bool, error) {
 	code = strings.TrimSpace(code)
 	if code == "" || user == nil {
 		return false, nil
@@ -387,7 +395,7 @@ func (h *AuthHandler) verifyTOTPOrBackup(user *models.User, code string) (bool, 
 			// can't be reused.
 			remaining := append(hashed[:i], hashed[i+1:]...)
 			out, _ := json.Marshal(remaining)
-			if err := h.state.Store.SetUserTOTP(user.ID, user.TOTPSecret, string(out), user.Is2FAEnabled); err != nil {
+			if err := state.Store.SetUserTOTP(user.ID, user.TOTPSecret, string(out), user.Is2FAEnabled); err != nil {
 				return false, err
 			}
 			// Audit the consumption so admins can spot recovery-code abuse
@@ -395,7 +403,7 @@ func (h *AuthHandler) verifyTOTPOrBackup(user *models.User, code string) (bool, 
 			// are a strong signal that codes leaked. The handler caller
 			// owns the request so we can't grab it here; we log via the
 			// nil-request path which still captures actor/target IDs.
-			LogIdentityAudit(h.state, nil, AuditEvent2FABackupCodeConsumed, user.ID, user.ID, map[string]interface{}{
+			LogIdentityAudit(state, nil, AuditEvent2FABackupCodeConsumed, user.ID, user.ID, map[string]interface{}{
 				"remaining": len(remaining),
 			})
 			return true, nil

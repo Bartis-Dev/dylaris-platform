@@ -729,7 +729,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// listed/created/revoked for the acting userID only) is the real boundary,
 	// same as Task 20's modpack.*/library.* OWNER routes.
 	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.read")(apiKeysHandler.List))).Methods("GET")
-	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.write")(apiKeysHandler.Create))).Methods("POST")
+	// Rate limited like the auth routes, and body-capped, because Create now
+	// checks a PASSWORD (see requireReauth). A password check on an unthrottled
+	// route is a guessing oracle, and this one sits behind a session the guesser
+	// already holds - which is exactly the situation the check exists for.
+	api.HandleFunc("/me/api-keys", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.write")(apiKeysHandler.Create))))).Methods("POST")
 	api.HandleFunc("/me/api-keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.delete")(apiKeysHandler.Revoke))).Methods("DELETE")
 	// --- External API surface: Authorization: Bearer dyl_<key> ---
 	//
@@ -1549,7 +1553,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/auth/security-questions/pool", securityQuestionsHandler.GetPool).Methods("GET")
 	// Authenticated: user manages their own questions in profile.
 	api.HandleFunc("/me/security-questions", authHandler.AuthMiddleware(securityQuestionsHandler.GetMyQuestions)).Methods("GET")
-	api.HandleFunc("/me/security-questions", authHandler.AuthMiddleware(securityQuestionsHandler.SetMyQuestions)).Methods("PUT")
+	api.HandleFunc("/me/security-questions", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(securityQuestionsHandler.SetMyQuestions)))).Methods("PUT")
 	// Admin: pool management (PANEL settings.*).
 	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(securityQuestionsHandler.GetAdminPool))).Methods("GET")
 	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(securityQuestionsHandler.SetAdminPool))).Methods("PUT")

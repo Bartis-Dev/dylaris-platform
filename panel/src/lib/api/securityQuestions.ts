@@ -28,12 +28,15 @@ export async function getMySecurityQuestions() {
 
 // setMySecurityQuestions — auth required. Replaces the user's whole list.
 // Backend validates each item is from the current pool + count matches policy.
-export async function setMySecurityQuestions(items: SecurityQAItem[]) {
+// Core re-authenticates this one: these answers ARE the password-reset path,
+// so overwriting them survives a password change and even revoking every API
+// key. code is only required when the account has 2FA.
+export async function setMySecurityQuestions(items: SecurityQAItem[], password: string, code?: string) {
     try {
         const res = await fetch(`${API_URL}/me/security-questions`, {
             method: 'PUT',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ items }),
+            body: JSON.stringify({ items, password, code }),
         });
         return handleResponse(res);
     } catch (err) { return handleError(err); }

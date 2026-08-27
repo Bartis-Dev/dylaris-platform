@@ -46,12 +46,17 @@ func TestAPIKeysCreate_OperatorGateBlocksNonAdmins(t *testing.T) {
 // users, and an operator who cannot mint their own key could not turn the
 // feature on for anyone either.
 func TestAPIKeysCreate_OperatorGateDoesNotBlockAdmins(t *testing.T) {
-	fs := &apiKeysAuthFakeStore{}
+	// Minting re-authenticates now (requireReauth), so this has to present the
+	// password as well - the assertion is that the OPERATOR gate lets an admin
+	// through, not that minting asks for nothing.
+	fs := &apiKeysAuthFakeStore{users: map[string]*models.User{
+		"admin-1": {ID: "admin-1", Password: hashFor(t, "admin-pw")},
+	}}
 	h := gateHandler(t, "false", "", fs)
 	rec := httptest.NewRecorder()
 
 	h.Create(rec, createAPIKeyReq("admin-1", "root", true, map[string]interface{}{
-		"name": "k", "permissions": []string{"library.read"},
+		"name": "k", "permissions": []string{"library.read"}, "password": "admin-pw",
 	}))
 
 	if rec.Code == http.StatusForbidden {

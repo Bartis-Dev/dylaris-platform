@@ -8,6 +8,7 @@ import { getSecurityQuestionPool, getMySecurityQuestions, setMySecurityQuestions
 import { getMyUsernameHistory, type UsernameHistoryEntry } from '@/lib/api/accountPolicy';
 import { isUsername } from '@/lib/validation';
 import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
+import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 
 interface UserProfile {
     username: string;
@@ -186,7 +187,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                     </button>
                   </div>
 
-                  <SecurityQuestionsSection />
+                  <SecurityQuestionsSection twoFactorEnabled={twoFactorEnabled} />
 
                   {/* Backup-code health row — only shown when 2FA is on. The
                       remaining count comes from /auth/2fa/status; we never
@@ -805,7 +806,11 @@ function RegenerateBackupCodesWizard({ onClose, onComplete }: {
 // are disabled by policy, the section renders nothing at all (zero footprint
 // in the security tab). Otherwise the user sees their current status and
 // can pick/refresh questions inline — no separate modal.
-function SecurityQuestionsSection() {
+// twoFactorEnabled is passed in rather than probed: this section already
+// renders inside the security tab, which owns that state and keeps it live
+// across enabling and disabling 2FA. A second source would disagree with the
+// toggle sitting right above it the moment somebody flips it.
+function SecurityQuestionsSection({ twoFactorEnabled }: { twoFactorEnabled: boolean }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [required, setRequired] = useState(3);
   const [pool, setPool] = useState<string[]>([]);
@@ -815,6 +820,11 @@ function SecurityQuestionsSection() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [savedToast, setSavedToast] = useState(false);
+  // These answers ARE the password-reset path, so Core asks who is writing
+  // them: overwriting them survives a password change and even revoking every
+  // API key.
+  const [reauthPassword, setReauthPassword] = useState('');
+  const [reauthCode, setReauthCode] = useState('');
 
   useEffect(() => {
     getSecurityQuestionPool().then(res => {
@@ -853,11 +863,13 @@ function SecurityQuestionsSection() {
       return;
     }
     setSaving(true);
-    const res = await setMySecurityQuestions(items);
+    const res = await setMySecurityQuestions(items, reauthPassword, reauthCode.replace(/\s/g, '') || undefined);
     setSaving(false);
     if (res.success) {
       setCurrentCount(items.length);
       setEditing(false);
+      setReauthPassword('');
+      setReauthCode('');
       setSavedToast(true);
       setTimeout(() => setSavedToast(false), 2500);
     } else {
@@ -930,11 +942,20 @@ function SecurityQuestionsSection() {
               </div>
             );
           })}
+          <ReauthFields
+            idPrefix="secq"
+            twoFactorEnabled={twoFactorEnabled}
+            password={reauthPassword}
+            code={reauthCode}
+            onPassword={setReauthPassword}
+            onCode={setReauthCode}
+            disabled={saving}
+          />
           {error && <p className="text-xs text-(--error-light)">{error}</p>}
           <div className="flex gap-2 justify-end">
             <button
               type="button"
-              onClick={() => setEditing(false)}
+              onClick={() => { setEditing(false); setReauthPassword(''); setReauthCode(''); }}
               disabled={saving}
               className="btn btn-secondary btn-sm"
             >
@@ -943,7 +964,7 @@ function SecurityQuestionsSection() {
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || !reauthReady(twoFactorEnabled, reauthPassword, reauthCode)}
               className="btn btn-primary btn-sm inline-flex items-center gap-1.5"
             >
               {saving && <RefreshCw size={12} className="animate-spin" />}
