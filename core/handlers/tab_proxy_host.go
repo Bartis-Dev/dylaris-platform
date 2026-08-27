@@ -85,12 +85,14 @@ func (h *ProxyHandler) getTabByHostLabel(label string) (*proxyTab, error) {
 	var t proxyTab
 	err := db.QueryRow(`SELECT t.id, t.server_id, s.uuid, s.node_id, t.mode,
 		COALESCE(t.target_port,0), t.target_path, t.surface, t.visibility, t.share_expires_at,
-		t.enabled, t.share_token
+		t.enabled, t.share_token,
+		COALESCE(t.sub_server_name,''), COALESCE(s.active_sub_server,'')
 		FROM server_tabs t JOIN servers s ON s.id = t.server_id
 		WHERE t.proxy_host_label=$1`, label).Scan(
 		&t.ID, &t.ServerID, &t.ServerUUID, &t.NodeID, &t.Mode,
 		&t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareExpires,
-		&t.Enabled, &t.ShareToken)
+		&t.Enabled, &t.ShareToken,
+		&t.SubServerName, &t.ActiveSubServer)
 	if err != nil {
 		return nil, err
 	}

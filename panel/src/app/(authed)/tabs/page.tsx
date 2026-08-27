@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ChevronRight, LayoutDashboard } from 'lucide-react';
 import { listServerTabs, mintTabProxyAuth, type ServerTab } from '@/lib/api/serverTabs';
-import { tabContentSrc } from '@/lib/tabProxy';
+import { tabContentSrc, tabRunsOnActiveSubServer } from '@/lib/tabProxy';
 import { useAppData } from '@/lib/AppDataContext';
 import { DynamicIcon } from '@/lib/icons';
 import { Skeleton } from '@/components/Skeleton';
@@ -99,9 +99,23 @@ export default function CustomTabsPage() {
         return () => { cancelled = true; clearInterval(interval); };
     }, [selected?.proxyOrigin]);
 
+    // A tab pinned to a sub-server that is not the running one addresses a port
+    // that only exists while that sub-server is up, and Core refuses to serve it.
+    // Filtered HERE rather than in load() because the pin is compared against
+    // live server state: switching sub-servers has to move a tab in and out of
+    // this list without refetching anything.
+    const visibleByServer = useMemo(() => {
+        const out: TabsByServer = {};
+        for (const s of servers) {
+            const list = (tabsByServer[s.id] ?? []).filter(t => tabRunsOnActiveSubServer(t.subServerName, s.activeSubServer));
+            if (list.length > 0) out[s.id] = list;
+        }
+        return out;
+    }, [servers, tabsByServer]);
+
     const withTabs = useMemo(
-        () => servers.filter(s => (tabsByServer[s.id]?.length ?? 0) > 0),
-        [servers, tabsByServer],
+        () => servers.filter(s => (visibleByServer[s.id]?.length ?? 0) > 0),
+        [servers, visibleByServer],
     );
 
     if (!coreInfo?.tabProxyAvailable) {
@@ -143,7 +157,7 @@ export default function CustomTabsPage() {
                             {server.name}
                         </h2>
                         <ul>
-                            {(tabsByServer[server.id] ?? []).map(tab => {
+                            {(visibleByServer[server.id] ?? []).map(tab => {
                                 const active = selected?.id === tab.id;
                                 return (
                                     <li key={tab.id}>

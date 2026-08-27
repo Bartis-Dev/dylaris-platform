@@ -22,6 +22,7 @@ import CpuPinningControl from '@/components/CpuPinningControl';
 import { useServerUploadLock } from '@/lib/uploadManager';
 import { Upload } from 'lucide-react';
 import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
+import { tabRunsOnActiveSubServer } from '@/lib/tabProxy';
 import { systemEvents } from '@/lib/systemEvents';
 import { useBusy } from '@/lib/useBusy';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
@@ -875,7 +876,10 @@ export default function ServerLayout({ children }: { children: React.ReactNode }
                         // built-ins. Disabled rows are filtered out so the nav
                         // matches the user's intent without extra greying logic.
                         ...customTabs
-                            .filter(t => t.enabled)
+                            // A tab pinned to another sub-server addresses a
+                            // port that only exists while that one runs; Core
+                            // refuses it, so it does not belong in the bar.
+                            .filter(t => t.enabled && tabRunsOnActiveSubServer(t.subServerName, selectedServer.activeSubServer))
                             .map(t => ({
                                 slug: `t/${t.id}`,
                                 icon: t.icon || 'layout-grid',

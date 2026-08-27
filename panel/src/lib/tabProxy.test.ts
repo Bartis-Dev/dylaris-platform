@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { tabContentSrc, shareLinkUrl } from './tabProxy';
+import { tabContentSrc, shareLinkUrl, tabRunsOnActiveSubServer } from './tabProxy';
 
 describe('tabContentSrc', () => {
     it('serves the tab at the ROOT of its own host', () => {
@@ -55,5 +55,28 @@ describe('shareLinkUrl host', () => {
         vi.stubGlobal('window', { location: { origin: 'https://panel.example.com', protocol: 'https:' } });
         expect(shareLinkUrl('tok123')).toBe('https://panel.example.com/c/tok123');
         expect(shareLinkUrl('tok123', '')).toBe('https://panel.example.com/c/tok123');
+    });
+});
+
+describe('tabRunsOnActiveSubServer', () => {
+    // Core refuses a mismatched pin at the proxy. These cases are about the
+    // NAVIGATION agreeing with it, so a tab bar never offers an entry whose
+    // only possible outcome is that refusal.
+    it('shows an unpinned tab under every sub-server', () => {
+        expect(tabRunsOnActiveSubServer('', 'survival')).toBe(true);
+        expect(tabRunsOnActiveSubServer(undefined, 'survival')).toBe(true);
+        expect(tabRunsOnActiveSubServer('', '')).toBe(true);
+    });
+
+    it('shows a pinned tab only while its own sub-server runs', () => {
+        expect(tabRunsOnActiveSubServer('creative', 'creative')).toBe(true);
+        expect(tabRunsOnActiveSubServer('creative', 'survival')).toBe(false);
+    });
+
+    // A server with nothing started has no active sub-server, so a pinned tab
+    // addresses a port that is not listening. undefined must not read as a match.
+    it('hides a pinned tab when no sub-server is active', () => {
+        expect(tabRunsOnActiveSubServer('creative', undefined)).toBe(false);
+        expect(tabRunsOnActiveSubServer('creative', '')).toBe(false);
     });
 });

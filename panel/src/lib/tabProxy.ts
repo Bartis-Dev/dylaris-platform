@@ -42,3 +42,14 @@ export function shareLinkUrl(token: string, hostSuffix?: string): string {
         : window.location.origin;
     return `${origin}/c/${token}`;
 }
+
+// tabRunsOnActiveSubServer reports whether a tab's sub-server pin matches what
+// the server is actually running. An unpinned tab ("") belongs to every one.
+//
+// Core decides this again at the proxy and refuses a mismatch, so this is only
+// about the NAVIGATION: a tab bar entry that can produce nothing but that
+// refusal is noise, and removing it is what pinning the tab meant.
+export function tabRunsOnActiveSubServer(pin?: string, active?: string): boolean {
+    if (!pin) return true;
+    return pin === (active || '');
+}
