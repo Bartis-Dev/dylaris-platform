@@ -55,3 +55,4 @@
 {"date":"2026-08-27","service":"hub","type":"security","summary":"Gateway services no longer send their signed hub credential request to whatever answers when the hub name has not resolved yet, which could hand a working token to an unrelated host."}
 {"date":"2026-08-27","service":"hub","type":"fix","summary":"Two hubs can no longer end up ordering a certificate for the same name at once after a Redis outage, which used to spend the weekly duplicate-certificate allowance."}
 {"date":"2026-08-27","service":"hub","type":"security","summary":"A link name or subnet list containing unusual characters can no longer inject anything into the deploy kit a customer runs."}
+{"date":"2026-08-27","service":"hub","type":"fix","summary":"Switching a DNS zone off in the panel now just stops writing to it. It used to delete every record the gateway had created there once the grace period passed, including ones still carrying players."}
