@@ -144,7 +144,26 @@ export async function mintTabProxyAuth(proxyOrigin: string): Promise<{ success: 
         } catch {
             return { success: false, status: res.status, message: `Failed to authorize tab proxy (HTTP ${res.status})` };
         }
-    } catch (err) { return handleError(err); }
+    } catch (err) {
+        // A THROW here means the request never reached Core - and on this call
+        // that has one overwhelmingly likely cause. The mint is the only
+        // cross-origin fetch the panel makes, to a host the panel itself
+        // computed, so the browser refuses it when the panel's CSP does not
+        // list that host - which happens whenever the panel's
+        // TAB_PROXY_HOST_SUFFIX disagrees with Core's.
+        //
+        // handleError's 'Connection failed' is true and useless here: it points
+        // at Core, which is up and was never asked. Same trap handleResponse
+        // documents for a non-JSON body. Name the host and both causes instead;
+        // fetch cannot tell a CSP block from a DNS/TLS failure, so neither do we.
+        console.error('tab proxy mint failed:', err);
+        let host = proxyOrigin;
+        try { host = new URL(proxyOrigin).host; } catch { /* keep the raw value */ }
+        return {
+            success: false,
+            message: `The browser could not reach ${host}. Either the panel's TAB_PROXY_HOST_SUFFIX does not match Core's, or DNS and TLS for that host are not set up yet.`,
+        };
+    }
 }
 
 export interface ShareResolution {
