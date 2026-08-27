@@ -269,3 +269,4 @@
 {"date":"2026-08-27","service":"core","type":"fix","summary":"When Modrinth cannot be reached, identifying jars now says so instead of reporting that the files are not on Modrinth."}
 {"date":"2026-08-27","service":"core","type":"fix","summary":"Identifying more than 200 unknown jars at once now works; it used to be refused outright, which is the case an imported server hits first."}
 {"date":"2026-08-27","service":"core","type":"security","summary":"The panel no longer sends its signed request, or the DNS credential with it, to whatever answers when the gateway hub name has not resolved yet."}
+{"date":"2026-08-27","service":"panel","type":"fix","summary":"Clicking Settings in the top bar, or a server in the sidebar, while editing a form on that page no longer discards the edits without asking."}

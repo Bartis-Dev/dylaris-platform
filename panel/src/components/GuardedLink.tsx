@@ -7,6 +7,7 @@ import {
     useUnsavedChangesState,
     UnsavedDialog,
 } from '@/components/settings/UnsavedChanges';
+import { leavesPage } from '@/lib/navGuard';
 
 // GuardedLink behaves like next/link's <Link>, except that when any form on
 // the current page has registered itself as dirty with the shared
@@ -40,11 +41,10 @@ export default function GuardedLink({ children, ...props }: GuardedLinkProps) {
         // load, beforeunload covers it.
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
         if (!registration?.dirty) return;
-        // Navigating to the same path you're on isn't really "leaving"; skip
-        // the guard so e.g. clicking the active tab stays a no-op.
-        if (hrefStr && (pathname === hrefStr || pathname.startsWith(hrefStr + '/'))) {
-            return;
-        }
+        // Clicking the page you are already on is a no-op and skips the guard.
+        // Anything else unmounts what is showing - see leavesPage for why the
+        // ancestor case used to be waved through and what that cost.
+        if (!leavesPage(pathname, hrefStr)) return;
         e.preventDefault();
         setPending(hrefStr);
     };

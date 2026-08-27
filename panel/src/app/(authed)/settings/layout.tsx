@@ -9,6 +9,7 @@ import {
     UnsavedDialog,
 } from '@/components/settings/UnsavedChanges';
 import SettingsSearch from '@/components/settings/SettingsSearch';
+import { leavesPage } from '@/lib/navGuard';
 
 interface SettingsTab {
     slug: string;
@@ -140,9 +141,10 @@ function SettingsLayoutInner({
     // Intercept tab clicks when dirty.
     const handleTabClick = useCallback(
         (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
-            const isCurrentTab =
-                pathname === href || pathname.startsWith(href + '/');
-            if (!dirty || isCurrentTab) return; // let it navigate normally
+            // Highlighting uses the prefix; leaving does not. /settings/tickets
+            // is the lit-up nav item while /settings/tickets/deletion-log is
+            // showing, and clicking it does move off that page.
+            if (!dirty || !leavesPage(pathname, href)) return; // let it navigate normally
             e.preventDefault();
             setPendingNav({ href });
         },
