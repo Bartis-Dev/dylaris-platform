@@ -2,12 +2,8 @@ package handlers
 
 import (
 	"context"
-	"crypto/sha1"
-	"crypto/sha512"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,10 +15,6 @@ import (
 
 	"github.com/gorilla/mux"
 )
-
-// replaceDownloadClient bounds the cdn.modrinth.com file download so a stalled
-// connection cannot hang the handler goroutine indefinitely.
-var replaceDownloadClient = &http.Client{Timeout: 120 * time.Second}
 
 type replaceModrinthRequest struct {
 	VersionID string `json:"versionId"` // the Modrinth version to align to
@@ -88,12 +80,24 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 	if file.URL == "" {
 		return fmt.Errorf("modrinth version has no downloadable file")
 	}
-	jar, err := downloadURL(ctx, file.URL)
+	// At least one published hash, checked BEFORE the download: this function's
+	// whole promise is that the stored artifact becomes byte-identical to
+	// Modrinth's, and DownloadModrinthJar verifies only the hashes it is handed
+	// - two empty strings would make it accept whatever arrived and call it
+	// aligned.
+	if file.Hashes["sha1"] == "" && file.Hashes["sha512"] == "" {
+		return fmt.Errorf("modrinth version publishes no sha1/sha512 to verify against")
+	}
+	// services.DownloadModrinthJar rather than a bare client: it refuses any URL
+	// outside cdn.modrinth.com, caps the body, and verifies the hashes. The three
+	// other places that fetch a Modrinth file URL already go through it or its
+	// streaming twin; this one used its own client with no host check at all, so
+	// whatever URL the Modrinth API named in files[].url was fetched by Core from
+	// inside the network. That allowlist exists precisely so a download cannot be
+	// steered by a third party's response.
+	jar, err := services.DownloadModrinthJar(ctx, file.URL, file.Hashes["sha1"], file.Hashes["sha512"])
 	if err != nil {
 		return fmt.Errorf("download from modrinth failed: %w", err)
-	}
-	if err := verifyModrinthBytes(jar, file.Hashes); err != nil {
-		return fmt.Errorf("modrinth download integrity check failed: %w", err)
 	}
 	fileName := file.Filename
 	if fileName == "" {
@@ -109,7 +113,17 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 		return fmt.Errorf("no pack storage configured")
 	}
 	slug := slugify(strings.TrimSuffix(fileName, ".jar"))
-	newKey := "packs/" + ownerID + "/mods/" + slug + "/" + slug + "-" + v.VersionNum + ".zip"
+	// Remote text must never reach a storage key. version_number is whatever the
+	// project author typed on Modrinth, and it went into the key raw; the Solder
+	// import path slugifies for exactly this reason and keeps the raw string only
+	// for the display field (mv.Version below). The md5 suffix is what keeps two
+	// different artifacts from colliding once the slug has flattened them.
+	keyVersion := slugify(v.VersionNum)
+	if keyVersion == "" {
+		keyVersion = "v"
+	}
+	keyVersion = keyVersion + "-" + md5hex[:8]
+	newKey := "packs/" + ownerID + "/mods/" + slug + "/" + slug + "-" + keyVersion + ".zip"
 	if err := prov.Put(ctx, newKey, zipBytes); err != nil {
 		return fmt.Errorf("storage put failed: %w", err)
 	}
@@ -138,48 +152,4 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 		_ = prov.Delete(ctx, oldKey) // best-effort; the DB no longer references it
 	}
 	return nil
-}
-
-// verifyModrinthBytes checks the downloaded bytes against Modrinth's published
-// hashes. It requires at least one known hash and fails on any mismatch, so an
-// altered or corrupted download can never be wrapped and stored as "identical".
-func verifyModrinthBytes(data []byte, hashes map[string]string) error {
-	verified := false
-	if want := hashes["sha1"]; want != "" {
-		sum := sha1.Sum(data)
-		got := hex.EncodeToString(sum[:])
-		if !strings.EqualFold(got, want) {
-			return fmt.Errorf("sha1 mismatch: expected %s, got %s", want, got)
-		}
-		verified = true
-	}
-	if want := hashes["sha512"]; want != "" {
-		sum := sha512.Sum512(data)
-		got := hex.EncodeToString(sum[:])
-		if !strings.EqualFold(got, want) {
-			return fmt.Errorf("sha512 mismatch: expected %s, got %s", want, got)
-		}
-		verified = true
-	}
-	if !verified {
-		return fmt.Errorf("no sha1/sha512 hash published to verify against")
-	}
-	return nil
-}
-
-// downloadURL fetches a URL's body with a bounded size (256 MiB) for mod files.
-func downloadURL(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := replaceDownloadClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 256<<20))
 }

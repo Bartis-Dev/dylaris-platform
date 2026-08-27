@@ -33,12 +33,16 @@ type publishModrinthResponse struct {
 
 // nonModrinthContent returns the target paths of content that is NOT a clean
 // Modrinth files[] reference (i.e. will be embedded in overrides/ and needs
-// redistribution rights to pass Modrinth moderation). Uses the same predicate
-// as the mrpack render (modrinthCDNURL, defined in packs_mrpack.go, same package).
+// redistribution rights to pass Modrinth moderation).
+//
+// It asks isMrpackFilesEntry rather than spelling the condition out again: this
+// list is what the publisher ACKNOWLEDGES, and the render is what actually
+// embeds. A third copy of the same four terms drifting from the other two would
+// have the user acknowledge one set while a different set shipped.
 func nonModrinthContent(content []models.BuildContentEntry) []string {
 	var out []string
 	for _, e := range content {
-		if !(e.Linked && e.SHA1 != "" && e.SHA512 != "" && modrinthCDNURL(e) != "") {
+		if !isMrpackFilesEntry(e) {
 			out = append(out, e.TargetPath)
 		}
 	}

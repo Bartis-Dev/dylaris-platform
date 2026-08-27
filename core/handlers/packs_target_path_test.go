@@ -86,3 +86,49 @@ func TestTargetPathForNeverEscapesItsDirectory(t *testing.T) {
 		})
 	}
 }
+
+// The publish warning list and the render must answer the same question about
+// the same entry. The list is what the publisher ACKNOWLEDGES ("these will be
+// embedded and need redistribution rights"); the render is what actually
+// embeds. Two copies of the condition drifting would have the user acknowledge
+// one set while a different set shipped.
+func TestThePublishWarningAgreesWithWhatTheRenderEmbeds(t *testing.T) {
+	entries := []models.BuildContentEntry{
+		modrinthEntry("mods/sodium.jar"),       // clean files[] reference
+		unlinkedEntry("mods/private-mod.jar"),  // manual upload -> overrides/
+		noCDNEntry("mods/self-hosted.jar"),     // linked but no Modrinth CDN URL
+		missingHashEntry("mods/no-sha512.jar"), // linked, CDN, but one hash missing
+	}
+
+	warned := map[string]bool{}
+	for _, p := range nonModrinthContent(entries) {
+		warned[p] = true
+	}
+	for _, e := range entries {
+		embedded := !isMrpackFilesEntry(e)
+		if warned[e.TargetPath] != embedded {
+			t.Errorf("%s: warned=%v but the render embeds=%v", e.TargetPath, warned[e.TargetPath], embedded)
+		}
+	}
+	if len(warned) != 3 {
+		t.Errorf("warned about %d entries, want the 3 that get embedded: %v", len(warned), warned)
+	}
+}
+
+func unlinkedEntry(targetPath string) models.BuildContentEntry {
+	e := modrinthEntry(targetPath)
+	e.Linked = false
+	return e
+}
+
+func noCDNEntry(targetPath string) models.BuildContentEntry {
+	e := modrinthEntry(targetPath)
+	e.ModrinthDownloadURL = "https://example.invalid/x.jar"
+	return e
+}
+
+func missingHashEntry(targetPath string) models.BuildContentEntry {
+	e := modrinthEntry(targetPath)
+	e.SHA512 = ""
+	return e
+}
