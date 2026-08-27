@@ -50,25 +50,48 @@ func envForSide(side string) map[string]string {
 	}
 }
 
-// buildMrpackIndex builds modrinth.index.json. Modrinth-linked content (has a
-// cdn.modrinth.com download + sha1+sha512) goes in files[]; everything else is
-// embedded under overrides/ (returned separately for the zip writer).
-func buildMrpackIndex(pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) mrpackIndexOut {
+// isMrpackFilesEntry reports whether an entry can be a clean files[] reference:
+// Modrinth-linked, carrying both hashes, with a Modrinth CDN download URL.
+// Everything else is embedded under overrides/ instead.
+//
+// One predicate rather than the same four-term condition written out in both
+// buildMrpackIndex and writeMrpackZip: the two decide the SAME question about
+// the same entry, and an entry that both skip is an entry that silently leaves
+// the pack.
+func isMrpackFilesEntry(e models.BuildContentEntry) bool {
+	return e.Linked && e.SHA1 != "" && e.SHA512 != "" && modrinthCDNURL(e) != ""
+}
+
+// buildMrpackIndex builds modrinth.index.json. Modrinth-linked content goes in
+// files[]; everything else is embedded under overrides/ (written separately by
+// writeMrpackZip).
+//
+// files[].path is a path the LAUNCHER writes to, so a traversal-bearing
+// TargetPath here is the manifest's version of a zip slip - the same defect
+// renderServerPack's streamModrinthContent and the Solder render both already
+// refuse on this exact field. This was the third reader of it and the one
+// without the check. It reaches the DB unsanitized from exactly one place:
+// addModrinthVersion builds it from the filename the MODRINTH API reports,
+// which is third-party text. Our own node resolves every mrpack entry through
+// resolveExtractPath and would refuse it; a third-party launcher is not ours to
+// assume anything about, and an exported .mrpack is a file that leaves here.
+func buildMrpackIndex(pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) (mrpackIndexOut, error) {
 	files := make([]mrpackFileOut, 0, len(content))
 	for _, e := range content {
-		// A file is a clean files[] reference only if it is Modrinth-linked AND
-		// carries both hashes AND a Modrinth CDN download URL.
-		dl := modrinthCDNURL(e)
-		if e.Linked && e.SHA1 != "" && e.SHA512 != "" && dl != "" {
-			files = append(files, mrpackFileOut{
-				Path:      e.TargetPath,
-				Hashes:    map[string]string{"sha1": e.SHA1, "sha512": e.SHA512},
-				Env:       envForSide(e.Side),
-				Downloads: []string{dl},
-				FileSize:  e.Filesize,
-			})
+		if !isMrpackFilesEntry(e) {
+			// Non-linked content is embedded via overrides/ in writeMrpackZip.
+			continue
 		}
-		// Non-linked content is embedded via overrides/ in writeMrpackZip.
+		if e.TargetPath == "" || modpack.IsUnsafeEntryPath(e.TargetPath) {
+			return mrpackIndexOut{}, fmt.Errorf("modrinth content %q has an invalid target path", e.ModSlug)
+		}
+		files = append(files, mrpackFileOut{
+			Path:      e.TargetPath,
+			Hashes:    map[string]string{"sha1": e.SHA1, "sha512": e.SHA512},
+			Env:       envForSide(e.Side),
+			Downloads: []string{modrinthCDNURL(e)},
+			FileSize:  e.Filesize,
+		})
 	}
 
 	deps := map[string]string{"minecraft": build.Minecraft}
@@ -99,7 +122,7 @@ func buildMrpackIndex(pack *models.Pack, build *models.PackBuild, content []mode
 		Summary:       summary,
 		Files:         files,
 		Dependencies:  deps,
-	}
+	}, nil
 }
 
 // modrinthCDNURL returns the cdn.modrinth.com download URL for a linked entry,
@@ -175,7 +198,10 @@ func (h *PacksHandler) overrideEntriesFromStoredZip(ctx context.Context, zw *zip
 
 // writeMrpackZip writes modrinth.index.json + all overrides into zw.
 func (h *PacksHandler) writeMrpackZip(ctx context.Context, zw *zip.Writer, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry, prov modpack.ModpackStorageProvider) error {
-	idx := buildMrpackIndex(pack, build, content)
+	idx, err := buildMrpackIndex(pack, build, content)
+	if err != nil {
+		return err
+	}
 	indexBytes, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return err
@@ -194,7 +220,7 @@ func (h *PacksHandler) writeMrpackZip(ctx context.Context, zw *zip.Writer, pack 
 	// incrementally per file instead of after fully materializing an entry.
 	var total int64
 	for _, e := range content {
-		if e.Linked && e.SHA1 != "" && e.SHA512 != "" && modrinthCDNURL(e) != "" {
+		if isMrpackFilesEntry(e) {
 			continue // already a files[] reference
 		}
 		if prov == nil {

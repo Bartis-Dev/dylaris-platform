@@ -18,9 +18,19 @@ var zeroModTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 // "resourcepacks/bar.zip"). The launcher extracts the zip into the instance root,
 // so innerPath must already be instance-relative. The entry's mod-time is zeroed
 // for byte-stable, reproducible md5 output.
+//
+// An innerPath that escapes the instance root is refused here rather than at
+// each call site. The launcher extracts these verbatim, so this is the one
+// place every Solder zip we author passes through, and one of the callers -
+// the pack text editor - re-wraps a stored zip around a target path read back
+// out of the database, skipping the validation the original upload went
+// through.
 func BuildSolderContentZip(innerPath string, content []byte) ([]byte, error) {
 	if innerPath == "" {
 		return nil, fmt.Errorf("solderzip: empty inner path")
+	}
+	if IsUnsafeEntryPath(innerPath) {
+		return nil, fmt.Errorf("solderzip: unsafe inner path %q", innerPath)
 	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)

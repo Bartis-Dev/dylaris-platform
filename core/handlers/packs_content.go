@@ -363,7 +363,20 @@ func (h *PacksHandler) SetSide(w http.ResponseWriter, r *http.Request) {
 func atoiVar(r *http.Request, key string) int { n, _ := strconv.Atoi(mux.Vars(r)[key]); return n }
 
 // targetPathFor derives the in-.minecraft path for a content type.
+// targetPathFor builds the .minecraft-relative path a piece of content installs
+// to. It is the single writer of modversions.target_path, and that column is
+// read back as a path by three different renderers, so the sanitizing happens
+// here rather than in each caller.
+//
+// The upload and Solder-import callers already hand over a base name. The
+// Modrinth one does not: addModrinthVersion passes the filename the MODRINTH
+// API reported, which is third-party text that never touched a check on the way
+// in.
 func targetPathFor(contentType, fileName string) string {
+	fileName = path.Base(strings.ReplaceAll(fileName, `\`, "/"))
+	if fileName == "." || fileName == "/" || fileName == "" || strings.Contains(fileName, "..") {
+		fileName = "unnamed"
+	}
 	switch contentType {
 	case models.ContentTypeResourcepack:
 		return "resourcepacks/" + fileName
