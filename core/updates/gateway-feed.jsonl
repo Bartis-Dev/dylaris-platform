@@ -52,3 +52,4 @@
 {"date":"2026-08-26","service":"hub","type":"fix","summary":"Switching the DNS provider without entering that provider's token is now refused, instead of quietly reusing the previous provider's token."}
 {"date":"2026-08-26","service":"hub","type":"fix","summary":"A DNS record the gateway could not update no longer gets deleted after the grace period; only names that are genuinely no longer in use are removed."}
 {"date":"2026-08-27","service":"hub","type":"fix","summary":"Removing a customer link on the platform's instruction now removes its routes too; they used to stay live and keep serving traffic for a customer who was gone."}
+{"date":"2026-08-27","service":"hub","type":"security","summary":"Gateway services no longer send their signed hub credential request to whatever answers when the hub name has not resolved yet, which could hand a working token to an unrelated host."}
