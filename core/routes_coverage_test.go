@@ -51,6 +51,43 @@ func TestRequiredCapsIntegrity(t *testing.T) {
 	}
 }
 
+// TestNoClassificationOutlivesItsRoute is the reverse direction of
+// TestEveryRouteIsClassified, and the half that was missing.
+//
+// requiredCaps was already checked both ways: a key matching no route fails
+// above. ExemptRoutes and InHandlerAuthzRoutes were checked in one direction
+// only, so an entry survived the deletion of the route it described. That is
+// not cosmetic - both maps are security ALLOW-LISTS. A leftover entry is a
+// pre-approved hole: whoever later registers a route at that same template
+// gets it exempted from the capability gate without writing anything down,
+// and TestRouteCoverage_StrictRealRouter stays green while it happens.
+//
+// Found with three /api/tabproxy/{token}... entries still listed after the
+// path-mode tab data plane was replaced by per-tab hosts.
+func TestNoClassificationOutlivesItsRoute(t *testing.T) {
+	registered := map[string]bool{}
+	_ = stubRouter(t).Walk(func(rt *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		if tpl, err := rt.GetPathTemplate(); err == nil {
+			registered[tpl] = true
+		}
+		return nil
+	})
+	for _, m := range []struct {
+		name string
+		set  map[string]bool
+	}{
+		{"authz.ExemptRoutes", authz.ExemptRoutes},
+		{"authz.InHandlerAuthzRoutes", authz.InHandlerAuthzRoutes},
+	} {
+		for tpl, on := range m.set {
+			if !on || registered[tpl] {
+				continue
+			}
+			t.Errorf("%s[%q] matches no registered route - delete it, or it silently exempts whatever is registered there next", m.name, tpl)
+		}
+	}
+}
+
 // TestEveryRouteIsClassified is the Phase 4 Task 22 pre-flight for the strict
 // coverage flip (Task 23): every registered route template must land in
 // EXACTLY ONE of requiredCaps, authz.ExemptRoutes, or authz.InHandlerAuthzRoutes.

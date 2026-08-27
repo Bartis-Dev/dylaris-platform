@@ -87,15 +87,6 @@ var ExemptRoutes = map[string]bool{
 	"/api/external/servers/{uuid}/backup-jobs":                        true,
 	"/api/external/servers/{uuid}/backup-jobs/{jobId:[0-9]+}/trigger": true,
 
-	// Tab-proxy root routes on the ROOT router (bypass /api's setup-lock +
-	// maintenance + AuthMiddleware on purpose): auth is cookie-only
-	// (dyl_tabproxy ticket) or, for the standalone share-token twin, the
-	// share token itself decides public-vs-private visibility in-handler.
-	"/api/tabproxy/{token}":                                        true,
-	"/api/tabproxy/{token}/{rest:.*}":                              true,
-	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy":           true,
-	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy/{rest:.*}": true,
-
 	// Public Solder API (Technic Launcher) - registered on the ROOT router
 	// with no setup-lock/maintenance/auth middleware, including its own
 	// subrouter mount point.
@@ -241,13 +232,6 @@ var ExemptRoutes = map[string]bool{
 // authorization runs in-handler through the SAME resolver. Listed here so
 // strict coverage treats them as covered while documenting they are NOT public.
 var InHandlerAuthzRoutes = map[string]bool{
-	// Standalone tab-proxy auth mint. Its scope object is the SERVER behind a
-	// share token, which is not in the path, so RequireCap cannot resolve it at
-	// the route and the handler resolves tabs.read itself - the same capability
-	// the route table puts on its in-dashboard twin. It sat in ExemptRoutes and
-	// so read as "no capability" in API.md, which understated what it enforces.
-	"/api/tabproxy/{token}/auth": true,
-
 	// Custom-domain ownership claims. The scope object is the CALLER: each
 	// handler reads userID from the session and only ever touches that user's
 	// rows. A capability would be the wrong shape here - there is no such thing
