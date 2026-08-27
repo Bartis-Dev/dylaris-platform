@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
 
 	"dylaris-core/models"
 
@@ -86,15 +87,70 @@ func (h *SolderHandler) resolveSolderAuth(r *http.Request) solderAuth {
 // that SAME key owner (BC5: keys are owner-scoped, never global); a client
 // unlocks a pack only if it is on that pack's whitelist. A non-gated pack
 // should not be routed here.
+//
+// The two credentials are asked in turn, not as an either/or. The key branch
+// used to RETURN its answer, so a launcher carrying both a key and a client id
+// - which is the ordinary Technic setup - got a flat "no" for every pack
+// outside its key owner, and the client whitelist was never consulted at all.
+// A pack that client was deliberately granted answered 404 "Modpack does not
+// exist", and only for callers who also had a key of their own.
 func (h *SolderHandler) canAccessPack(a solderAuth, packID int, packOwnerID string) bool {
-	if a.hasKey {
-		return a.ownerID == packOwnerID
+	if a.hasKey && a.ownerID == packOwnerID {
+		return true
 	}
 	if a.clientID > 0 {
 		ok, err := h.state.Store.IsPackClient(packID, a.clientID)
 		return err == nil && ok
 	}
 	return false
+}
+
+// solderVisiblePacks is every pack this auth context may list: the public
+// catalogue, PLUS the gated packs the key or the client unlocks.
+//
+// A union, not a switch. Classic TechnicSolder's fetchModpacks walks every pack
+// and only asks the key/client question about the gated ones, so presenting a
+// credential ADDS packs - it never takes the public catalogue away. Written as
+// a three-way switch it did exactly that: a launcher configured with a Solder
+// key listed only that key owner's packs and every other owner's PUBLIC pack
+// vanished from it, and a launcher with only a client id saw its whitelist and
+// nothing else. Both are silent - the launcher shows a shorter list, with
+// nothing anywhere saying why.
+func (h *SolderHandler) solderVisiblePacks(a solderAuth) ([]models.Pack, error) {
+	packs, err := h.state.Store.ListPublicSolderPacks()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[int]bool, len(packs))
+	for i := range packs {
+		seen[packs[i].ID] = true
+	}
+	add := func(extra []models.Pack, err error) error {
+		if err != nil {
+			return err
+		}
+		for i := range extra {
+			if !seen[extra[i].ID] {
+				seen[extra[i].ID] = true
+				packs = append(packs, extra[i])
+			}
+		}
+		return nil
+	}
+	if a.hasKey {
+		if err := add(h.state.Store.ListAllSolderPacks(a.ownerID)); err != nil {
+			return nil, err
+		}
+	}
+	if a.clientID > 0 {
+		if err := add(h.state.Store.ListSolderPacksForClient(a.clientID)); err != nil {
+			return nil, err
+		}
+	}
+	// Each query orders by internal_name on its own; the merged list has to be
+	// re-sorted or the unlocked packs simply trail the public ones.
+	sort.Slice(packs, func(i, j int) bool { return packs[i].InternalName < packs[j].InternalName })
+	return packs, nil
 }
 
 // Info is GET /solder/api/ — the root probe. version/stream are our own values;
@@ -155,17 +211,7 @@ func (h *SolderHandler) ListModpacks(w http.ResponseWriter, r *http.Request) {
 	if !h.modpacksEnabled(w, r) {
 		return
 	}
-	auth := h.resolveSolderAuth(r)
-	var packs []models.Pack
-	var err error
-	switch {
-	case auth.hasKey:
-		packs, err = h.state.Store.ListAllSolderPacks(auth.ownerID)
-	case auth.clientID > 0:
-		packs, err = h.state.Store.ListSolderPacksForClient(auth.clientID)
-	default:
-		packs, err = h.state.Store.ListPublicSolderPacks()
-	}
+	packs, err := h.solderVisiblePacks(h.resolveSolderAuth(r))
 	if err != nil {
 		solderJSONError(w, "Failed to list modpacks", http.StatusInternalServerError)
 		return
