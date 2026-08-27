@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/publicsuffix"
+
 	"github.com/joho/godotenv"
 )
 
@@ -210,6 +212,7 @@ func LoadConfig() (Config, error) {
 
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:25510")
 	tabProxyHostSuffix := normalizeTabProxyHostSuffix(getEnv("TAB_PROXY_HOST_SUFFIX", ""))
+	warnTabProxySuffixNotSameSite(frontendURL, tabProxyHostSuffix)
 
 	// An unparseable SETUP is treated as off, matching the default. The value is
 	// a door: "SETUP=yes" not parsing must not swing it open.
@@ -386,6 +389,48 @@ func validateAdminSecret(s string) error {
 		return fmt.Errorf("ADMIN_SECRET must be at least 16 characters when set (got %d); unset it to disable break-glass admin creation", len(s))
 	}
 	return nil
+}
+
+// warnTabProxySuffixNotSameSite reports a tab-proxy suffix that cannot share a
+// cookie with the panel.
+//
+// The whole design rests on one browser rule: the ticket cookie is set on the
+// tab's own host by a request the panel makes, and it is carried back by an
+// iframe that host serves. Both work while the two are same-SITE - the same
+// registrable domain - because a SameSite=Strict cookie is then in play on a
+// same-site request. Put the tabs on a different registrable domain and that
+// cookie is simply never stored, every proxied tab reports a failure to
+// authorize, and nothing anywhere says why.
+//
+// This is a WARNING rather than a refusal. The rest of the platform is
+// unaffected, so declining to boot over a tab setting would trade a broken
+// feature for a broken install. It is loud and it names the consequence, which
+// is what the DNS_* notice next door does for the same reason.
+//
+// Skipped entirely when either side has no registrable domain - "localhost",
+// a bare IP, an internal name. Browsers treat those by their own rules, a
+// developer runs into them constantly, and a warning on every dev boot is a
+// warning nobody reads.
+func warnTabProxySuffixNotSameSite(frontendURL, suffix string) {
+	if suffix == "" {
+		return
+	}
+	u, err := url.Parse(strings.TrimSpace(frontendURL))
+	if err != nil || u.Hostname() == "" {
+		return
+	}
+	panelSite, perr := publicsuffix.EffectiveTLDPlusOne(u.Hostname())
+	tabSite, terr := publicsuffix.EffectiveTLDPlusOne(suffix)
+	if perr != nil || terr != nil {
+		return
+	}
+	if strings.EqualFold(panelSite, tabSite) {
+		return
+	}
+	log.Printf("config: TAB_PROXY_HOST_SUFFIX %q is on a different site than FRONTEND_URL %q (%s vs %s). "+
+		"The tab ticket cookie is set on the tab host and read back from it, which the browser only allows "+
+		"same-site, so every proxied tab will fail to authorize. Put the suffix under %s.",
+		suffix, u.Hostname(), tabSite, panelSite, panelSite)
 }
 
 // normalizeTabProxyHostSuffix cleans TAB_PROXY_HOST_SUFFIX into the bare DNS

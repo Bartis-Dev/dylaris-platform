@@ -967,3 +967,95 @@ func TestIntegrationBYONMachineCountsOnceAgainstTheNodeCap(t *testing.T) {
 		t.Fatalf("one connected machine plus one being set up counted as %d, want 2", got)
 	}
 }
+
+// TestIntegrationTabPatchWritesEveryParameter runs handlers.Update's real
+// UPDATE, whole, against Postgres.
+//
+// TestEverySQLStatementPrepares already proves the statement parses and that
+// every column exists, but PREPARE never sees the Go argument list - so a
+// seventeen-parameter statement whose args drifted out of order, or lost one,
+// passes it and fails on first use. This executes it with the arguments the
+// handler passes, in the handler's order.
+//
+// The sub-server column is the reason it is worth the space. Like
+// share_expires_at above it needs three states, because "" is a LEGITIMATE
+// value ("every sub-server") and COALESCE(NULLIF(...)) cannot tell "keep" from
+// "clear". Getting that wrong does not error: it silently pins a tab to a world
+// nobody chose, or refuses to unpin one, and the tab then hides itself whenever
+// another sub-server is running.
+func TestIntegrationTabPatchWritesEveryParameter(t *testing.T) {
+	db, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	var tabID int
+	if err := db.QueryRow(`INSERT INTO server_tabs
+		(server_id, name, icon, url, position, enabled, open_in_panel,
+		 mode, target_port, target_path, surface, visibility, share_token,
+		 proxy_host_label, sub_server_name)
+		VALUES ($1,'patch','layout-grid','',0,true,true,'proxied',8100,'/','tab','private',$2,$3,'survival')
+		RETURNING id`, f.server.ID, uniqueName("pt_"), uniqueName("lbl")).Scan(&tabID); err != nil {
+		t.Fatalf("insert tab: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM server_tabs WHERE id=$1`, tabID) })
+
+	// Byte-for-byte the statement in handlers.Update, with its argument list in
+	// the handler's order. If that one changes, this has to change with it.
+	patch := func(t *testing.T, setSub bool, sub string) {
+		t.Helper()
+		_, err := db.Exec(`UPDATE server_tabs SET
+			name           = COALESCE(NULLIF($3, ''), name),
+			icon           = COALESCE(NULLIF($4, ''), icon),
+			url            = COALESCE(NULLIF($5, ''), url),
+			position       = COALESCE($6, position),
+			enabled        = COALESCE($7, enabled),
+			open_in_panel  = COALESCE($8, open_in_panel),
+			mode           = COALESCE(NULLIF($9, ''),  mode),
+			target_port    = COALESCE($10, target_port),
+			target_path    = COALESCE(NULLIF($11, ''), target_path),
+			surface        = COALESCE(NULLIF($12, ''), surface),
+			visibility     = COALESCE(NULLIF($13, ''), visibility),
+			share_expires_at = CASE WHEN $14::bool THEN $15::timestamptz ELSE share_expires_at END,
+			sub_server_name = CASE WHEN $16::bool THEN $17::text ELSE sub_server_name END
+			WHERE id=$1 AND server_id=$2`,
+			tabID, f.server.ID,
+			"", "", "", nil, nil, nil, "", nil, "", "", "",
+			false, nil,
+			setSub, sub)
+		if err != nil {
+			t.Fatalf("patch(setSub=%v, sub=%q): %v", setSub, sub, err)
+		}
+	}
+	read := func(t *testing.T) string {
+		t.Helper()
+		var got string
+		if err := db.QueryRow(`SELECT sub_server_name FROM server_tabs WHERE id=$1`, tabID).Scan(&got); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return got
+	}
+
+	t.Run("absent keeps the stored pin", func(t *testing.T) {
+		patch(t, false, "")
+		if got := read(t); got != "survival" {
+			t.Errorf("sub_server_name = %q, want survival - an unrelated edit moved the pin", got)
+		}
+	})
+	t.Run("a name pins the tab", func(t *testing.T) {
+		patch(t, true, "creative")
+		if got := read(t); got != "creative" {
+			t.Errorf("sub_server_name = %q, want creative", got)
+		}
+	})
+	t.Run("empty unpins it", func(t *testing.T) {
+		patch(t, true, "")
+		if got := read(t); got != "" {
+			t.Errorf("sub_server_name = %q, want empty - the tab cannot be unpinned", got)
+		}
+	})
+	t.Run("and absent still keeps that", func(t *testing.T) {
+		patch(t, false, "ignored")
+		if got := read(t); got != "" {
+			t.Errorf("sub_server_name = %q, want empty - a later edit re-pinned it", got)
+		}
+	})
+}
