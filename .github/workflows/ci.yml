@@ -109,6 +109,46 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go test -count=1 ./...
 
+      # Reachability-based vulnerability gate.
+      #
+      # This is the check that catches what Dependabot structurally cannot.
+      # Dependabot reads manifests; the Go toolchain is pinned in this workflow
+      # and in the Dockerfiles, so it sat on 1.26.1 with standard-library
+      # vulnerabilities reachable from every service's own code and nothing
+      # said a word. govulncheck traces from this module's code to the
+      # vulnerable SYMBOL, so it also does not cry about a dependency whose
+      # vulnerable function nobody here calls.
+      #
+      # Exit 3 is "vulnerabilities found", which is data, not a tool failure -
+      # the gate below decides what it means. Any other non-zero exit IS a tool
+      # failure and stops the job, because a scanner that silently did not run
+      # is worse than no scanner.
+      #
+      # A note for the day this fires on beam/app: its Wails is VENDORED and
+      # security-patched on purpose (beam/app/VENDOR.md), so the answer there is
+      # to patch the vendored tree, never to bump it to a stock release.
+      #
+      # See .github/vulngate.awk for the fail-vs-report rule.
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: |
+          # Installed rather than `go run ...@version` like staticcheck above,
+          # and that is not a style choice: `go run` reports the tool's exit
+          # status as its own 1, so "found vulnerabilities" (3) and "the scanner
+          # broke" would arrive identical here. Running the binary keeps them
+          # apart, which is the whole basis of the check below.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          code=0
+          "$(go env GOPATH)/bin/govulncheck" ./... > "$RUNNER_TEMP/vulns.txt" || code=$?
+          if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then
+            cat "$RUNNER_TEMP/vulns.txt"
+            echo "govulncheck itself failed (exit $code)"
+            exit "$code"
+          fi
+          cat "$RUNNER_TEMP/vulns.txt"
+          echo "--- reachability gate ---"
+          awk -f "$GITHUB_WORKSPACE/.github/vulngate.awk" "$RUNNER_TEMP/vulns.txt"
+
   # Race detector gate. Separate from go-tests because it needs a C toolchain
   # that the plain matrix does not: -race requires cgo, and cgo requires gcc,
   # which is not installed on this runner and is not ours to add.
