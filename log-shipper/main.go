@@ -121,9 +121,39 @@ const (
 //	Java 8 PG:  "[GC (Allocation Failure)  256000K->50000K(2048000K), 0.012345 secs]"
 var gcLineRegex = regexp.MustCompile(`(\d+)([KM])->(\d+)([KM])\((\d+)([KM])\)`)
 
+// javaLegacyGCLine matches the start of a Java 8 -XX:+PrintGCDetails record,
+// optionally behind the stamps -XX:+PrintGCDateStamps and +PrintGCTimeStamps
+// put in front of it ("2026-08-27T12:00:00.000+0000: 1.234: [GC ...").
+//
+// Anchored at the START on purpose - that is what a player cannot forge. See
+// isGCSummaryLine.
+var javaLegacyGCLine = regexp.MustCompile(`^(?:[0-9T:.+-]+: )*\[(?:Full )?GC[ (]`)
+
+// isGCSummaryLine reports whether a line is the JVM's OWN garbage-collector
+// output rather than something the server printed.
+//
+// The heap number used to be pulled out of every line that merely contained the
+// shape "<n>M-><n>M(<n>M)", and a Minecraft server prints whatever its players
+// type. "1M->9999M(9999M)" in chat therefore set the live-heap metric the panel
+// charts. It sticks, too: the value is only replaced by the next real GC, and
+// the case the metric exists for is an idle server, which is exactly the one
+// that can go minutes between young GCs.
+//
+// Everything a player can reach arrives through Minecraft's logger, so it always
+// carries that logger's prefix; the JVM writes GC output to raw stdout with no
+// prefix at all. Matching the two GC FORMATS is the closed set - the platform
+// chooses what GC logging it injects - where "is this a Minecraft log line" is
+// open-ended and differs between vanilla and Paper.
+func isGCSummaryLine(line string) bool {
+	return isUnifiedGCLine(line) || javaLegacyGCLine.MatchString(line)
+}
+
 // parseHeapAfterGC extracts the post-GC live-heap size (in MB) from a
 // JVM GC log line. Returns 0 + false if no GC summary is on the line.
 func parseHeapAfterGC(line string) (int64, bool) {
+	if !isGCSummaryLine(line) {
+		return 0, false
+	}
 	m := gcLineRegex.FindStringSubmatch(line)
 	if m == nil {
 		return 0, false

@@ -42,8 +42,43 @@ func TestParseHeapAfterGC(t *testing.T) {
 			ok:   false,
 		},
 		{
+			// A player types the shape and the panel charts it. The value sticks
+			// until the next real GC, and the metric exists for idle servers -
+			// which are exactly the ones that go minutes between young GCs.
+			name: "a player cannot set the heap metric by typing a GC summary",
+			line: "[12:00:00] [Server thread/INFO]: <Steve> 1M->9999M(9999M)",
+			want: 0,
+			ok:   false,
+		},
+		{
+			// The Paper prefix is a different shape from vanilla's, which is why
+			// the gate matches the two GC formats rather than trying to enumerate
+			// what a Minecraft log line looks like.
+			name: "nor through the paper log format",
+			line: "[12:00:00 INFO]: <Steve> 2048000K->1500000K(2048000K)",
+			want: 0,
+			ok:   false,
+		},
+		{
+			// A death message, a sign, an entity name - all player-authored, all
+			// through the same logger.
+			name: "nor by naming a pet after a GC summary",
+			line: "[12:00:00] [Server thread/INFO]: Steve was slain by 9M->4000M(4096M)",
+			want: 0,
+			ok:   false,
+		},
+		{
+			// The Java 8 record with the stamps -XX:+PrintGCDateStamps and
+			// +PrintGCTimeStamps put in front of it. Still the JVM's own stdout,
+			// so it still has to parse.
+			name: "java8 legacy with date and uptime stamps",
+			line: "2026-08-27T12:00:00.000+0000: 1.234: [GC (Allocation Failure)  256000K->50000K(2048000K), 0.012345 secs]",
+			want: 48,
+			ok:   true,
+		},
+		{
 			name: "after-zero is allowed (post-clear)",
-			line: "[gc] GC(99) Pause Full 1M->0M(2048M) 200ms",
+			line: "[2026-05-25T13:09:51.000+0000][info][gc] GC(99) Pause Full (System.gc()) 1M->0M(2048M) 200ms",
 			want: 0,
 			ok:   false, // we reject zero — would be misleading as a live metric
 		},
