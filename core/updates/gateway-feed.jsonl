@@ -59,3 +59,4 @@
 {"date":"2026-08-27","service":"hub","type":"security","summary":"The hub admin interface now verifies the request token on the three DNS and certificate forms, the way it already did on every other form there."}
 {"date":"2026-08-27","service":"beam","type":"fix","summary":"Setting only one of TLS_CERT_PATH and TLS_KEY_PATH on a beam relay left it serving a self-signed certificate permanently. It now says so and asks the hub for a real one instead."}
 {"date":"2026-08-27","service":"hub","type":"security","summary":"Switching a link off or deleting it now removes that customer's machines from the warp overlay and stops their key working. Their routing stopped before, their tunnel did not."}
+{"date": "2026-08-27", "service": "hub", "type": "fix", "summary": "Turning certificate issuance off now actually stops it. Renewals kept running in the background against the certificate authority and the DNS provider afterwards, with nothing on the page showing it."}
