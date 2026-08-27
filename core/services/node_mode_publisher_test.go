@@ -3,6 +3,11 @@ package services
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,5 +140,120 @@ func TestNodeModePublisherStartPublishesImmediately(t *testing.T) {
 func TestNodeModePublishIntervalMatchesTheNodeReadLoop(t *testing.T) {
 	if nodeModePublishInterval > 30*time.Second {
 		t.Fatalf("publish interval %v is slower than the node's 30s loadModesFromRedis loop", nodeModePublishInterval)
+	}
+}
+
+// Settings -> Link updates is mirrored into Redis on save exactly like the
+// placement keys, and was the one pair this publisher did not re-assert. The
+// node reads the policy in the same loadModesFromRedis round as the rest, so a
+// Redis restart left a node that started afterwards resolving an empty setting
+// to auto_idle - it replaces its own Link container, dropping that node's
+// players for 10-30 seconds - while the panel kept reading the database and
+// reporting the "notify" the operator had chosen.
+func TestNodeModePublisherRepublishesTheLinkUpdateSettings(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+	st := &settingsStub{values: map[string]string{
+		"link_update_policy":       "notify",
+		"link_update_interval_min": "60",
+	}}
+	p := NewNodeModePublisher(st, rdb)
+
+	p.Publish(ctx)
+	if err := rdb.FlushAll(ctx).Err(); err != nil { // what a Redis restart does
+		t.Fatalf("flush: %v", err)
+	}
+	p.Publish(ctx) // the ticker's next tick
+
+	want := map[string]string{
+		"dylaris:link_update_policy":       "notify",
+		"dylaris:link_update_interval_min": "60",
+	}
+	for key, exp := range want {
+		got, err := rdb.Get(ctx, key).Result()
+		if err != nil {
+			t.Errorf("%s absent after republish (%v): a node starting now resolves the empty setting to auto_idle and updates its own Link, while the panel still shows %q", key, err, exp)
+			continue
+		}
+		if got != exp {
+			t.Errorf("%s: got %q, want %q", key, got, exp)
+		}
+	}
+}
+
+// An unsaved Link setting must not be published either, for the same reason the
+// placement keys are not: the node compiles in auto_idle / 15, which is what
+// handlers.GetLinkUpdateSettings reports for an unset value.
+func TestNodeModePublisherLeavesUnsetLinkUpdateSettingsAlone(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+
+	NewNodeModePublisher(&settingsStub{values: map[string]string{}}, rdb).Publish(ctx)
+
+	for _, key := range []string{"dylaris:link_update_policy", "dylaris:link_update_interval_min"} {
+		if n, _ := rdb.Exists(ctx, key).Result(); n != 0 {
+			v, _ := rdb.Get(ctx, key).Result()
+			t.Errorf("%s published as %q although no admin ever saved it", key, v)
+		}
+	}
+}
+
+// alwaysSetStore answers every GetSetting, so Publish writes every key it knows
+// about and the assertion below is about the SET of keys, not their values.
+type alwaysSetStore struct{ store.Store }
+
+func (alwaysSetStore) GetSetting(string) (string, error) { return "x", nil }
+
+// mirroredKeyPattern finds the Redis keys a handler writes on an admin save.
+// Only string literals: a key built from a helper (the storage-placement pair)
+// is deliberately Redis-only with no database row behind it, so there is
+// nothing for this publisher to re-derive it from.
+var mirroredKeyPattern = regexp.MustCompile(`Redis\.Set\([^,]+, "(dylaris:[^"]+)"`)
+
+// Every setting a handler mirrors into Redis has to be one this publisher
+// re-asserts, or it survives only until Redis restarts - and Redis here runs
+// with save "" and appendonly no, so that is a matter of when.
+//
+// The check reads the handlers rather than a list kept next to it, because a
+// list is the thing that was already out of date: six settings were mirrored
+// and re-asserted, two more were added to the save path alone, and nothing
+// anywhere reported the difference.
+func TestEverySettingMirroredIntoRedisIsRepublished(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "handlers", "*.go"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("glob handlers: %v (%d files)", err, len(files))
+	}
+
+	mirrored := map[string]string{} // key -> file that writes it
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, m := range mirroredKeyPattern.FindAllStringSubmatch(string(src), -1) {
+			mirrored[m[1]] = filepath.Base(f)
+		}
+	}
+	if len(mirrored) == 0 {
+		t.Fatal("found no mirrored keys at all - the pattern stopped matching, so this test is no longer checking anything")
+	}
+
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+	NewNodeModePublisher(alwaysSetStore{}, rdb).Publish(ctx)
+
+	var missing []string
+	for key, file := range mirrored {
+		if n, _ := rdb.Exists(ctx, key).Result(); n == 0 {
+			missing = append(missing, key+" (written by "+file+")")
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("mirrored into Redis on save but never re-asserted, so lost for good on a Redis restart:\n  %s",
+			strings.Join(missing, "\n  "))
 	}
 }

@@ -84,16 +84,26 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 		"dylaris:file_access_mode": fileMode,
 	}
 
-	// Placement settings only exist once an admin has saved them. An absent
-	// setting means the node's own compiled default is the intended value
-	// (they agree: sequential / 25565 / 0 / 0), so publishing nothing is
-	// correct - and encoding the defaults here would be a second copy free to
-	// drift from handlers.defaultPlacementSettings.
+	// These only exist once an admin has saved them. An absent setting means
+	// the node's own compiled default is the intended value - placement agrees
+	// on sequential / 25565 / 0 / 0, the Link pair on auto_idle / 15 - so
+	// publishing nothing is correct, and encoding the defaults here would be a
+	// second copy free to drift from the handlers that own them.
+	//
+	// The Link pair was mirrored on save like the placement keys and then left
+	// out of this loop, which is the only reason it is called out: the two are
+	// the whole of Settings -> Link updates, so losing them turned an operator's
+	// explicit "notify" - do not touch my Link, just tell me - back into
+	// auto_idle on the next node start, while the panel went on reading the
+	// database and showing "notify". Nothing re-asserted them, so that gap did
+	// not close on its own; only saving the page again did.
 	for setting, key := range map[string]string{
 		"placement.port_mode":      "dylaris:placement:port_mode",
 		"placement.container_port": "dylaris:placement:container_port",
 		"placement.pids_limit":     "dylaris:placement:pids_limit",
 		"placement.io_weight":      "dylaris:placement:io_weight",
+		"link_update_policy":       "dylaris:link_update_policy",
+		"link_update_interval_min": "dylaris:link_update_interval_min",
 	} {
 		if v, err := p.store.GetSetting(setting); err == nil && v != "" {
 			values[key] = v
