@@ -258,20 +258,30 @@ jobs:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          # The root Dockerfile builds ALL THREE Go images (build-service.yml
+          # defaults to it; only the panel passes one of its own), so a change
+          # to it has to rebuild all three. It was watched by nothing: the Go
+          # toolchain bump that fixed reachable standard-library CVEs reached
+          # only the core image, because core/updates/feed.jsonl happened to
+          # change in the same push. node and log-shipper kept shipping the old
+          # toolchain with nothing to say so.
           filters: |
             core:
               - 'core/**'
               - 'proto/**'
               - 'pkg/**'
+              - 'Dockerfile'
             node:
               - 'node/**'
               - 'proto/**'
               - 'pkg/**'
+              - 'Dockerfile'
             panel:
               - 'panel/**'
             log-shipper:
               - 'log-shipper/**'
               - 'docker/mc-server/**'
+              - 'Dockerfile'
 
   # ----------------------------------------------
   # 3. Build + push. Changed images on push; every image on workflow_dispatch.
