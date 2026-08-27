@@ -736,9 +736,20 @@ wildcard DNS record and a certificate; direct tabs need nothing.
   panel host would receive. Applications whose login is a cookie (Plan with
   authentication, Dynmap with `login-enabled`, Grafana) cannot be used this way -
   use a direct tab with a real public URL for those.
+- A proxied tab can be pinned to ONE sub-server. It points at a port inside the
+  container and the container runs whichever sub-server is started, so an
+  unpinned tab follows what is running (right for a plugin every world has) and
+  a pinned one is refused while another is up (right for a map only one serves).
+- A share link is unguessable by default; a user may pick a readable name
+  instead, which is a trade that only affects a `public` link since a private
+  one is gated by the session, not the name.
 - Admin gates live in Settings -> Features: master toggle
   (`feature_tab_proxy_enabled`, default off), anonymous public links
-  (`tab_proxy_allow_public_links`, default off), and per-server / per-user caps.
+  (`tab_proxy_allow_public_links`, default off) and three PER-USER caps -
+  `tab_proxy_max_per_user_per_server` (3), `tab_proxy_max_per_user_total` (10)
+  and `tab_proxy_max_share_links_per_user` (20). The total is the real ceiling;
+  a per-server figure alone lets somebody with twenty servers hold twenty times
+  it.
 
 > **Security:** a proxied page is software you or your customer chose, not
 > software this project wrote, and it runs with `allow-same-origin` inside its

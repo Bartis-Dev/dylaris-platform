@@ -9,6 +9,7 @@ import {
     rotateShareLink, revokeShareLink,
     type ServerTab, type ServerTabInput,
 } from '@/lib/api/serverTabs';
+import { getFiles } from '@/lib/api/files';
 import { useAppData } from '@/lib/AppDataContext';
 import { shareLinkUrl } from '@/lib/tabProxy';
 import { toLocalInput, fromLocalInput } from '@/lib/localDateTime';
@@ -93,7 +94,28 @@ export default function ServerConfigTabsPage() {
         surface: 'tab',
         visibility: 'private',
         shareExpiresAt: null,
+        subServerName: '',
     });
+    const [subServers, setSubServers] = useState<string[]>([]);
+    // slugFor is the tab whose custom-link field is open; null means none.
+    const [slugFor, setSlugFor] = useState<number | null>(null);
+    const [slugDraft, setSlugDraft] = useState('');
+
+    // The sub-servers are the directories at the server root; that is how
+    // SetupView enumerates them too, and there is no separate list endpoint.
+    // A failed listing leaves the picker with just "every sub-server", which is
+    // the safe default rather than an empty dropdown.
+    useEffect(() => {
+        const srv = servers.find(s => s.id === serverId);
+        if (!srv?.uuid) return;
+        let cancelled = false;
+        (async () => {
+            const res = await getFiles('', srv.uuid);
+            if (cancelled || !res.success || !Array.isArray(res.files)) return;
+            setSubServers((res.files as any[]).filter(f => f.is_dir).map(f => String(f.name)));
+        })();
+        return () => { cancelled = true; };
+    }, [servers, serverId]);
 
     const openEdit = (t: ServerTab) => setEditing({ ...t });
 
@@ -126,6 +148,10 @@ export default function ServerConfigTabsPage() {
                 // how Core is told to KEEP the stored value, so clearing the
                 // field in the form has to arrive as an explicit "".
                 shareExpiresAt: editing.shareExpiresAt || '',
+                // Same reasoning as shareExpiresAt above: "" is a real value
+                // here ("every sub-server"), so it has to be sent rather than
+                // omitted, or Core keeps whatever was stored.
+                subServerName: editing.subServerName || '',
             };
         } else {
             const url = (editing.url || '').trim();
@@ -170,10 +196,20 @@ export default function ServerConfigTabsPage() {
         }
     };
 
-    const handleRotate = async (t: ServerTab) => {
-        const res = await rotateShareLink(serverId, t.id);
-        if (res.success) { showToast('Share link generated.', true); refresh(); }
-        else showToast(res.message || 'Failed to generate link', false);
+    // slug empty = the server picks an unguessable one. A chosen slug trades
+    // that for something readable, which only weakens a PUBLIC link (it is meant
+    // to be handed out anyway); a private link is gated by the ticket, not by
+    // the slug.
+    const handleRotate = async (t: ServerTab, slug?: string) => {
+        const res = await rotateShareLink(serverId, t.id, slug);
+        if (res.success) {
+            showToast(slug ? 'Custom link set.' : 'Share link generated.', true);
+            setSlugFor(null);
+            setSlugDraft('');
+            refresh();
+        } else {
+            showToast(res.message || 'Failed to generate link', false);
+        }
     };
 
     const handleRevoke = async (t: ServerTab) => {
@@ -263,6 +299,11 @@ export default function ServerConfigTabsPage() {
                                     ) : (
                                         <span className="text-xs text-(--base-06) font-mono">
                                             container :{t.targetPort}{t.targetPath}
+                                            {t.subServerName && (
+                                                <span className="ml-1 text-(--base-06)">
+                                                    &middot; only on {t.subServerName}
+                                                </span>
+                                            )}
                                         </span>
                                     )}
                                 </div>
@@ -297,19 +338,66 @@ export default function ServerConfigTabsPage() {
                                                 <button onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm" title="Rotate (invalidates the old link)">
                                                     <RotateCw size={11} />
                                                 </button>
+                                                <button
+                                                    onClick={() => { setSlugFor(slugFor === t.id ? null : t.id); setSlugDraft(''); }}
+                                                    className="btn btn-secondary btn-sm"
+                                                    title="Choose your own link"
+                                                    aria-expanded={slugFor === t.id}
+                                                >
+                                                    <Pencil size={11} />
+                                                </button>
                                                 <button onClick={() => handleRevoke(t)} className="btn btn-secondary btn-sm" title="Revoke link">
                                                     <Trash2 size={11} className="text-(--error)" />
                                                 </button>
                                             </>
                                         ) : (
-                                            <button onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm">
-                                                <Link2 size={11} /> Generate share link
-                                            </button>
+                                            <>
+                                                <button onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm">
+                                                    <Link2 size={11} /> Generate share link
+                                                </button>
+                                                <button
+                                                    onClick={() => { setSlugFor(slugFor === t.id ? null : t.id); setSlugDraft(''); }}
+                                                    className="btn btn-secondary btn-sm"
+                                                    aria-expanded={slugFor === t.id}
+                                                >
+                                                    <Pencil size={11} /> Choose my own
+                                                </button>
+                                            </>
                                         )}
                                     </div>
                                     {/* An expiry that nothing displayed was as good as no expiry:
                                         the owner had no way to see when a link they handed out
                                         stops working, or that it already has. */}
+                                    {slugFor === t.id && (
+                                        <form
+                                            className="flex items-center gap-2 flex-wrap"
+                                            onSubmit={e => { e.preventDefault(); handleRotate(t, slugDraft); }}
+                                        >
+                                            <span className="text-xs text-(--base-06) font-mono">/c/</span>
+                                            <input
+                                                autoFocus
+                                                value={slugDraft}
+                                                onChange={e => setSlugDraft(e.target.value)}
+                                                placeholder="max-survival-map"
+                                                minLength={4}
+                                                maxLength={40}
+                                                pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                                                className="input-field input-mono text-xs w-56"
+                                                aria-label="Custom share link"
+                                            />
+                                            <button type="submit" className="btn btn-primary btn-sm" disabled={slugDraft.trim().length < 4}>
+                                                Set
+                                            </button>
+                                            <button type="button" onClick={() => { setSlugFor(null); setSlugDraft(''); }} className="btn btn-secondary btn-sm">
+                                                Cancel
+                                            </button>
+                                            <span className="text-xs text-(--base-06)">
+                                                Lowercase letters, digits and hyphens. A name anyone could
+                                                guess is fine for a public link and changes nothing for a
+                                                private one, which is gated by your sign-in.
+                                            </span>
+                                        </form>
+                                    )}
                                     {t.shareToken && t.shareExpiresAt && (
                                         <span className={`inline-flex items-center gap-1 text-xs ${
                                             shareLinkExpired(t.shareExpiresAt) ? 'text-(--warning-light)' : 'text-(--base-06)'
@@ -405,6 +493,27 @@ export default function ServerConfigTabsPage() {
                                                 onChange={e => setEditing({ ...editing, targetPath: e.target.value })}
                                                 className="input-field input-mono w-full" placeholder="/" />
                                         </div>
+                                    </div>
+                                    <div>
+                                        <label className="input-label" htmlFor="tab-subserver">Sub-server</label>
+                                        <select
+                                            id="tab-subserver"
+                                            value={editing.subServerName || ''}
+                                            onChange={e => setEditing({ ...editing, subServerName: e.target.value })}
+                                            className="input-field w-full mt-1"
+                                        >
+                                            <option value="">Every sub-server</option>
+                                            {subServers.map(n => <option key={n} value={n}>{n}</option>)}
+                                            {editing.subServerName && !subServers.includes(editing.subServerName) && (
+                                                <option value={editing.subServerName}>{editing.subServerName} (not found)</option>
+                                            )}
+                                        </select>
+                                        <p className="mt-1 text-xs text-(--base-06)">
+                                            The tab points at a port inside the container, and the container runs
+                                            whichever sub-server is started. Pin it if only one of them serves
+                                            that port - the tab then stays hidden while another is running,
+                                            instead of showing a different world under the same name.
+                                        </p>
                                     </div>
                                     <div>
                                         <label className="input-label">Surface</label>

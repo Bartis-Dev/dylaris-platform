@@ -18,6 +18,11 @@ export interface ServerTab {
     visibility: string;    // "private" | "public"
     shareToken: string;    // "" when none
     shareExpiresAt: string | null;
+    // subServerName pins a proxied tab to one sub-server; "" is every
+    // sub-server. The tab addresses a PORT, and the port belongs to whichever
+    // sub-server is started, so an unpinned tab follows the container and a
+    // pinned one stays hidden while a different world is running.
+    subServerName: string;
     // proxyOrigin is the browser-facing origin this tab is served on, built by
     // Core from the tab's host label. "" for a direct tab and for any tab while
     // the feature is unconfigured - which is exactly when no iframe should be
@@ -33,6 +38,7 @@ export interface ServerTabInput {
     enabled?: boolean;
     openInPanel?: boolean;
     mode?: string;
+    subServerName?: string;
     targetPort?: number;
     targetPath?: string;
     surface?: string;
@@ -83,11 +89,16 @@ export async function deleteServerTab(serverId: number, tabId: number): Promise<
     } catch (err) { return handleError(err); }
 }
 
-export async function rotateShareLink(serverId: number, tabId: number): Promise<{ success: boolean; shareToken?: string; message?: string }> {
+// rotateShareLink issues a new link for a tab. With no slug the server picks an
+// unguessable one; with a slug the user picks a readable one and trades that
+// unguessability for it - which only matters for a PUBLIC link, since a private
+// one is gated by the ticket and not by the slug.
+export async function rotateShareLink(serverId: number, tabId: number, slug?: string): Promise<{ success: boolean; shareToken?: string; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/servers/${serverId}/tabs/${tabId}/share-link`, {
             method: 'POST',
-            headers: getAuthHeader(),
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slug: slug || '' }),
         });
         return handleResponse(res) as any;
     } catch (err) { return handleError(err) as any; }

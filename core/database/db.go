@@ -255,6 +255,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyTabProxyHostSchema(db); err != nil {
 		return err
 	}
+	if err := applyTabSubServerSchema(db); err != nil {
+		return err
+	}
 
 	seedSystemModules(db)
 	return nil

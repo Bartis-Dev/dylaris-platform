@@ -5,7 +5,11 @@ import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/c
 export interface TabProxySettings {
     enabled: boolean;
     allowPublicLinks: boolean;
-    maxPerServer: number;
+    // Both per USER. Per server alone is not a ceiling (a user with twenty
+    // servers holds twenty times it), and a server-wide count would let whoever
+    // creates a tab first spend the allowance of everyone sharing that server.
+    maxPerUserPerServer: number;
+    maxPerUserTotal: number;
     maxShareLinksPerUser: number;
 }
 

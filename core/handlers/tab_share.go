@@ -1,13 +1,21 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
+
+	"dylaris-pkg/validate"
 
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 )
 
 // shareTokenAlphabet is URL-safe base62; a 16-char token carries ~95 bits of
@@ -84,6 +92,68 @@ func isProxyHostLabel(s string) bool {
 	return true
 }
 
+// normalizeTabSubServer trims and validates the sub-server a tab is pinned to.
+// A nil pointer and an empty string both mean "every sub-server"; the caller
+// tells those apart itself when it matters (a PATCH), because only there does
+// the difference between "keep" and "clear" exist.
+func normalizeTabSubServer(v *string) (string, error) {
+	if v == nil {
+		return "", nil
+	}
+	name := strings.TrimSpace(*v)
+	if name == "" {
+		return "", nil
+	}
+	if !validate.IsSubServerName(name) {
+		return "", errors.New("Invalid sub-server name")
+	}
+	return name, nil
+}
+
+// customShareSlugPattern is what a user may choose for their own link.
+//
+// Narrower than the URL would allow, and on purpose: the slug is typed by
+// humans, read aloud, and pasted into chat clients that guess where a link
+// ends. Lowercase alphanumerics and single inner hyphens survive all of that.
+// The 4-character floor is not security - a chosen slug is guessable by
+// definition - it just stops "a" and "x" being taken by the first two people.
+var customShareSlugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+const (
+	customShareSlugMin = 4
+	customShareSlugMax = 40
+)
+
+// validateCustomShareSlug checks a user-chosen link slug.
+//
+// A caller that supplies one is trading unguessability for readability, which
+// is theirs to trade for a PUBLIC link - that link is meant to be handed out.
+// It changes nothing for a private link: those are gated by the ticket, not by
+// the slug.
+func validateCustomShareSlug(v string) (string, error) {
+	slug := strings.ToLower(strings.TrimSpace(v))
+	if slug == "" {
+		return "", nil
+	}
+	if len(slug) < customShareSlugMin || len(slug) > customShareSlugMax {
+		return "", fmt.Errorf("a custom link must be between %d and %d characters", customShareSlugMin, customShareSlugMax)
+	}
+	if !customShareSlugPattern.MatchString(slug) {
+		return "", errors.New("a custom link may use lowercase letters, digits and single hyphens between them")
+	}
+	return slug, nil
+}
+
+// isShareSlugTaken reports a Postgres unique-constraint violation (23505).
+//
+// The store package has its own copy of this and keeps it unexported on
+// purpose - callers there see ErrNameTaken, never the driver's class. This
+// handler talks to the database directly (RawDB), so it needs its own.
+func isShareSlugTaken(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
+}
+
 // capReached reports whether an additive operation would exceed a max cap.
 func capReached(current, max int) bool {
 	return current >= max
@@ -110,10 +180,45 @@ func (h *ServerTabsHandler) ensureProxyHostLabel(db *sql.DB, tabID int) error {
 	return err
 }
 
-func (h *ServerTabsHandler) countProxiedTabs(db *sql.DB, serverID int) (int, error) {
+// countUserProxiedTabsOnServer counts what ONE user holds on ONE server.
+//
+// Counting the server instead would let whoever created a tab first spend the
+// allowance of everyone else who shares that server, and the limit exists to
+// bound an account, not a machine.
+func (h *ServerTabsHandler) countUserProxiedTabsOnServer(db *sql.DB, serverID int, userID string) (int, error) {
 	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM server_tabs WHERE server_id=$1 AND mode='proxied'`, serverID).Scan(&n)
+	err := db.QueryRow(`SELECT COUNT(*) FROM server_tabs
+		WHERE server_id=$1 AND mode='proxied' AND created_by=$2`, serverID, userID).Scan(&n)
 	return n, err
+}
+
+// countUserProxiedTabsTotal counts a user's proxied tabs everywhere.
+//
+// Without this the per-server cap is not a ceiling at all: a user with twenty
+// servers holds twenty times it.
+func (h *ServerTabsHandler) countUserProxiedTabsTotal(db *sql.DB, userID string) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM server_tabs
+		WHERE mode='proxied' AND created_by=$1`, userID).Scan(&n)
+	return n, err
+}
+
+// tabCapExceeded applies both caps and names the one that stopped you. A
+// message that says only "limit reached" sends the user looking on the wrong
+// screen.
+func (h *ServerTabsHandler) tabCapExceeded(db *sql.DB, ctx context.Context, serverID int, userID string) string {
+	if userID == "" {
+		return ""
+	}
+	if n, err := h.countUserProxiedTabsTotal(db, userID); err == nil &&
+		capReached(n, h.state.FeatureFlags.TabProxyMaxPerUserTotal(ctx)) {
+		return "You have reached your total limit of proxied tabs across all servers."
+	}
+	if n, err := h.countUserProxiedTabsOnServer(db, serverID, userID); err == nil &&
+		capReached(n, h.state.FeatureFlags.TabProxyMaxPerUserPerServer(ctx)) {
+		return "You have reached your limit of proxied tabs on this server."
+	}
+	return ""
 }
 
 func (h *ServerTabsHandler) countUserShareLinks(db *sql.DB, userID string) (int, error) {
@@ -125,6 +230,19 @@ func (h *ServerTabsHandler) countUserShareLinks(db *sql.DB, userID string) (int,
 // RotateShareLink POST /api/servers/{id}/tabs/{tabId}/share-link - (re)generate
 // the unguessable slug for a proxied page tab.
 func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Request) {
+	// An empty body still means "give me a random one", which is what the
+	// button did before a chosen slug existed.
+	var req struct {
+		Slug string `json:"slug"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	custom, verr := validateCustomShareSlug(req.Slug)
+	if verr != nil {
+		sendJSONError(w, verr.Error(), http.StatusBadRequest)
+		return
+	}
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
@@ -166,10 +284,13 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	tok, err := generateShareToken()
-	if err != nil {
-		sendJSONError(w, "Failed to generate share token", http.StatusInternalServerError)
-		return
+	tok := custom
+	if tok == "" {
+		var terr error
+		if tok, terr = generateShareToken(); terr != nil {
+			sendJSONError(w, "Failed to generate share token", http.StatusInternalServerError)
+			return
+		}
 	}
 	// Rotating hands the owner a NEW link, so an expiry that has ALREADY run
 	// out is dropped with the slug it belonged to - keeping it would mint a
@@ -180,6 +301,14 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 		    share_expires_at = CASE WHEN share_expires_at <= now() THEN NULL ELSE share_expires_at END
 		WHERE id=$1 AND server_id=$2`, tabID, serverID, tok)
 	if err != nil {
+		// The unique index on share_token is what decides this, not a SELECT
+		// before the write: two people picking the same slug at the same moment
+		// would both pass a check-then-insert and one would silently take the
+		// other's link.
+		if isShareSlugTaken(err) {
+			sendJSONError(w, "That link is already taken. Pick another.", http.StatusConflict)
+			return
+		}
 		sendJSONError(w, "Failed to save share link", http.StatusInternalServerError)
 		return
 	}

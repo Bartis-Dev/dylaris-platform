@@ -47,7 +47,7 @@ func (f *tabCapFakeStore) GetServerByID(id int) (*models.Server, error) {
 	return nil, errors.New("not found")
 }
 
-func newTabCapHandler(t *testing.T, maxPerServer, maxShareLinks int) (*ServerTabsHandler, sqlmock.Sqlmock) {
+func newTabCapHandler(t *testing.T, maxPerServer, maxTotal, maxShareLinks int) (*ServerTabsHandler, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -62,7 +62,8 @@ func newTabCapHandler(t *testing.T, maxPerServer, maxShareLinks int) (*ServerTab
 	fs := &tabCapFakeStore{db: db, settings: map[string]string{
 		"feature_tab_proxy_enabled":          "true",
 		"tab_proxy_allow_public_links":       "true",
-		"tab_proxy_max_per_server":           strconv.Itoa(maxPerServer),
+		"tab_proxy_max_per_user_per_server":  strconv.Itoa(maxPerServer),
+		"tab_proxy_max_per_user_total":       strconv.Itoa(maxTotal),
 		"tab_proxy_max_share_links_per_user": strconv.Itoa(maxShareLinks),
 	}}
 	state := &AppState{Store: fs, FeatureFlags: services.NewFeatureFlags(fs)}
@@ -78,11 +79,26 @@ func tabPatchRequest(body string) *http.Request {
 	return r.WithContext(ctx)
 }
 
-func TestUpdateTab_ProxiedCapAppliesToTheDirectToProxiedFlip(t *testing.T) {
+// Both proxied-tab caps are per USER, and both apply to the direct->proxied
+// flip - the flip is how a tab becomes something the proxy has to carry, and
+// direct tabs are uncapped, so a gate on Create alone is two calls away from
+// meaningless.
+//
+// The TOTAL is checked before the per-server one on purpose. A user at their
+// overall ceiling is not "at the limit on this server", and telling them so
+// sends them to the wrong screen to fix it.
+//
+// The allowance charged is the tab OWNER's, not the editor's: created_by is the
+// column the counts measure and the one the row keeps, so billing whoever
+// happens to be editing would spend a stranger's budget.
+func TestUpdateTab_ProxiedCapsApplyToTheDirectToProxiedFlip(t *testing.T) {
+	const owner = "owner-id"
 	cases := []struct {
 		name        string
 		currentMode string
-		proxiedNow  int
+		totalNow    int // the user's proxied tabs everywhere
+		onServerNow int // ...and on this one
+		maxTotal    int
 		maxPer      int
 		wantStatus  int
 		wantUpdate  bool
@@ -91,24 +107,32 @@ func TestUpdateTab_ProxiedCapAppliesToTheDirectToProxiedFlip(t *testing.T) {
 		// because the label is in circulation the moment a link is copied.
 		hostLabel string
 	}{
-		{"flip at the cap is refused", "direct", 2, 2, http.StatusConflict, false, ""},
-		{"flip under the cap mints a host", "direct", 1, 2, http.StatusOK, true, ""},
-		{"editing an already-proxied tab keeps its host", "proxied", 2, 2, http.StatusOK, true, "abcdefghij0123456789"},
+		{"flip at the TOTAL is refused", "direct", 10, 0, 10, 3, http.StatusConflict, false, ""},
+		{"flip at the PER-SERVER cap is refused", "direct", 4, 3, 10, 3, http.StatusConflict, false, ""},
+		{"flip under both goes through and mints a host", "direct", 4, 1, 10, 3, http.StatusOK, true, ""},
+		{"editing an already-proxied tab is never capped", "proxied", 99, 99, 10, 3, http.StatusOK, true, "abcdefghij0123456789"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			h, mock := newTabCapHandler(t, c.maxPer, 20)
+			h, mock := newTabCapHandler(t, c.maxPer, c.maxTotal, 20)
 
 			mock.ExpectQuery(`SELECT mode FROM server_tabs`).
 				WillReturnRows(sqlmock.NewRows([]string{"mode"}).AddRow(c.currentMode))
 			if c.currentMode != "proxied" {
-				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM server_tabs`).
-					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(c.proxiedNow))
+				mock.ExpectQuery(`SELECT COALESCE\(created_by`).
+					WillReturnRows(sqlmock.NewRows([]string{"created_by"}).AddRow(owner))
+				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM server_tabs\s+WHERE mode='proxied'`).
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(c.totalNow))
+				// Only reached when the total let it through.
+				if c.totalNow < c.maxTotal {
+					mock.ExpectQuery(`SELECT COUNT\(\*\) FROM server_tabs\s+WHERE server_id`).
+						WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(c.onServerNow))
+				}
 			}
 			if c.wantUpdate {
-				// A tab that survives the cap gets a content host if it has
-				// none: the host label is what the proxy routes on, so a
-				// proxied tab without one would exist and be unreachable.
+				// A tab that survives the caps gets a content host if it has
+				// none: the label is what the proxy routes on, so a proxied tab
+				// without one would exist and be unreachable.
 				mock.ExpectQuery(`SELECT proxy_host_label FROM server_tabs`).
 					WillReturnRows(sqlmock.NewRows([]string{"proxy_host_label"}).AddRow(c.hostLabel))
 				if c.hostLabel == "" {
@@ -131,6 +155,41 @@ func TestUpdateTab_ProxiedCapAppliesToTheDirectToProxiedFlip(t *testing.T) {
 				t.Fatalf("db expectations: %v", err)
 			}
 		})
+	}
+}
+
+// The two refusals must not read the same. "You are at your limit" without
+// saying WHICH limit sends a user to delete tabs on a server that was never
+// the problem.
+func TestUpdateTab_CapRefusalsNameTheLimitThatFired(t *testing.T) {
+	seen := map[string]string{}
+	for _, c := range []struct {
+		name            string
+		total, onServer int
+	}{
+		{"total", 10, 0},
+		{"perServer", 4, 3},
+	} {
+		h, mock := newTabCapHandler(t, 3, 10, 20)
+		mock.ExpectQuery(`SELECT mode FROM server_tabs`).
+			WillReturnRows(sqlmock.NewRows([]string{"mode"}).AddRow("direct"))
+		mock.ExpectQuery(`SELECT COALESCE\(created_by`).
+			WillReturnRows(sqlmock.NewRows([]string{"created_by"}).AddRow("owner-id"))
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM server_tabs\s+WHERE mode='proxied'`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(c.total))
+		if c.total < 10 {
+			mock.ExpectQuery(`SELECT COUNT\(\*\) FROM server_tabs\s+WHERE server_id`).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(c.onServer))
+		}
+		rec := httptest.NewRecorder()
+		h.Update(rec, tabPatchRequest(`{"mode":"proxied","targetPort":8100,"targetPath":"/","surface":"tab","visibility":"private"}`))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("%s: status = %d, want 409", c.name, rec.Code)
+		}
+		seen[c.name] = rec.Body.String()
+	}
+	if seen["total"] == seen["perServer"] {
+		t.Errorf("both caps refuse with the same message, so the user cannot tell which one to fix: %s", seen["total"])
 	}
 }
 
@@ -161,7 +220,7 @@ func TestRotateShareLink_CountsANewSlugAgainstTheOwnersAllowance(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			h, mock := newTabCapHandler(t, 10, c.maxLinks)
+			h, mock := newTabCapHandler(t, 3, 10, c.maxLinks)
 
 			mock.ExpectQuery(`SELECT mode, surface, share_token`).
 				WillReturnRows(sqlmock.NewRows([]string{"mode", "surface", "share_token", "created_by"}).

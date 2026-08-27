@@ -42,6 +42,10 @@ type serverTabResponse struct {
 	Visibility     string     `json:"visibility"`
 	ShareToken     string     `json:"shareToken"`
 	ShareExpiresAt *time.Time `json:"shareExpiresAt"`
+	// SubServerName pins a proxied tab to one sub-server. Empty means every
+	// sub-server, which is the default: a tab for a plugin that every world
+	// runs should not have to be created once per world.
+	SubServerName string `json:"subServerName"`
 	// ProxyOrigin is the browser-facing origin this tab is served on, built
 	// from its host label. Empty for a direct tab and for any tab while
 	// TAB_PROXY_HOST_SUFFIX is unset - which is also how the panel knows not to
@@ -57,10 +61,14 @@ type serverTabRequest struct {
 	Enabled     *bool  `json:"enabled,omitempty"`
 	OpenInPanel *bool  `json:"openInPanel,omitempty"`
 	Mode        string `json:"mode"`
-	TargetPort  *int   `json:"targetPort,omitempty"`
-	TargetPath  string `json:"targetPath"`
-	Surface     string `json:"surface"`
-	Visibility  string `json:"visibility"`
+	// SubServerName is a POINTER for the reason ShareExpiresAt below is: on a
+	// PATCH, absent means "keep", "" means "clear, show on every sub-server",
+	// and those are not the same request.
+	SubServerName *string `json:"subServerName"`
+	TargetPort    *int    `json:"targetPort,omitempty"`
+	TargetPath    string  `json:"targetPath"`
+	Surface       string  `json:"surface"`
+	Visibility    string  `json:"visibility"`
 	// ShareExpiresAt is a POINTER because three states have to be tellable
 	// apart on a PATCH: absent (leave whatever is stored), "" (clear it, the
 	// link stops expiring) and an RFC3339 instant (set it). See
@@ -133,7 +141,8 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := db.Query(`SELECT id, server_id, name, icon, url, position, enabled, open_in_panel,
 		mode, COALESCE(target_port,0), target_path, surface, visibility,
-		COALESCE(share_token,''), share_expires_at, COALESCE(proxy_host_label,'')
+		COALESCE(share_token,''), share_expires_at, COALESCE(proxy_host_label,''),
+		COALESCE(sub_server_name,'')
 		FROM server_tabs WHERE server_id=$1 ORDER BY position ASC, id ASC`, serverID)
 	if err != nil {
 		sendJSONError(w, "Query failed", http.StatusInternalServerError)
@@ -150,7 +159,7 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 		// profile list stayed silently empty. Fail loudly instead.
 		if err := rows.Scan(&t.ID, &t.ServerID, &t.Name, &t.Icon, &t.URL, &t.Position, &t.Enabled, &t.OpenInPanel,
 			&t.Mode, &t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareToken, &expires,
-			&hostLabel); err != nil {
+			&hostLabel, &t.SubServerName); err != nil {
 			sendJSONError(w, "Query failed", http.StatusInternalServerError)
 			return
 		}
@@ -189,6 +198,15 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.TargetPath = strings.TrimSpace(req.TargetPath)
 	req.Surface = strings.TrimSpace(req.Surface)
 	req.Visibility = strings.TrimSpace(req.Visibility)
+	// Same rule the console, backup and mod handlers apply. Empty is legal and
+	// means "every sub-server"; anything else has to be a name that could exist,
+	// because it ends up in a comparison against active_sub_server and a value
+	// that can never match would make the tab permanently invisible.
+	subServerName, serr := normalizeTabSubServer(req.SubServerName)
+	if serr != nil {
+		sendJSONError(w, serr.Error(), http.StatusBadRequest)
+		return
+	}
 	if req.Icon == "" {
 		req.Icon = "layout-grid"
 	}
@@ -233,9 +251,8 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Public share links are disabled by the administrator.", http.StatusForbidden)
 			return
 		}
-		if count, cerr := h.countProxiedTabs(db, serverID); cerr == nil &&
-			capReached(count, h.state.FeatureFlags.TabProxyMaxPerServer(ctx)) {
-			sendJSONError(w, "This server has reached its proxied-tab limit.", http.StatusConflict)
+		if msg := h.tabCapExceeded(db, ctx, serverID, userID); msg != "" {
+			sendJSONError(w, msg, http.StatusConflict)
 			return
 		}
 	} else {
@@ -309,11 +326,11 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	err := db.QueryRow(`INSERT INTO server_tabs
 		(server_id, name, icon, url, position, enabled, open_in_panel, created_by,
 		 mode, target_port, target_path, surface, visibility, share_token, share_expires_at,
-		 proxy_host_label)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+		 proxy_host_label, sub_server_name)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
 		serverID, req.Name, req.Icon, req.URL, req.Position, enabled, openInPanel, createdBy,
 		req.Mode, portArg, req.TargetPath, req.Surface, req.Visibility, shareToken, shareExpires,
-		hostLabel,
+		hostLabel, subServerName,
 	).Scan(&id)
 	if err != nil {
 		sendJSONError(w, "Failed to create tab", http.StatusInternalServerError)
@@ -415,9 +432,13 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if currentMode != "proxied" {
-			if count, cerr := h.countProxiedTabs(db, serverID); cerr == nil &&
-				capReached(count, h.state.FeatureFlags.TabProxyMaxPerServer(r.Context())) {
-				sendJSONError(w, "This server has reached its proxied-tab limit.", http.StatusConflict)
+			// The tab's OWNER is charged, not whoever is editing: created_by is
+			// the column the counts measure and the one this row keeps, so
+			// billing anyone else would spend the wrong allowance.
+			var owner string
+			_ = db.QueryRow(`SELECT COALESCE(created_by::text,'') FROM server_tabs WHERE id=$1`, tabID).Scan(&owner)
+			if msg := h.tabCapExceeded(db, r.Context(), serverID, owner); msg != "" {
+				sendJSONError(w, msg, http.StatusConflict)
 				return
 			}
 		}
@@ -441,6 +462,11 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, eerr.Error(), http.StatusBadRequest)
 		return
 	}
+	subServerName, serr := normalizeTabSubServer(req.SubServerName)
+	if serr != nil {
+		sendJSONError(w, serr.Error(), http.StatusBadRequest)
+		return
+	}
 	res, err := db.Exec(`UPDATE server_tabs SET
 		name           = COALESCE(NULLIF($3, ''), name),
 		icon           = COALESCE(NULLIF($4, ''), icon),
@@ -453,7 +479,11 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		target_path    = COALESCE(NULLIF($11, ''), target_path),
 		surface        = COALESCE(NULLIF($12, ''), surface),
 		visibility     = COALESCE(NULLIF($13, ''), visibility),
-		share_expires_at = CASE WHEN $14::bool THEN $15::timestamptz ELSE share_expires_at END
+		share_expires_at = CASE WHEN $14::bool THEN $15::timestamptz ELSE share_expires_at END,
+		-- Same three-state problem as share_expires_at: "" is a LEGITIMATE value
+		-- here ("every sub-server"), so COALESCE(NULLIF(...)) could not tell
+		-- "keep" from "clear". The explicit flag is what separates them.
+		sub_server_name = CASE WHEN $16::bool THEN $17::text ELSE sub_server_name END
 		WHERE id=$1 AND server_id=$2`,
 		tabID, serverID,
 		strings.TrimSpace(req.Name),
@@ -467,6 +497,7 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		req.Surface,
 		req.Visibility,
 		setExpiry, shareExpires,
+		req.SubServerName != nil, subServerName,
 	)
 	if err != nil {
 		sendJSONError(w, "Failed to save tab", http.StatusInternalServerError)

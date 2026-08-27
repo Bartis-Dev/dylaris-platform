@@ -176,9 +176,26 @@ func (f *FeatureFlags) TabProxyAllowPublicLinks(ctx context.Context) bool {
 	return f.Get(ctx, "tab_proxy_allow_public_links", false)
 }
 
-// TabProxyMaxPerServer caps proxied tabs per server. Default 10 (floored >0).
-func (f *FeatureFlags) TabProxyMaxPerServer(ctx context.Context) int {
-	if v := f.GetInt(ctx, "tab_proxy_max_per_server", 10); v > 0 {
+// TabProxyMaxPerUserPerServer caps how many proxied tabs ONE user may have on
+// ONE server. Default 3 (floored >0).
+//
+// Per user, not per server: a shared server would otherwise let whoever got
+// there first spend the whole allowance, and the limit exists to bound what a
+// single account can ask the proxy to carry.
+func (f *FeatureFlags) TabProxyMaxPerUserPerServer(ctx context.Context) int {
+	if v := f.GetInt(ctx, "tab_proxy_max_per_user_per_server", 3); v > 0 {
+		return v
+	}
+	return 3
+}
+
+// TabProxyMaxPerUserTotal caps a user's proxied tabs across every server they
+// have. Default 10 (floored >0).
+//
+// The per-server cap alone is not a ceiling: a user with twenty servers could
+// hold twenty times it. This is the one that actually bounds an account.
+func (f *FeatureFlags) TabProxyMaxPerUserTotal(ctx context.Context) int {
+	if v := f.GetInt(ctx, "tab_proxy_max_per_user_total", 10); v > 0 {
 		return v
 	}
 	return 10

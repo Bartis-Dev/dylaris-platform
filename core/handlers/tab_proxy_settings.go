@@ -17,10 +17,14 @@ func NewTabProxySettingsHandler(state *AppState) *TabProxySettingsHandler {
 }
 
 type tabProxySettings struct {
-	Enabled              bool `json:"enabled"`
-	AllowPublicLinks     bool `json:"allowPublicLinks"`
-	MaxPerServer         int  `json:"maxPerServer"`
-	MaxShareLinksPerUser int  `json:"maxShareLinksPerUser"`
+	Enabled          bool `json:"enabled"`
+	AllowPublicLinks bool `json:"allowPublicLinks"`
+	// Both caps are per USER. Per server alone is not a ceiling - a user with
+	// twenty servers would hold twenty times it - and a server-wide count on a
+	// shared server lets whoever gets there first spend everyone's allowance.
+	MaxPerUserPerServer  int `json:"maxPerUserPerServer"`
+	MaxPerUserTotal      int `json:"maxPerUserTotal"`
+	MaxShareLinksPerUser int `json:"maxShareLinksPerUser"`
 }
 
 // Get GET /api/admin/settings/tab-proxy - PANEL settings.read (RequireCap at the route).
@@ -29,7 +33,8 @@ func (h *TabProxySettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out := tabProxySettings{
 		Enabled:              h.state.FeatureFlags.IsTabProxyEnabled(ctx),
 		AllowPublicLinks:     h.state.FeatureFlags.TabProxyAllowPublicLinks(ctx),
-		MaxPerServer:         h.state.FeatureFlags.TabProxyMaxPerServer(ctx),
+		MaxPerUserPerServer:  h.state.FeatureFlags.TabProxyMaxPerUserPerServer(ctx),
+		MaxPerUserTotal:      h.state.FeatureFlags.TabProxyMaxPerUserTotal(ctx),
 		MaxShareLinksPerUser: h.state.FeatureFlags.TabProxyMaxShareLinksPerUser(ctx),
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "settings": out})
@@ -42,8 +47,17 @@ func (h *TabProxySettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if req.MaxPerServer <= 0 {
-		req.MaxPerServer = 10
+	if req.MaxPerUserPerServer <= 0 {
+		req.MaxPerUserPerServer = 3
+	}
+	if req.MaxPerUserTotal <= 0 {
+		req.MaxPerUserTotal = 10
+	}
+	// A total below the per-server allowance is unreachable by construction and
+	// would read as a bug from the user's side ("it says 5 per server but stops
+	// at 2"), so the total wins and the per-server figure is clamped to it.
+	if req.MaxPerUserPerServer > req.MaxPerUserTotal {
+		req.MaxPerUserPerServer = req.MaxPerUserTotal
 	}
 	if req.MaxShareLinksPerUser <= 0 {
 		req.MaxShareLinksPerUser = 20
@@ -51,7 +65,8 @@ func (h *TabProxySettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	writes := []struct{ k, v string }{
 		{"feature_tab_proxy_enabled", boolStr(req.Enabled)},
 		{"tab_proxy_allow_public_links", boolStr(req.AllowPublicLinks)},
-		{"tab_proxy_max_per_server", strconv.Itoa(req.MaxPerServer)},
+		{"tab_proxy_max_per_user_per_server", strconv.Itoa(req.MaxPerUserPerServer)},
+		{"tab_proxy_max_per_user_total", strconv.Itoa(req.MaxPerUserTotal)},
 		{"tab_proxy_max_share_links_per_user", strconv.Itoa(req.MaxShareLinksPerUser)},
 	}
 	for _, kv := range writes {

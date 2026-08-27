@@ -48,8 +48,11 @@ func TestTabProxyDefaults(t *testing.T) {
 	if ff.TabProxyAllowPublicLinks(ctx) {
 		t.Error("TabProxyAllowPublicLinks default = true, want false")
 	}
-	if got := ff.TabProxyMaxPerServer(ctx); got != 10 {
-		t.Errorf("TabProxyMaxPerServer default = %d, want 10", got)
+	if got := ff.TabProxyMaxPerUserPerServer(ctx); got != 3 {
+		t.Errorf("TabProxyMaxPerUserPerServer default = %d, want 3", got)
+	}
+	if got := ff.TabProxyMaxPerUserTotal(ctx); got != 10 {
+		t.Errorf("TabProxyMaxPerUserTotal default = %d, want 10", got)
 	}
 	if got := ff.TabProxyMaxShareLinksPerUser(ctx); got != 20 {
 		t.Errorf("TabProxyMaxShareLinksPerUser default = %d, want 20", got)
@@ -58,12 +61,16 @@ func TestTabProxyDefaults(t *testing.T) {
 
 func TestTabProxyCapsFloorNonPositive(t *testing.T) {
 	ff := NewFeatureFlags(stubSettings{m: map[string]string{
-		"tab_proxy_max_per_server":           "0",
+		"tab_proxy_max_per_user_per_server":  "0",
+		"tab_proxy_max_per_user_total":       "-1",
 		"tab_proxy_max_share_links_per_user": "-5",
 	}})
 	ctx := context.Background()
-	if got := ff.TabProxyMaxPerServer(ctx); got != 10 {
-		t.Errorf("TabProxyMaxPerServer(0) = %d, want floored 10", got)
+	if got := ff.TabProxyMaxPerUserPerServer(ctx); got != 3 {
+		t.Errorf("TabProxyMaxPerUserPerServer(0) = %d, want floored 3", got)
+	}
+	if got := ff.TabProxyMaxPerUserTotal(ctx); got != 10 {
+		t.Errorf("TabProxyMaxPerUserTotal(-1) = %d, want floored 10", got)
 	}
 	if got := ff.TabProxyMaxShareLinksPerUser(ctx); got != 20 {
 		t.Errorf("TabProxyMaxShareLinksPerUser(-5) = %d, want floored 20", got)

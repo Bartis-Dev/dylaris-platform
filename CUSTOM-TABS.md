@@ -225,9 +225,48 @@ Both switches default to off.
 - **Visibility**: `private` requires a sign-in with access to that server;
   `public` is anyone with the link, and only works while public share links are
   enabled
+- **Sub-server**: which world this tab belongs to, or every one of them
 
 The tab gets its hostname when you create it. Share links are separate from that
 hostname, so rotating a link does not change where the content lives.
+
+### Sub-servers
+
+A proxied tab points at a port **inside the container**, and the container runs
+whichever sub-server is started. An unpinned tab therefore follows whatever is
+running - right for a plugin every world has, wrong for a map that only one of
+them serves.
+
+Pin the tab to a sub-server and it is refused while a different one is running,
+with a page saying so, instead of showing another world's map under the name of
+yours. Leave it on **Every sub-server** and it behaves as before.
+
+### Share links
+
+The **Generate** button mints an unguessable link. **Choose my own** takes a
+name you pick instead: lowercase letters, digits and single hyphens, 4 to 40
+characters, and it has to be free across the whole instance.
+
+    https://tabs.example.com/c/max-survival-map
+
+A chosen name is guessable, which is the trade for a readable one. That only
+matters for a `public` link, and a public link is meant to be handed out
+anyway. A `private` link is gated by your sign-in, not by the name, so a
+readable one gives nothing away.
+
+### Limits
+
+An admin sets two, both **per user**, under Settings -> Features -> Custom tabs:
+
+| | Default |
+|---|---|
+| Proxied tabs per server | 3 |
+| Proxied tabs in total | 10 |
+| Share links per user | 20 |
+
+The total is the one that actually bounds an account - the per-server figure
+alone would let somebody with twenty servers hold twenty times it. Direct tabs
+count against neither: they cost the platform nothing to serve.
 
 ---
 

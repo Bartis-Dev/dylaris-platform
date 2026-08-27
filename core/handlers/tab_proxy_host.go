@@ -156,6 +156,16 @@ func (h *ProxyHandler) allowHostRequest(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "Not found", http.StatusNotFound)
 		return false
 	}
+	// A pinned tab addresses a port that only exists while ITS sub-server is the
+	// one running. Serving it against another would hand the viewer a different
+	// world's map under the name of theirs - or, if that port is something else
+	// entirely there, a different application. Refused before the ticket check,
+	// because this is about the tab, not the caller.
+	if tab.SubServerName != "" && tab.SubServerName != tab.ActiveSubServer {
+		h.writeHostGatePage(w, http.StatusConflict, "This tab is not running",
+			"It belongs to a different sub-server than the one currently started.", "")
+		return false
+	}
 	if shareTokenExpired(tab.ShareExpires, time.Now()) {
 		h.writeHostGatePage(w, http.StatusGone, "This link has expired",
 			"Ask whoever shared it for a new one.", "")

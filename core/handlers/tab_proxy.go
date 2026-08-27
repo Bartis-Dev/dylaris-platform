@@ -121,6 +121,13 @@ type proxyTab struct {
 	// ProxyHostLabel is the subdomain this tab is served on. NULL for a direct
 	// tab, which has no content host and needs none.
 	ProxyHostLabel sql.NullString
+	// SubServerName pins the tab to one sub-server; "" is every sub-server.
+	// ActiveSubServer is what the container is running right now. They are read
+	// together because the tab addresses a PORT, and the port belongs to
+	// whichever sub-server is up - serving a tab pinned to one world while
+	// another is running would proxy into the wrong thing under the right name.
+	SubServerName   string
+	ActiveSubServer string
 }
 
 func (h *ProxyHandler) rawDB() *sql.DB {
@@ -369,12 +376,14 @@ func (h *ProxyHandler) getTabByShareToken(token string) (*proxyTab, error) {
 	var t proxyTab
 	err := db.QueryRow(`SELECT t.id, t.server_id, s.uuid, s.node_id, t.mode,
 		COALESCE(t.target_port,0), t.target_path, t.surface, t.visibility, t.share_expires_at,
-		t.enabled, t.share_token, t.proxy_host_label
+		t.enabled, t.share_token, t.proxy_host_label,
+		COALESCE(t.sub_server_name,''), COALESCE(s.active_sub_server,'')
 		FROM server_tabs t JOIN servers s ON s.id = t.server_id
 		WHERE t.share_token=$1`, token).Scan(
 		&t.ID, &t.ServerID, &t.ServerUUID, &t.NodeID, &t.Mode,
 		&t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareExpires,
-		&t.Enabled, &t.ShareToken, &t.ProxyHostLabel)
+		&t.Enabled, &t.ShareToken, &t.ProxyHostLabel,
+		&t.SubServerName, &t.ActiveSubServer)
 	if err != nil {
 		return nil, err
 	}

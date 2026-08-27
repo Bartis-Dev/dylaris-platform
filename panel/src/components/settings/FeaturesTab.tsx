@@ -72,7 +72,7 @@ export default function FeaturesTab() {
 
     // WS5 custom-tab reverse proxy toggles - same save-on-click/blur pattern
     // as the platform flags above, but its own admin settings endpoint.
-    const [tabProxy, setTabProxy] = useState<TabProxySettings>({ enabled: false, allowPublicLinks: false, maxPerServer: 10, maxShareLinksPerUser: 20 });
+    const [tabProxy, setTabProxy] = useState<TabProxySettings>({ enabled: false, allowPublicLinks: false, maxPerUserPerServer: 3, maxPerUserTotal: 10, maxShareLinksPerUser: 20 });
     const [tabProxySaving, setTabProxySaving] = useState(false);
     const tabProxySnapshot = useRef<TabProxySettings | null>(null);
 
@@ -512,19 +512,28 @@ export default function FeaturesTab() {
                     </p>
                 )}
                 </SettingsGroup>
-                <SettingsGroup title="Limits">
-                    <div className="grid grid-cols-2 gap-3">
+                <SettingsGroup title="Per-user limits">
+                    <div className="grid grid-cols-3 gap-3">
                         <div className="flex flex-col gap-[5px]">
-                            <label className="input-label" htmlFor="tabproxy-max-per-server">Max proxied tabs per server</label>
+                            <label className="input-label" htmlFor="tabproxy-max-per-server">Proxied tabs per server</label>
                             <input
                                 id="tabproxy-max-per-server"
-                                type="number" min={1} value={tabProxy.maxPerServer}
-                                onChange={e => setTabProxy({ ...tabProxy, maxPerServer: Number(e.target.value) })}
+                                type="number" min={1} value={tabProxy.maxPerUserPerServer}
+                                onChange={e => setTabProxy({ ...tabProxy, maxPerUserPerServer: Number(e.target.value) })}
                                 className="input-field w-full"
                             />
                         </div>
                         <div className="flex flex-col gap-[5px]">
-                            <label className="input-label" htmlFor="tabproxy-max-links">Max share links per user</label>
+                            <label className="input-label" htmlFor="tabproxy-max-total">Proxied tabs in total</label>
+                            <input
+                                id="tabproxy-max-total"
+                                type="number" min={1} value={tabProxy.maxPerUserTotal}
+                                onChange={e => setTabProxy({ ...tabProxy, maxPerUserTotal: Number(e.target.value) })}
+                                className="input-field w-full"
+                            />
+                        </div>
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label" htmlFor="tabproxy-max-links">Share links per user</label>
                             <input
                                 id="tabproxy-max-links"
                                 type="number" min={1} value={tabProxy.maxShareLinksPerUser}
@@ -533,6 +542,12 @@ export default function FeaturesTab() {
                             />
                         </div>
                     </div>
+                    <p className="text-xs text-(--base-06)">
+                        Both counts are per user. The total is the real ceiling - without it,
+                        someone with twenty servers holds twenty times the per-server figure.
+                        A total below the per-server value is clamped to it, so the smaller
+                        number always wins.
+                    </p>
                 </SettingsGroup>
             </SettingsCard>
         </SettingsPage>
