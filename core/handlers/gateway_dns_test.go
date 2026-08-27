@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -267,5 +268,82 @@ func TestCertStatusIsRelayed(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("%q did not survive the hop: %s", want, body)
 		}
+	}
+}
+
+// Core must not post a signed proof - or, on the write path, the operator's DNS
+// credential - to whoever answers a name that has not resolved.
+//
+// The proof is a one-way HMAC over (principal, ts); nothing in the Hub's reply
+// is bound to the cluster secret, so the recipient holds a working credential
+// for the whole skew window. The Hub serves /internal/* on the same listener
+// standalone customers reach over the internet, so a stranger can spend it.
+//
+// Measured in this project: an unresolved single-label service name comes back
+// as 46.225.53.182 rather than NXDOMAIN.
+func TestCheckHubProofTarget(t *testing.T) {
+	// What the operator named outright is their own call, and no lookup happens
+	// for these - so this half does not depend on DNS.
+	for _, ok := range []string{
+		"http://10.0.0.5:25530",
+		"http://203.0.113.7:25530",
+		"http://hub.example.com:25530",
+		"https://gateway.dylaris.com/",
+	} {
+		if err := checkHubProofTarget(ok); err != nil {
+			t.Errorf("checkHubProofTarget(%q) = %v, want nil", ok, err)
+		}
+	}
+
+	// localhost is the one single-label name that resolves everywhere, and it
+	// resolves private.
+	if err := checkHubProofTarget("http://localhost:25530"); err != nil {
+		t.Errorf("localhost was refused: %v", err)
+	}
+
+	// A single-label name that is not a service is refused, whichever way the
+	// resolver chooses to be unhelpful: NXDOMAIN or a wildcard answer. Both are
+	// refusals, and which one happens is a property of the resolver.
+	if err := checkHubProofTarget("http://hub-that-does-not-exist-anywhere:25530"); err == nil {
+		t.Error("accepted a single-label name that is not a service")
+	}
+
+	for _, bad := range []string{"", "   "} {
+		if err := checkHubProofTarget(bad); err == nil {
+			t.Errorf("checkHubProofTarget(%q) = nil, want an error", bad)
+		}
+	}
+}
+
+func TestHubAddrIsPrivateOrReserved(t *testing.T) {
+	tests := []struct {
+		ip   string
+		want bool
+	}{
+		{"10.0.0.5", true},
+		{"172.16.0.1", true},
+		{"192.168.1.1", true},
+		{"127.0.0.1", true},
+		{"169.254.1.1", true},
+		{"100.64.0.1", true}, // CGNAT, which net.IP.IsPrivate does not cover
+		{"::1", true},
+		{"46.225.53.182", false}, // the address the wildcard actually answered with
+		{"8.8.8.8", false},
+		{"100.63.255.255", false},
+		{"100.128.0.0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ip, func(t *testing.T) {
+			ip := net.ParseIP(tt.ip)
+			if ip == nil {
+				t.Fatalf("bad test address %q", tt.ip)
+			}
+			if got := hubAddrIsPrivateOrReserved(ip); got != tt.want {
+				t.Errorf("hubAddrIsPrivateOrReserved(%s) = %v, want %v", tt.ip, got, tt.want)
+			}
+		})
+	}
+	if !hubAddrIsPrivateOrReserved(nil) {
+		t.Error("a nil address must not read as public")
 	}
 }

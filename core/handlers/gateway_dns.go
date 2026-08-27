@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -203,6 +205,17 @@ func (h *GatewayDNSHandler) callHub(w http.ResponseWriter, r *http.Request, body
 		return nil, false
 	}
 
+	// Before anything is signed. The proof is a one-way HMAC over
+	// (principal, ts) and nothing in the Hub's reply is bound to the cluster
+	// secret, so whoever answers holds a working credential for the whole skew
+	// window - and this payload carries the operator's DNS token with it. The
+	// Hub serves /internal/* on the same listener standalone customers reach
+	// over the internet, so a stranger can spend what they were handed.
+	if err := checkHubProofTarget(hubURL); err != nil {
+		dnsError(w, http.StatusBadGateway, "not sending anything to the configured gateway hub: "+err.Error())
+		return nil, false
+	}
+
 	ts := time.Now().Unix()
 	body["principal"] = hubProofPrincipal
 	body["ts"] = ts
@@ -264,6 +277,63 @@ func (h *GatewayDNSHandler) callHub(w http.ResponseWriter, r *http.Request, body
 // shared because the two repositories build independently, exactly like the beam
 // stream header - and like that header it must not change on one side alone. The
 // secret itself never travels.
+// checkHubProofTarget refuses to send a signed proof - and, on the write path,
+// the operator's DNS credential - to a host that cannot be the gateway Hub.
+//
+// The rule is narrow on purpose, and identical to the gateway's own
+// redisacl.CheckProofTarget (repeated rather than shared: the two live in
+// separate repositories):
+//
+//   - An IP literal or a dotted name is what the operator configured. Their call.
+//   - A SINGLE-LABEL name ("hub") is a container or service name by
+//     construction. No such name exists in public DNS, so an answer outside
+//     private address space is a lie - measured in this project, an unresolved
+//     service name came back as 46.225.53.182 rather than NXDOMAIN.
+//
+// A name that does not resolve is refused too: there is nothing to send to.
+func checkHubProofTarget(rawURL string) error {
+	host := rawURL
+	if u, err := url.Parse(strings.TrimSpace(rawURL)); err == nil && u.Host != "" {
+		host = u.Hostname()
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return fmt.Errorf("no host in the configured hub URL")
+	}
+	if net.ParseIP(host) != nil || strings.Contains(host, ".") {
+		return nil
+	}
+	addrs, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("%q does not resolve", host)
+	}
+	for _, ip := range addrs {
+		if !hubAddrIsPrivateOrReserved(ip) {
+			return fmt.Errorf("%q resolved to the public address %s, which a single-label name cannot legitimately do", host, ip)
+		}
+	}
+	return nil
+}
+
+func hubAddrIsPrivateOrReserved(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	// 100.64.0.0/10 (CGNAT, RFC 6598) is not covered by IsPrivate.
+	if len(ip) == net.IPv4len && ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127 {
+		return true
+	}
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() ||
+		ip.IsMulticast()
+}
+
 func hubProof(clusterSecret, principal string, ts int64) string {
 	mac := hmac.New(sha256.New, []byte(clusterSecret))
 	mac.Write([]byte(principal + ":" + strconv.FormatInt(ts, 10)))
