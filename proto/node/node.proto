@@ -106,6 +106,16 @@ message NodeAuth {
   // Proof the caller holds CLUSTER_SECRET (HMAC over the node token). Required
   // before Core hands a known node its per-node secret for the first time.
   string cluster_proof = 6;
+  // The release this node image was built from ("2026.08.28"), or empty when the
+  // build carries no stamp. Sent at AUTH rather than only in the heartbeat
+  // because a mandatory-update deadline has to be answerable at connect time,
+  // and a heartbeat is both later and expirable.
+  //
+  // NEVER treated as a credential: it is self-reported and only ever makes Core
+  // refuse or warn, never admit. Empty means UNKNOWN and is always admitted -
+  // every image built before stamping sends nothing, and refusing those would
+  // lock out the installed base on the day it ships.
+  string release_version = 7;
 }
 
 message AuthResult {
@@ -127,6 +137,16 @@ message AuthResult {
   // from CLUSTER_SECRET; validated by the Hub.
   string link_secret = 7;           // = DeriveLinkToken(assigned_id, CLUSTER_SECRET)
   string link_discovery_proof = 8;  // = DeriveDiscoveryProof(assigned_id, CLUSTER_SECRET)
+  // A mandatory update this node is subject to but has not applied. Set on a
+  // SUCCESSFUL auth: the node is admitted and logs this loudly until it updates.
+  // Empty when nothing is pending.
+  //
+  // When the deadline has passed the node is refused instead, with the reason in
+  // `message` - so the operator reads why rather than watching a connection fail
+  // for no stated cause.
+  string update_required = 9;        // human-readable warning, empty when none
+  string update_required_version = 10;  // the release the node must reach
+  string update_required_deadline = 11; // RFC3339, empty when immediate
 }
 
 // Reconnect challenge: Core issues a fresh single-use nonce; the node returns

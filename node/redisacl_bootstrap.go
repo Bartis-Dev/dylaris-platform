@@ -265,6 +265,11 @@ func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]by
 	}
 
 	auth := &pb.NodeAuth{NodeToken: nodeID, AclSupported: true}
+	// See grpc_mesh.go: Core needs this at connect time to answer a
+	// mandatory-update deadline. Empty on an unstamped build.
+	if v := nodeReleaseVersion(); !v.IsZero() {
+		auth.ReleaseVersion = v.String()
+	}
 	cached, hasCached := loadNodeSecret(nodeSecretDir)
 	sendProof, token := bootstrapCreds(hasCached, nodeRecoveryToken, nodeEnrollToken)
 	if sendProof {

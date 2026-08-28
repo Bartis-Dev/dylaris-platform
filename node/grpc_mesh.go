@@ -239,6 +239,12 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	if clusterSecret != "" {
 		auth.ClusterProof = aclClusterProof(clusterSecret, m.nodeToken)
 	}
+	// Which release this image was built from, so Core can answer a
+	// mandatory-update deadline at CONNECT time rather than a heartbeat later.
+	// Empty on an unstamped build, which Core reads as unknown and admits.
+	if v := nodeReleaseVersion(); !v.IsZero() {
+		auth.ReleaseVersion = v.String()
+	}
 	if err := stream.Send(&pb.NodeMessage{
 		Payload: &pb.NodeMessage_Auth{Auth: auth},
 	}); err != nil {
@@ -270,6 +276,8 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		conn.Close()
 		return
 	}
+
+	noteUpdateRequirement(authResult)
 
 	log.Printf("gRPC Mesh: Connected to Core %s ✓", info.ID)
 	reportCoreRecovered(info.ID)

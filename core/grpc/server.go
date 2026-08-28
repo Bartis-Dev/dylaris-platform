@@ -112,7 +112,16 @@ type Server struct {
 	linkCreds  LinkCredSource
 	admission  AdmissionChecker
 	recovery   RecoveryTokenConsumer
+	// updateGate refuses or warns a node that has not applied a mandatory
+	// update. Set after construction rather than as an eighth positional
+	// argument; nil means neither, which is what every test wants.
+	updateGate *UpdateGate
 }
+
+// SetUpdateGate installs the mandatory-update policy. Separate from NewServer so
+// the seven-argument constructor does not grow an eighth, and so a test server
+// is silent about updates unless it asks not to be.
+func (s *Server) SetUpdateGate(g *UpdateGate) { s.updateGate = g }
 
 // NewServer creates a new gRPC server for Node connections.
 func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, recovery RecoveryTokenConsumer) *Server {
@@ -183,6 +192,19 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		}})
 	}
 
+	// Mandatory-update gate, BEFORE any lookup or provisioning. A node that is
+	// going to be refused should be refused without Core first minting it
+	// credentials, and refusing early keeps the reason in one place.
+	//
+	// The version is self-reported. It can only ever cost this node access or
+	// earn it a warning, never grant anything, so nothing is trusted here that
+	// should not be - and an unstamped node reports nothing and is admitted.
+	verdict := s.updateGate.Check("node", auth.GetReleaseVersion())
+	if verdict.Refuse {
+		sendFail(verdict.Message)
+		return fmt.Errorf("node %s refused: %s", tokenPrefix(auth.NodeToken), verdict.Message)
+	}
+
 	var node *Node
 	{
 		address := ""
@@ -250,6 +272,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			}
 			node = &Node{ID: id, Token: assignedID}
 			ar := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID}
+			applyUpdateWarning(ar, verdict)
 			if s.linkCreds != nil {
 				ar.LinkSecret = s.linkCreds.LinkToken(assignedID)
 				ar.LinkDiscoveryProof = s.linkCreds.DiscoveryProof(assignedID)
@@ -331,6 +354,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				return fmt.Errorf("acl: provision failed for node %d: %w", node.ID, perr)
 			}
 			res := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true}
+			applyUpdateWarning(res, verdict)
 			if !hasSecret {
 				// First-time issue for this known node (feature newly enabled, or
 				// the secret was reset). Deliver once; later connects must prove it.
@@ -435,6 +459,9 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 	grpcServer := grpc.NewServer(opts...)
 
 	srv := NewServer(registry, lookup, coreID, acl, linkCreds, admission, recovery)
+	// The mandatory-update policy is installed for the REAL server only. Tests
+	// construct Server directly and stay silent about updates unless they ask.
+	srv.SetUpdateGate(NewUpdateGate())
 	pb.RegisterNodeServiceServer(grpcServer, srv)
 
 	log.Printf("gRPC: NodeService listening on :%d", port)

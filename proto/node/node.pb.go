@@ -687,9 +687,19 @@ type NodeAuth struct {
 	AclSupported bool   `protobuf:"varint,5,opt,name=acl_supported,json=aclSupported,proto3" json:"acl_supported,omitempty"` // node advertises it can use scoped creds
 	// Proof the caller holds CLUSTER_SECRET (HMAC over the node token). Required
 	// before Core hands a known node its per-node secret for the first time.
-	ClusterProof  string `protobuf:"bytes,6,opt,name=cluster_proof,json=clusterProof,proto3" json:"cluster_proof,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ClusterProof string `protobuf:"bytes,6,opt,name=cluster_proof,json=clusterProof,proto3" json:"cluster_proof,omitempty"`
+	// The release this node image was built from ("2026.08.28"), or empty when the
+	// build carries no stamp. Sent at AUTH rather than only in the heartbeat
+	// because a mandatory-update deadline has to be answerable at connect time,
+	// and a heartbeat is both later and expirable.
+	//
+	// NEVER treated as a credential: it is self-reported and only ever makes Core
+	// refuse or warn, never admit. Empty means UNKNOWN and is always admitted -
+	// every image built before stamping sends nothing, and refusing those would
+	// lock out the installed base on the day it ships.
+	ReleaseVersion string `protobuf:"bytes,7,opt,name=release_version,json=releaseVersion,proto3" json:"release_version,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *NodeAuth) Reset() {
@@ -764,6 +774,13 @@ func (x *NodeAuth) GetClusterProof() string {
 	return ""
 }
 
+func (x *NodeAuth) GetReleaseVersion() string {
+	if x != nil {
+		return x.ReleaseVersion
+	}
+	return ""
+}
+
 type AuthResult struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Ok      bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
@@ -784,8 +801,18 @@ type AuthResult struct {
 	// from CLUSTER_SECRET; validated by the Hub.
 	LinkSecret         string `protobuf:"bytes,7,opt,name=link_secret,json=linkSecret,proto3" json:"link_secret,omitempty"`                           // = DeriveLinkToken(assigned_id, CLUSTER_SECRET)
 	LinkDiscoveryProof string `protobuf:"bytes,8,opt,name=link_discovery_proof,json=linkDiscoveryProof,proto3" json:"link_discovery_proof,omitempty"` // = DeriveDiscoveryProof(assigned_id, CLUSTER_SECRET)
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// A mandatory update this node is subject to but has not applied. Set on a
+	// SUCCESSFUL auth: the node is admitted and logs this loudly until it updates.
+	// Empty when nothing is pending.
+	//
+	// When the deadline has passed the node is refused instead, with the reason in
+	// `message` - so the operator reads why rather than watching a connection fail
+	// for no stated cause.
+	UpdateRequired         string `protobuf:"bytes,9,opt,name=update_required,json=updateRequired,proto3" json:"update_required,omitempty"`                            // human-readable warning, empty when none
+	UpdateRequiredVersion  string `protobuf:"bytes,10,opt,name=update_required_version,json=updateRequiredVersion,proto3" json:"update_required_version,omitempty"`    // the release the node must reach
+	UpdateRequiredDeadline string `protobuf:"bytes,11,opt,name=update_required_deadline,json=updateRequiredDeadline,proto3" json:"update_required_deadline,omitempty"` // RFC3339, empty when immediate
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *AuthResult) Reset() {
@@ -870,6 +897,27 @@ func (x *AuthResult) GetLinkSecret() string {
 func (x *AuthResult) GetLinkDiscoveryProof() string {
 	if x != nil {
 		return x.LinkDiscoveryProof
+	}
+	return ""
+}
+
+func (x *AuthResult) GetUpdateRequired() string {
+	if x != nil {
+		return x.UpdateRequired
+	}
+	return ""
+}
+
+func (x *AuthResult) GetUpdateRequiredVersion() string {
+	if x != nil {
+		return x.UpdateRequiredVersion
+	}
+	return ""
+}
+
+func (x *AuthResult) GetUpdateRequiredDeadline() string {
+	if x != nil {
+		return x.UpdateRequiredDeadline
 	}
 	return ""
 }
@@ -3005,7 +3053,7 @@ const file_node_node_proto_rawDesc = "" +
 	"\x0fhash_files_resp\x18v \x01(\v2\x1b.dylaris.node.HashFilesRespH\x00R\rhashFilesResp\x120\n" +
 	"\x06result\x18Z \x01(\v2\x16.dylaris.node.OpResultH\x00R\x06result\x12-\n" +
 	"\x05error\x18[ \x01(\v2\x15.dylaris.node.OpErrorH\x00R\x05errorB\t\n" +
-	"\apayload\"\xe2\x01\n" +
+	"\apayload\"\x8b\x02\n" +
 	"\bNodeAuth\x12\x1d\n" +
 	"\n" +
 	"node_token\x18\x01 \x01(\tR\tnodeToken\x12'\n" +
@@ -3013,7 +3061,8 @@ const file_node_node_proto_rawDesc = "" +
 	"\fenroll_token\x18\x03 \x01(\tR\venrollToken\x12!\n" +
 	"\fsecret_proof\x18\x04 \x01(\tR\vsecretProof\x12#\n" +
 	"\racl_supported\x18\x05 \x01(\bR\faclSupported\x12#\n" +
-	"\rcluster_proof\x18\x06 \x01(\tR\fclusterProof\"\x85\x02\n" +
+	"\rcluster_proof\x18\x06 \x01(\tR\fclusterProof\x12'\n" +
+	"\x0frelease_version\x18\a \x01(\tR\x0ereleaseVersion\"\xa0\x03\n" +
 	"\n" +
 	"AuthResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x17\n" +
@@ -3027,7 +3076,11 @@ const file_node_node_proto_rawDesc = "" +
 	"assignedId\x12\x1f\n" +
 	"\vlink_secret\x18\a \x01(\tR\n" +
 	"linkSecret\x120\n" +
-	"\x14link_discovery_proof\x18\b \x01(\tR\x12linkDiscoveryProof\"%\n" +
+	"\x14link_discovery_proof\x18\b \x01(\tR\x12linkDiscoveryProof\x12'\n" +
+	"\x0fupdate_required\x18\t \x01(\tR\x0eupdateRequired\x126\n" +
+	"\x17update_required_version\x18\n" +
+	" \x01(\tR\x15updateRequiredVersion\x128\n" +
+	"\x18update_required_deadline\x18\v \x01(\tR\x16updateRequiredDeadline\"%\n" +
 	"\rNodeChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\tR\x05nonce\"3\n" +
 	"\x15NodeChallengeResponse\x12\x1a\n" +
