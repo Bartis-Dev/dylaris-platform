@@ -360,8 +360,8 @@ jobs:
           # defaults to it; only the panel passes one of its own), so a change
           # to it has to rebuild all three. It was watched by nothing: the Go
           # toolchain bump that fixed reachable standard-library CVEs reached
-          # only the core image, because core/updates/feed.jsonl happened to
-          # change in the same push. node and log-shipper kept shipping the old
+          # only the core image, because a file under core/ happened to change
+          # in the same push. node and log-shipper kept shipping the old
           # toolchain with nothing to say so.
           filters: |
             core:

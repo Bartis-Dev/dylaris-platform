@@ -316,19 +316,21 @@ defaults literally (`DYLARIS_GRPC_PORT: "${DYLARIS_GRPC_PORT:-25501}"`). Keep
 those in sync with `config.go` if you add more.
 
 That behaviour is also the supported way to *disable* something whose default is
-non-empty: setting `UPDATES_FEED_URL_PLATFORM=""` turns the update feed off. It is
-deliberately not listed in the shipped files, because listing it with any shell
-default would take that away.
+non-empty: setting `UPDATES_URL_PLATFORM=""` (or `UPDATES_URL_HOSTED=""`) stops
+Core fetching that release-notes file and pins it to the copy embedded in the
+image, which is what an air-gapped install wants. Both are deliberately not
+listed in the shipped files, because listing them with any shell default would
+take that away.
 
 Both shipped files now forward everything an operator normally needs, including
 the owner/SaaS integrations (`DNS_*`, `STORE_URL`, `STORE_SHARED_KEY`,
-`UPDATES_FEED_URL_GATEWAY`, `CLAMAV_ADDR`) and the identity/tuning knobs
+`CLAMAV_ADDR`) and the identity/tuning knobs
 (`DYLARIS_CORE_ID`, `DYLARIS_GRPC_PORT`, `REDIS_DB`). Earlier versions did not,
 and this section used to tell you to add them by hand.
 
 Still not forwarded, and why:
 
-- `UPDATES_FEED_URL_PLATFORM` - see the disable-by-empty note above.
+- `UPDATES_URL_PLATFORM` / `UPDATES_URL_HOSTED` - see the disable-by-empty note above.
 - `BEAM_MANIFEST_URL` - a **Core** variable (see the Core table below), not a Node
   one. It is simply not forwarded in either `environment:` block, so Core falls back
   to its compiled-in manifest URL.
@@ -408,8 +410,9 @@ secrets:
 | `DNS_ZONES` | *(empty)* | No (owner) | Comma-separated multi-zone form, for offering several domains from the same edges. Folded together with `DNS_ZONE`, so a single-zone deployment needs no change. |
 | `STORE_URL` | *(empty)* | No (SaaS) | Hosted dylaris.com storefront base URL. Set together with `STORE_SHARED_KEY` to enable store-linking + demo showcase; both empty gives a clean open-core build with no store surface. |
 | `STORE_SHARED_KEY` | *(empty)* | No (SaaS) | Service-to-service trust key between Core and dylaris.com (must match the key configured on the storefront). |
-| `UPDATES_FEED_URL_PLATFORM` | *(public repo feed)* | No (owner) | Raw URL of the append-only JSONL update feed the admin "what's new" bell diffs against the baked baseline. Defaults to the platform public-repo raw feed. Fails open when unset or unreachable. |
-| `UPDATES_FEED_URL_GATEWAY` | *(empty)* | No (owner) | Raw URL of the gateway update feed. Empty until it is cross-pushed into the public platform repo. Fails open. |
+| `UPDATES_URL_PLATFORM` | *(this repo's raw platform.md)* | No | Raw URL of the operator-facing release notes the Updates view reads. Setting it to `""` pins Core to the copy embedded in its image, which is what an air-gapped install wants. Fails open to that same copy when the fetch fails. |
+| `UPDATES_URL_HOSTED` | *(this repo's raw hosted.md)* | No | The same for the customer-facing notes, which is what a BYON or route-only account sees. |
+| `RELEASE_ENFORCE_MIN_VERSION` | `true` | No | When a release declares a mandatory update, Core warns affected nodes at connect and REFUSES them once the deadline passes. `false` keeps the warnings and drops the refusal - the break-glass for a wrong deadline or a mis-stamped image. |
 | `BEAM_MANIFEST_URL` | *(GitHub Releases feed)* | No | **Is** the compiled-in fallback for the Beam desktop-client update manifest, read once at startup — the `beam.release_manifest` admin setting takes precedence when it is non-empty. Set this so a fork points at its OWN releases repo without a rebuild. |
 | `CLAMAV_ADDR` | *(empty, scanning off)* | No | `host:port` of a `clamd` instance. When set, every ticket attachment is streamed through ClamAV (INSTREAM) and rejected on a hit before it is ever stored. Empty means uploads are accepted unscanned. |
 
