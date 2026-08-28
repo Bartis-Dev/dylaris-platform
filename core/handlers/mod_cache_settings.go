@@ -106,6 +106,32 @@ func (h *ModCacheSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "settings": out})
 }
 
+// modCacheCredentialRebound reports whether this save would send the STORED
+// Redis password to a different endpoint than the one it was entered for,
+// without the caller having supplied a new one.
+//
+// Same guard as smtpCredentialRebound and the three storage configs before it,
+// and it is on the same side of the line as SMTP: RESP AUTH sends the password
+// to the server, so moving the address moves the credential. Set does not even
+// wait for a later use - Reconfigure dials and authenticates inside this
+// request, before anything is stored, so a rebound save delivers the password
+// whether or not it ends up being saved.
+//
+// The username is compared for the same reason it is on the SMTP path: a new
+// username paired with the old password is an auth failure nothing points at.
+// TLS is deliberately NOT compared - turning it off exposes the credential on
+// the wire, but to the same party, which is a downgrade rather than a rebind.
+//
+// A submitted password is a rotation and is always allowed; clearing the
+// address drops the credential outright and so cannot rebind it.
+func modCacheCredentialRebound(req modCacheSettings, stored func(string) string) bool {
+	if strings.TrimSpace(req.Password) != "" || strings.TrimSpace(req.Addr) == "" || stored(settingModCachePassword) == "" {
+		return false
+	}
+	return strings.TrimSpace(req.Addr) != strings.TrimSpace(stored(settingModCacheAddr)) ||
+		req.Username != stored(settingModCacheUsername)
+}
+
 // Set PUT /api/admin/settings/mod-cache
 func (h *ModCacheSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req modCacheSettings
@@ -119,11 +145,20 @@ func (h *ModCacheSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	stored := func(k string) string {
+		v, _ := h.state.Store.GetSetting(k)
+		return v
+	}
+	if modCacheCredentialRebound(req, stored) {
+		sendJSONError(w, "the Redis address or username changed, so the stored password cannot be reused - re-enter the password with this change", http.StatusBadRequest)
+		return
+	}
+
 	// A blank password on save keeps the stored one, so an operator editing the
 	// host does not have to retype a credential the form never showed them.
 	password := strings.TrimSpace(req.Password)
 	if password == "" {
-		password, _ = h.state.Store.GetSetting(settingModCachePassword)
+		password = stored(settingModCachePassword)
 	}
 	// Clearing the address clears the whole endpoint, credential included: a
 	// password left behind for a host that is no longer used is a secret kept

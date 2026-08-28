@@ -34,6 +34,14 @@ func newCoreStorageHTTPFakeStore() *coreStorageHTTPFakeStore {
 }
 
 func (f *coreStorageHTTPFakeStore) GetSetting(key string) (string, error) { return f.kv[key], nil }
+
+// SetSettingBy is the audited write path; the fake records the value and drops
+// the actor, so a handler that writes through it fails its assertion rather than
+// panicking on a nil embedded Store.
+func (f *coreStorageHTTPFakeStore) SetSettingBy(key, value, _ string) error {
+	return f.SetSetting(key, value)
+}
+
 func (f *coreStorageHTTPFakeStore) SetSetting(key, value string) error {
 	f.kv[key] = value
 	return nil

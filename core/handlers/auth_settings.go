@@ -330,6 +330,39 @@ func loadSMTPConfigForUI(state *AppState, purpose string) SMTPConfigDTO {
 	}
 }
 
+// smtpCredentialRebound reports whether this save would send the STORED SMTP
+// password to a different server than the one it was entered for, without the
+// caller having supplied a new one.
+//
+// The fourth copy of a guard core storage, backup storages and modpack storage
+// already carry (mergeCoreStorageCandidate, mergeBackupStorageSecret,
+// modpackS3SecretRebound), and the one where it matters most. Those three
+// protect an S3 secret, which SigV4 signs with and never transmits; rebinding
+// them redirects signed requests. SMTP transmits the credential itself:
+// smtp.PlainAuth hands the operator's username and password to whatever host
+// mailer.Send dials.
+//
+// settings.write is a delegatable panel capability and GetSMTPConfig returns
+// only passwordSet, so a holder who cannot READ the password could point the
+// host at a server they control - with a certificate genuinely valid for their
+// own name, which is all the stdlib checks - and collect it. TestSendSMTP makes
+// that synchronous: no need to wait for a real mail event.
+//
+// Port and username are in the comparison for the same reasons as the S3 trio:
+// the port is half the destination, and a new username silently paired with the
+// old password is an auth failure with nothing pointing at the edit.
+//
+// A submitted password is a genuine rotation and is always allowed; with no
+// stored password there is nothing to rebind.
+func smtpCredentialRebound(dto SMTPConfigDTO, purpose string, get func(string) string) bool {
+	if dto.Password != "" || get("smtp."+purpose+".password") == "" {
+		return false
+	}
+	return strings.TrimSpace(dto.Host) != get("smtp."+purpose+".host") ||
+		fmt.Sprintf("%d", dto.Port) != get("smtp."+purpose+".port") ||
+		strings.TrimSpace(dto.Username) != get("smtp."+purpose+".username")
+}
+
 // SaveSMTPConfig PUT /api/admin/settings/smtp - PANEL settings.write (RequireCap at the route).
 func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Request) {
 	var dto SMTPConfigDTO
@@ -355,6 +388,14 @@ func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Requ
 
 	actorID, _ := r.Context().Value("userID").(string)
 	purpose := "default"
+	get := func(k string) string {
+		v, _ := h.state.Store.GetSetting(k)
+		return v
+	}
+	if smtpCredentialRebound(dto, purpose, get) {
+		sendJSONError(w, "the SMTP host, port or username changed, so the stored password cannot be reused - re-enter the password with this change", http.StatusBadRequest)
+		return
+	}
 	pairs := []struct{ k, v string }{}
 	if provider != "" {
 		pairs = append(pairs, struct{ k, v string }{mailer.SettingKeyProvider, provider})

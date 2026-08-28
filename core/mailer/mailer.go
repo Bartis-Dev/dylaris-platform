@@ -175,10 +175,21 @@ func Send(cfg *SMTPConfig, msg Message) error {
 		}
 		defer client.Quit()
 		tlsCfg := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12}
-		if ok, _ := client.Extension("STARTTLS"); ok {
-			if err := client.StartTLS(tlsCfg); err != nil {
-				return fmt.Errorf("starttls: %w", err)
-			}
+		// Required, not opportunistic. A server that does not advertise STARTTLS
+		// used to fall straight through to a plaintext send, which is exactly
+		// the "none" mode this operator declined to pick - and the bodies going
+		// over that wire carry password-reset and email-verification links. The
+		// stdlib refuses to hand PlainAuth a plaintext connection, so the
+		// credential was never the exposure; the message was, silently, with a
+		// success response on screen.
+		//
+		// An operator whose relay genuinely has no TLS still has "none", which
+		// says so on the settings page and in this switch.
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("%s does not offer STARTTLS; use encryption \"none\" if that is deliberate", cfg.Host)
+		}
+		if err := client.StartTLS(tlsCfg); err != nil {
+			return fmt.Errorf("starttls: %w", err)
 		}
 		if auth != nil {
 			if err := client.Auth(auth); err != nil {
