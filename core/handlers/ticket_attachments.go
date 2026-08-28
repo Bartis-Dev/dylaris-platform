@@ -685,7 +685,7 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 	w.Header().Set("Content-Type", clampAttachmentContentType(a.Mime))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", a.SizeBytes))
-	w.Header().Set("Content-Disposition", `attachment; filename="`+a.Filename+`"`)
+	setAttachmentDisposition(w, a.Filename)
 	io.Copy(w, rc)
 }
 

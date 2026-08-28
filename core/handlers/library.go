@@ -371,7 +371,7 @@ func (h *LibraryHandler) DownloadLibraryHandler(w http.ResponseWriter, r *http.R
 	defer rc.Close()
 
 	filename := filepath.Base(path)
-	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
+	setAttachmentDisposition(w, filename)
 	w.Header().Set("Content-Type", "application/octet-stream")
 
 	buf := make([]byte, 32*1024)

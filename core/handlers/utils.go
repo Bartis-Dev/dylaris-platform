@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"mime"
 	"net/http"
 	"regexp"
 	"strings"
@@ -52,4 +53,41 @@ func parseUserID(w http.ResponseWriter, r *http.Request, varName ...string) (str
 		return "", false
 	}
 	return id, true
+}
+
+// setAttachmentDisposition writes a Content-Disposition header that keeps the
+// caller-supplied name INSIDE the filename parameter.
+//
+// Four handlers built this header by concatenating a name into a quoted string
+// (ticket attachments, both file-manager download paths, the library) and one
+// of them did not even quote it. A name is not a token: a space ends an
+// unquoted one, and a quote closes a quoted one, so `report".pdf` produced
+//
+//	attachment; filename="report".pdf"
+//
+// which lets the uploader append their own parameters. RFC 6266 gives
+// filename* precedence over filename, so a crafted name decides what the
+// DOWNLOADER's browser saves the file as - and on a ticket attachment or a
+// library file the uploader and the downloader are different people.
+//
+// The severity is genuinely low on its own: the uploader already picks the
+// visible name, browsers sanitise download names themselves, and the sniffed
+// Content-Type plus nosniff still govern what may execute. What it defeats is
+// the sanitising each caller does on the name BEFORE this point, which is the
+// only reason those sanitisers exist.
+//
+// mime.FormatMediaType does the quoting and the RFC 2231 encoding for
+// non-ASCII, so no caller has to decide when a name needs which. It returns ""
+// for a name it cannot encode at all; the fallback is a bare "attachment",
+// which loses the suggested filename and nothing else.
+//
+// Not shared with storage_migration.go's safeFilenamePart: that one builds a
+// name Core chose and can flatten to [A-Za-z0-9_-] without losing anything a
+// user typed. Here the name IS what the user typed.
+func setAttachmentDisposition(w http.ResponseWriter, filename string) {
+	if v := mime.FormatMediaType("attachment", map[string]string{"filename": filename}); v != "" {
+		w.Header().Set("Content-Disposition", v)
+		return
+	}
+	w.Header().Set("Content-Disposition", "attachment")
 }

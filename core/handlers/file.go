@@ -731,7 +731,7 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 		if done := resp.GetTransferDone(); done != nil && done.TotalBytes == 0 {
 			w.Header().Set("Content-Type", "application/octet-stream")
 			if done.Filename != "" {
-				w.Header().Set("Content-Disposition", "attachment; filename=\""+done.Filename+"\"")
+				setAttachmentDisposition(w, done.Filename)
 			}
 			headerWritten = true
 			continue
@@ -834,7 +834,7 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 		if done := resp.GetTransferDone(); done != nil && done.TotalBytes == 0 {
 			w.Header().Set("Content-Type", "application/octet-stream")
 			if done.Filename != "" {
-				w.Header().Set("Content-Disposition", "attachment; filename=\""+done.Filename+"\"")
+				setAttachmentDisposition(w, done.Filename)
 			}
 			headerWritten = true
 			continue
