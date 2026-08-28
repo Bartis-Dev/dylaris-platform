@@ -39,6 +39,12 @@ func (f *entGateStore) GetUserBilling(string) (*store.UserBilling, error) {
 }
 func (f *entGateStore) CountNodesByOwner(string) (int, error)            { return 0, nil }
 func (f *entGateStore) CountPendingNodeEnrollTokens(string) (int, error) { return 0, nil }
+
+// Both pending kinds, because services.NodeSlotsUsed asks for both: a tenant can
+// reach a node through an enroll token OR a warp key, and a fake that answers
+// only the one this file is about would let the mint gate be tested against a
+// number the production gate never sees.
+func (f *entGateStore) CountNodeWarpKeysByOwner(string) (int, error) { return 0, nil }
 func (f *entGateStore) CreateNodeEnrollToken(string, string, string, *time.Time) error {
 	return nil
 }

@@ -27,6 +27,7 @@ type nodeEnrollFakeStore struct {
 	billing       *store.UserBilling
 	nodes         int
 	pendingTokens int
+	warpNodeKeys  int
 
 	createCalls []nodeEnrollCreateCall
 	createErr   error
@@ -37,6 +38,13 @@ type nodeEnrollCreateCall struct {
 	plaintext string
 	label     string
 	expiresAt *time.Time
+}
+
+// The OTHER pending kind. A tenant can reach a node through a warp key just as
+// well as through an enroll token, so the gate counts both and this fake has to
+// be able to answer both - see services.NodeSlotsUsed.
+func (f *nodeEnrollFakeStore) CountNodeWarpKeysByOwner(string) (int, error) {
+	return f.warpNodeKeys, nil
 }
 
 func (f *nodeEnrollFakeStore) GetSetting(key string) (string, error) {
@@ -300,6 +308,7 @@ func TestMintToken_HonorsTheNodeCap(t *testing.T) {
 		billing       *store.UserBilling
 		nodes         int
 		pendingTokens int
+		warpNodeKeys  int
 		wantStatus    int
 	}{
 		// Self-host, nothing configured: no cap. Reached with StoreEnabled false
@@ -319,6 +328,16 @@ func TestMintToken_HonorsTheNodeCap(t *testing.T) {
 			name:    "unredeemed tokens fill the remaining slots",
 			billing: cap2(), nodes: 1, pendingTokens: 1, wantStatus: http.StatusForbidden,
 		},
+		{
+			// The cross-door case. This gate used to count only its OWN pending
+			// tokens, so a slot already spoken for by a warp key was invisible to
+			// it and the two mint endpoints handed out more between them than the
+			// cap allowed. The tenant then redeemed what they could and was left
+			// holding an identity the over-limit sweep counts and cuts them off
+			// for - punished for a state these gates produced.
+			name:    "a warp key already holds the last slot",
+			billing: cap2(), nodes: 1, warpNodeKeys: 1, wantStatus: http.StatusForbidden,
+		},
 	}
 
 	for _, tt := range tests {
@@ -327,6 +346,7 @@ func TestMintToken_HonorsTheNodeCap(t *testing.T) {
 				billing:       tt.billing,
 				nodes:         tt.nodes,
 				pendingTokens: tt.pendingTokens,
+				warpNodeKeys:  tt.warpNodeKeys,
 			}
 			h := &NodeEnrollHandler{state: newNodeEnrollState(fs, true, false, "")}
 

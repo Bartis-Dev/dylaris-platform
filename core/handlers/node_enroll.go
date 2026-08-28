@@ -79,12 +79,16 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	//
 	// It also bounds the table: minting was an uncapped, unrate-limited write
 	// available to any authenticated tenant.
+	//
+	// Counted through services.NodeSlotsUsed, which sees BOTH kinds of pending
+	// identity. This gate used to count only its own enroll tokens and the warp
+	// sibling only its own keys, so neither could see what the other had handed
+	// out - see NodeSlotsUsed for what that cost the tenant.
 	if lim, lerr := services.EffectiveLimits(h.state.Store, userID); lerr == nil && lim.MaxNodes > 0 {
-		nodes, nerr := h.state.Store.CountNodesByOwner(userID)
-		pending, perr := h.state.Store.CountPendingNodeEnrollTokens(userID)
-		if nerr == nil && perr == nil && int64(nodes+pending) >= lim.MaxNodes {
+		used, uerr := services.NodeSlotsUsed(h.state.Store, userID)
+		if uerr == nil && used >= lim.MaxNodes {
 			sendJSONError(w, fmt.Sprintf(
-				"Node limit reached (%d). Revoke an unused enroll token or remove a machine first.", lim.MaxNodes),
+				"Node limit reached (%d). Revoke an unused enroll token or node key, or remove a machine first.", lim.MaxNodes),
 				http.StatusForbidden)
 			return
 		}

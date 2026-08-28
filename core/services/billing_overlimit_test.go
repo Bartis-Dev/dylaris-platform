@@ -20,6 +20,7 @@ type overLimitStore struct {
 	plan    *store.Plan
 
 	nodes, keys, kits int
+	enrollTokens      int
 	routeLimit        int
 
 	stamps   []overLimitStamp
@@ -27,6 +28,13 @@ type overLimitStore struct {
 }
 
 func (f *overLimitStore) ListUserBilling() ([]store.UserBilling, error) { return f.billing, nil }
+
+// The sweep counts node slots through services.NodeSlotsUsed, which asks for
+// pending ENROLL TOKENS as well as warp keys. This fake carried only the keys,
+// which is precisely the blindness the shared counter exists to remove.
+func (f *overLimitStore) CountPendingNodeEnrollTokens(string) (int, error) {
+	return f.enrollTokens, nil
+}
 func (f *overLimitStore) SetUserOverLimitSince(userID string, at *time.Time) error {
 	f.stamps = append(f.stamps, overLimitStamp{userID, at})
 	return f.stampErr

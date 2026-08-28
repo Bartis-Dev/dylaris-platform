@@ -92,10 +92,11 @@ func (u tenantUsage) describe() string {
 
 // tenantUsageFor counts what one tenant holds against their effective caps.
 //
-// Node usage counts UNREDEEMED warp keys alongside live nodes, matching the mint
-// gate: a minted key is a machine that has not connected yet, and ignoring it
-// would let a downgraded tenant sit under the cap on paper while three boxes are
-// mid-setup.
+// Node usage counts every UNREDEEMED node identity - enroll tokens and warp keys
+// alike - alongside live nodes, through the same services.NodeSlotsUsed the two
+// mint gates enforce. A minted identity is a machine that has not connected yet,
+// and ignoring it would let a downgraded tenant sit under the cap on paper while
+// three boxes are mid-setup.
 func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID string) (tenantUsage, error) {
 	var u tenantUsage
 
@@ -123,15 +124,14 @@ func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID str
 	}
 	u.entitled = ent.Byon || ent.RouteOnly
 
-	nodes, err := s.store.CountNodesByOwner(userID)
+	// The SAME count the two mint gates enforce. It has to be: this sweep cuts a
+	// tenant off for holding more than they bought, so counting a kind of pending
+	// identity the doors do not count (or missing one they do) means punishing a
+	// state the platform itself handed out. See services.NodeSlotsUsed.
+	u.nodes, err = NodeSlotsUsed(s.store, userID)
 	if err != nil {
 		return u, err
 	}
-	keys, err := s.store.CountNodeWarpKeysByOwner(userID)
-	if err != nil {
-		return u, err
-	}
-	u.nodes = int64(nodes + keys)
 
 	kits, err := s.store.CountLinkKitsByOwner(userID)
 	if err != nil {

@@ -841,18 +841,17 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if lim.MaxNodes > 0 {
-		nodes, nerr := h.state.Store.CountNodesByOwner(userID)
-		if nerr != nil {
+		// Both kinds of pending identity, not just this endpoint's own keys: an
+		// enroll token is a machine mid-setup exactly as an unredeemed key is,
+		// and counting one but not the other let the two mint gates hand out
+		// more slots between them than the cap allows. See NodeSlotsUsed.
+		used, uerr := services.NodeSlotsUsed(h.state.Store, userID)
+		if uerr != nil {
 			sendJSONError(w, "Failed to count nodes", http.StatusInternalServerError)
 			return
 		}
-		pending, perr := h.state.Store.CountNodeWarpKeysByOwner(userID)
-		if perr != nil {
-			sendJSONError(w, "Failed to count pending keys", http.StatusInternalServerError)
-			return
-		}
-		if int64(nodes+pending) >= lim.MaxNodes {
-			sendJSONError(w, fmt.Sprintf("Node limit reached (%d). Revoke an unused key or remove a machine first.", lim.MaxNodes), http.StatusForbidden)
+		if used >= lim.MaxNodes {
+			sendJSONError(w, fmt.Sprintf("Node limit reached (%d). Revoke an unused key or enroll token, or remove a machine first.", lim.MaxNodes), http.StatusForbidden)
 			return
 		}
 	}
