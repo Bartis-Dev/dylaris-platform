@@ -35,11 +35,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # cache: false is DELIBERATE and was measured, not assumed.
+      #
+      # setup-go's cache covers GOMODCACHE *and* GOCACHE, which in this tree is
+      # a 641 MB archive. Restoring it on run 33172390134 took SEVEN MINUTES AND
+      # SIXTEEN SECONDS - not the download, which finished in 77s, but the
+      # `tar -xf` afterwards. Five matrix jobs do it at once on one disk, so
+      # they also queue behind each other. The log-shipper job spent 8m35s in
+      # "Set up Go" and 34 SECONDS on everything else, tests included.
+      #
+      # This runner is long-lived rather than fresh-per-job: setup-go reports
+      # "Found in cache @ /opt/hostedtoolcache/go/1.26.7/x64", i.e. the toolchain
+      # was already extracted from a previous run. GOMODCACHE and GOCACHE live on
+      # the same machine, so the restore was overwriting files that were already
+      # there.
+      #
+      # The step below MEASURES that rather than trusting it. If a run shows an
+      # empty cache, the modules are simply re-downloaded - bounded, parallel
+      # network I/O against one module's go.sum, against seven minutes of serial
+      # disk extraction - and this comment is the place to reconsider.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.7'
-          cache-dependency-path: ${{ matrix.module }}/go.sum
+          cache: false
+
+      - name: Report Go cache warmth
+        run: |
+          mod=$(go env GOMODCACHE); build=$(go env GOCACHE)
+          echo "GOMODCACHE $mod: $(du -sh "$mod" 2>/dev/null | cut -f1 || echo empty)"
+          echo "GOCACHE    $build: $(du -sh "$build" 2>/dev/null | cut -f1 || echo empty)"
 
       # beam/app embeds frontend/dist (a Wails build artifact that a fresh
       # checkout does not have, so `go build` fails on the //go:embed). The Go
@@ -186,6 +211,14 @@ jobs:
           context: .
           file: ./.github/race.Dockerfile
           push: false
+          # Nothing consumes the resulting image - the RUN steps ARE the gate, and
+          # a failing one fails the build. Exporting it anyway cost 79.8s of
+          # "exporting layers" plus an attestation manifest on run 33170299856,
+          # for an artifact that is discarded in the same breath. cacheonly keeps
+          # the layer cache (so an unchanged go.sum still skips the download) and
+          # skips materialising the image.
+          outputs: type=cacheonly
+          provenance: false
 
   # Postgres integration gate. Every other test in this repo runs against fakes,
   # which is exactly why a run of SQL defects shipped unnoticed: the statements
@@ -429,7 +462,11 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.7'
-          cache-dependency-path: log-shipper/go.sum
+          # Same reason as the go-tests job above: restoring that cache costs
+          # seven minutes of tar on this runner, and this job sits on the path to
+          # a deploy. The tests have already warmed the module cache by the time
+          # it runs.
+          cache: false
 
       - name: Build log-shipper binary
         run: |
