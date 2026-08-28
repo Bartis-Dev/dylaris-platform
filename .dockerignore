@@ -1,0 +1,44 @@
+# Keep build contexts lean and STABLE. Every image here builds from the repo
+# root with `COPY . .`, and so does the race gate, so whatever is in the working
+# directory is uploaded through the Docker API on every single build.
+#
+# The gateway repo has had this file since the start; this one did not, and it is
+# the repo with the node_modules. Measured on 2026-08-28: a 1.8 GiB context, of
+# which 593 MiB is node_modules, 86 MiB the panel's .next, 42 MiB .git history
+# and 685 MiB a local testbed's dylaris_data. The runner is long-lived, so
+# everything a job writes into the workspace stays there and is re-sent by every
+# later build.
+#
+# Two costs, and the second is the one that hurt: the upload itself, and CACHE.
+# `COPY . .` hashes the whole context, so one changed byte anywhere invalidates
+# every layer after it - which is why a docs-only push recompiled every module
+# under -race from scratch.
+#
+# None of these globs matches Go source, go.mod, go.work, or the panel sources.
+.git
+**/node_modules
+panel/.next
+node/dylaris_data
+*.exe
+**/*.exe
+.env*
+.superpowers/
+
+# Documentation cannot change a build or a test, so it must not invalidate one.
+#
+# The exceptions are not cosmetic - each is an .md the BUILD or the TESTS read,
+# and each was found by looking rather than assumed:
+#   core/updates/*.md      embedded into Core (core/updates/release.go), so
+#                          excluding it fails loudly at go:embed
+#   API.md                 core/apidoc_test.go reads it and compares it against
+#                          what the generator produces
+#   core/apidoc/preamble.md  the generator's input for that same comparison
+# The last two run inside the race gate (go test ./... in /src/core), so leaving
+# them out turns a green gate red for a reason that has nothing to do with code.
+#
+# Before adding another exclusion here, grep the Go and vitest sources for the
+# filename. That is how these three were found.
+**/*.md
+!core/updates/*.md
+!API.md
+!core/apidoc/preamble.md
