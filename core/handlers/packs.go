@@ -234,6 +234,39 @@ func (h *PacksHandler) ListBuilds(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "builds": builds})
 }
 
+// validateBuildKeyComponents reports the first build field that must not reach
+// a storage key or an upstream URL path, or "" when all three are fine.
+//
+// VersionString has been checked since this handler was written; these three
+// never were, and they end up in exactly the same two places. packs_loader.go
+// builds "loaders/<loader>/<minecraft>/<resolved>/loader.zip" from them, and
+// services.BuildLoaderArtifact fmt.Sprintf's minecraft and the resolved loader
+// version straight into a meta.fabricmc.net path with no escaping at all.
+//
+// The storage-key half is defence in depth rather than a hole anyone can walk
+// through today: a "../" only reaches the Put if the upstream fetch SUCCEEDS,
+// and the key and the URL carry the same user segments, so a payload that keeps
+// the fabric endpoint valid nets to zero displacement in the key as well. The
+// URL half is not theoretical - unescaped request text decides which path on
+// fabricmc.net is fetched. Both stop being a question once the values are
+// checked where they arrive, which is what safeSolderKeyComponent exists for.
+//
+// Empty passes: a vanilla build has no loader and no loader version.
+// safeSolderKeyComponent rejects "" on purpose (an empty key COMPONENT is a
+// different question from an absent field), so emptiness is handled here.
+func validateBuildKeyComponents(minecraft, loader, loaderVersion string) string {
+	for _, f := range []struct{ name, value string }{
+		{"minecraft", minecraft},
+		{"loader", loader},
+		{"loaderVersion", loaderVersion},
+	} {
+		if f.value != "" && !safeSolderKeyComponent(f.value) {
+			return f.name
+		}
+	}
+	return ""
+}
+
 // CreateBuild POST /api/packs/{id}/builds - adds a build. A duplicate version
 // is 409. The matching loader is built in the background afterwards, so a
 // build is usable before that finishes.
@@ -257,6 +290,10 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 	// reject path chars: VersionString feeds storage keys (mrpack + solder manifest) and a download filename
 	if !safeSolderKeyComponent(strings.TrimSpace(req.VersionString)) {
 		sendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
+		return
+	}
+	if bad := validateBuildKeyComponents(strings.TrimSpace(req.Minecraft), strings.TrimSpace(req.Loader), strings.TrimSpace(req.LoaderVersion)); bad != "" {
+		sendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
 		return
 	}
 	b := &models.PackBuild{
@@ -312,6 +349,10 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		b.VersionString = v
+	}
+	if bad := validateBuildKeyComponents(strings.TrimSpace(req.Minecraft), strings.TrimSpace(req.Loader), strings.TrimSpace(req.LoaderVersion)); bad != "" {
+		sendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
+		return
 	}
 	b.Minecraft = strings.TrimSpace(req.Minecraft)
 	b.Loader = strings.TrimSpace(req.Loader)
