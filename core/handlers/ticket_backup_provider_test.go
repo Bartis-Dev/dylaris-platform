@@ -179,7 +179,7 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 
 	// 1) Create.
 	createRW := httptest.NewRecorder()
-	h.CreateBackup(createRW, httptest.NewRequest(http.MethodPost, "/api/admin/tickets/backup", nil))
+	h.CreateBackup(createRW, adminReq(httptest.NewRequest(http.MethodPost, "/api/admin/tickets/backup", nil)))
 	if createRW.Code != http.StatusOK {
 		t.Fatalf("CreateBackup status = %d, want 200 (%s)", createRW.Code, createRW.Body.String())
 	}
@@ -208,7 +208,7 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 
 	// 2) List.
 	listRW := httptest.NewRecorder()
-	h.ListBackups(listRW, httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil))
+	h.ListBackups(listRW, adminReq(httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil)))
 	if listRW.Code != http.StatusOK {
 		t.Fatalf("ListBackups status = %d, want 200 (%s)", listRW.Code, listRW.Body.String())
 	}
@@ -226,7 +226,7 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 	// 3) Download - the path backend returns ("", nil) from DownloadURL, so
 	// this must stream, not redirect, and the streamed bytes must equal what
 	// was written to disk.
-	dlReq := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/"+name+"/download", nil)
+	dlReq := adminReq(httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/"+name+"/download", nil))
 	dlReq = mux.SetURLVars(dlReq, map[string]string{"name": name})
 	dlRW := httptest.NewRecorder()
 	h.DownloadBackup(dlRW, dlReq)
@@ -239,7 +239,7 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 
 	// 4) InitRestore.
 	initBody, _ := json.Marshal(restoreInitRequest{Name: name})
-	initReq := httptest.NewRequest(http.MethodPost, "/api/admin/tickets/restore/init", bytes.NewReader(initBody))
+	initReq := adminReq(httptest.NewRequest(http.MethodPost, "/api/admin/tickets/restore/init", bytes.NewReader(initBody)))
 	initReq = initReq.WithContext(context.WithValue(initReq.Context(), "userID", user.ID))
 	initRW := httptest.NewRecorder()
 	h.InitRestore(initRW, initReq)
@@ -286,7 +286,7 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 		TOTPCode:           code,
 		ConfirmationPhrase: initResp.ConfirmationPhrase,
 	})
-	execReq := httptest.NewRequest(http.MethodPost, "/api/admin/tickets/restore/execute", bytes.NewReader(execBody))
+	execReq := adminReq(httptest.NewRequest(http.MethodPost, "/api/admin/tickets/restore/execute", bytes.NewReader(execBody)))
 	execReq = execReq.WithContext(context.WithValue(execReq.Context(), "userID", user.ID))
 	execRW := httptest.NewRecorder()
 	h.ExecuteRestore(execRW, execReq)
@@ -326,7 +326,7 @@ func TestListBackups_OrderingIsChronological(t *testing.T) {
 	}
 
 	rw := httptest.NewRecorder()
-	h.ListBackups(rw, httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil))
+	h.ListBackups(rw, adminReq(httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil)))
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
@@ -395,7 +395,7 @@ func TestListBackups_ProviderErrorSurfaces(t *testing.T) {
 	h := newTicketBackupS3FailFastHandler(t)
 
 	rw := httptest.NewRecorder()
-	h.ListBackups(rw, httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil))
+	h.ListBackups(rw, adminReq(httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups", nil)))
 	if rw.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (%s)", rw.Code, rw.Body.String())
 	}
@@ -425,7 +425,7 @@ func TestDownloadBackup_RedirectsWhenProviderSignsURL(t *testing.T) {
 	}}
 	h := &TicketMigrationHandler{state: &AppState{Store: fs}, tokens: make(map[string]*restoreToken)}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-x.json/download", nil)
+	req := adminReq(httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-x.json/download", nil))
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
 	rw := httptest.NewRecorder()
 	h.DownloadBackup(rw, req)
@@ -467,7 +467,7 @@ func TestDownloadBackup_StreamsWhenProviderDoesNotSignURL(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-x.json/download", nil)
+	req := adminReq(httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-x.json/download", nil))
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
 	rw := httptest.NewRecorder()
 	h.DownloadBackup(rw, req)
@@ -491,7 +491,7 @@ func TestDownloadBackup_StreamsWhenProviderDoesNotSignURL(t *testing.T) {
 func TestDownloadBackup_NotFoundWhenMissing(t *testing.T) {
 	h, _ := newTicketBackupHandler(t, &ticketBackupFakeStore{})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-missing.json/download", nil)
+	req := adminReq(httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-missing.json/download", nil))
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-missing.json"})
 	rw := httptest.NewRecorder()
 	h.DownloadBackup(rw, req)
@@ -513,7 +513,7 @@ func TestDeleteBackup_Success(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/admin/tickets/backups/tickets-x.json", nil)
+	req := adminReq(httptest.NewRequest(http.MethodDelete, "/api/admin/tickets/backups/tickets-x.json", nil))
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
 	rw := httptest.NewRecorder()
 	h.DeleteBackup(rw, req)
@@ -539,7 +539,7 @@ func TestDeleteBackup_ProviderErrorSurfaces(t *testing.T) {
 	disableAWSRetries(t)
 	h := newTicketBackupS3FailFastHandler(t)
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/admin/tickets/backups/tickets-x.json", nil)
+	req := adminReq(httptest.NewRequest(http.MethodDelete, "/api/admin/tickets/backups/tickets-x.json", nil))
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
 	rw := httptest.NewRecorder()
 	h.DeleteBackup(rw, req)
@@ -559,7 +559,7 @@ func TestInitRestore_NotFoundWhenProviderMisses(t *testing.T) {
 	h, _ := newTicketBackupHandler(t, fs)
 
 	body, _ := json.Marshal(restoreInitRequest{Name: "tickets-missing.json"})
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/tickets/restore/init", bytes.NewReader(body))
+	req := adminReq(httptest.NewRequest(http.MethodPost, "/api/admin/tickets/restore/init", bytes.NewReader(body)))
 	req = req.WithContext(context.WithValue(req.Context(), "userID", "admin-1"))
 	rw := httptest.NewRecorder()
 	h.InitRestore(rw, req)
@@ -570,4 +570,11 @@ func TestInitRestore_NotFoundWhenProviderMisses(t *testing.T) {
 	if len(h.tokens) != 0 {
 		t.Fatalf("a restore token was issued for a nonexistent backup: %d tokens", len(h.tokens))
 	}
+}
+
+// adminReq stamps the admin flag every handler in ticket_migration.go now
+// requires. The boundary itself is asserted in ticket_migration_admin_test.go;
+// these tests are about what the handlers DO once a caller is past it.
+func adminReq(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), "isAdmin", true))
 }

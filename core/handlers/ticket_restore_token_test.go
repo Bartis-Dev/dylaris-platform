@@ -69,6 +69,7 @@ func executeRestore(t *testing.T, h *TicketMigrationHandler, token, phrase, code
 	body, _ := json.Marshal(restoreExecuteRequest{Token: token, TOTPCode: code, ConfirmationPhrase: phrase})
 	r := httptest.NewRequest(http.MethodPost, "/api/admin/tickets/restore/execute", bytes.NewReader(body))
 	r = r.WithContext(context.WithValue(r.Context(), "userID", restoreTestUser))
+	r = adminReq(r)
 	w := httptest.NewRecorder()
 	h.ExecuteRestore(w, r)
 	return w

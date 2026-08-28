@@ -5,6 +5,10 @@ import (
 	"net/http"
 	"strconv"
 
+	"dylaris-core/authz"
+	"dylaris-core/models"
+	"dylaris-core/store"
+
 	"github.com/gorilla/mux"
 )
 
@@ -16,15 +20,36 @@ func NewMemberHandler(state *AppState) *MemberHandler {
 	return &MemberHandler{state: state}
 }
 
-// capPermissions ensures the given permissions don't exceed the inviter's own permissions.
-// Owner/admin skip capping. Returns capped permissions map.
+// capPermissions caps a requested permission set to what the CALLER may
+// delegate onward. Owner and admin are uncapped; everyone else may grant a key
+// only if they themselves hold every capability that key confers.
+//
+// It used to read the server_invites row for (serverID, callerID) and cap
+// against that row's legacy booleans. Two things went wrong with that:
+//
+//   - An ACCOUNT-WIDE grantee has no such row by construction (their grant is
+//     the row with server_id IS NULL), so the lookup returned sql.ErrNoRows and
+//     the function returned the requested permissions UNCAPPED. They passed
+//     RequireCap("members.write") because the resolver folds account-wide
+//     grants in - and then delegated the full set on any server in that owner's
+//     realm, whatever their own grant allowed. CreateInvite runs the map
+//     through store.MapLegacyInviteCaps, so those keys become real capability
+//     grants, not a display field.
+//   - Every error path returned the permissions uncapped as well, so a database
+//     blip widened a delegation instead of refusing it.
+//
+// Asking the resolver fixes both at once and covers every grant source there
+// is - per-server row, proxy-inherited, account-wide, server role - rather than
+// the one table this happened to read. Same lesson as the SFTP grant lookup:
+// the resolver is the authority, a grant table is not.
 func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[string]bool) map[string]bool {
-	isAdmin := r.Context().Value("isAdmin").(bool)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
+	username, _ := r.Context().Value("username").(string)
 
 	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
-		return perms
+	if err != nil || srv == nil {
+		return denyAllPermissions(perms)
 	}
 	// Owner short-circuit keyed on the immutable owner UUID, never the mutable
 	// username (a rename frees the old name, which a squatter could reclaim),
@@ -32,36 +57,80 @@ func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[
 	// already gated by RequireCap("members.write"); this only caps HOW MUCH an
 	// invited non-owner may delegate onward.
 	if isAdmin || srv.OwnerID == userID {
-		return perms // no cap for owner/admin
-	}
-
-	invite, err := h.state.Store.GetInvite(serverID, userID)
-	if err != nil {
 		return perms
 	}
-
-	// An invited user can only grant permissions they themselves hold.
-	inviterPerms := map[string]bool{
-		"console":  invite.Permissions.Console,
-		"files":    invite.Permissions.Files,
-		"config":   invite.Permissions.Config,
-		"setup":    invite.Permissions.Setup,
-		"power":    invite.Permissions.Power,
-		"members":  invite.Permissions.Members,
-		"overview": invite.Permissions.Overview,
-		"network":  invite.Permissions.Network,
-		"inherit":  invite.Permissions.Inherit,
+	if h.state.Authz == nil {
+		return denyAllPermissions(perms)
+	}
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	if rerr != nil {
+		return denyAllPermissions(perms)
 	}
 
-	capped := make(map[string]bool)
+	capped := make(map[string]bool, len(perms))
 	for k, v := range perms {
-		if inviterMax, exists := inviterPerms[k]; exists {
-			capped[k] = v && inviterMax
-		} else {
-			capped[k] = v
-		}
+		capped[k] = v && callerMayDelegate(res, k)
 	}
 	return capped
+}
+
+// denyAllPermissions keeps every requested key present but false. Dropping the
+// keys instead would let a caller's map decide what CreateInvite writes; an
+// explicit false is the same shape with none of the permission.
+func denyAllPermissions(perms map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(perms))
+	for k := range perms {
+		out[k] = false
+	}
+	return out
+}
+
+// callerMayDelegate reports whether the caller holds everything one legacy
+// invite key confers.
+//
+// The key's meaning comes from store.MapLegacyInviteCaps - the very function
+// CreateInvite uses to turn these booleans into capability grants - so the two
+// sides cannot drift apart about what "files" or "power" means.
+//
+// "inherit" is capped to false for anyone but the owner and an admin. It is not
+// in that mapping because it confers no capability of its own: it makes a grant
+// flow down to child servers, which widens the blast radius across the server
+// TREE rather than within one server. That is the owner's call about their own
+// topology, not something a delegated inviter should hand on. (The previous
+// code let a member with inherit pass it along; this narrows that.)
+func callerMayDelegate(res *authz.Resolution, key string) bool {
+	if key == "inherit" {
+		return false
+	}
+	var tp models.TabPermissions
+	switch key {
+	case "console":
+		tp.Console = true
+	case "files":
+		tp.Files = true
+	case "config":
+		tp.Config = true
+	case "setup":
+		tp.Setup = true
+	case "power":
+		tp.Power = true
+	case "members":
+		tp.Members = true
+	case "overview":
+		tp.Overview = true
+	case "network":
+		tp.Network = true
+	default:
+		// An unrecognised key confers nothing: MapLegacyInviteCaps ignores it,
+		// so it cannot grant capabilities however it is stored.
+		return true
+	}
+	for _, c := range store.MapLegacyInviteCaps(tp) {
+		if !res.HasCap(c) {
+			return false
+		}
+	}
+	return true
 }
 
 // GetMembers GET /api/servers/{id}/members - the member invites on one server.
