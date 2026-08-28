@@ -25,42 +25,60 @@ const (
 	BillingR2RetentionKey   = "billing.r2_retention"
 	BillingNodeRetentionKey = "billing.node_retention"
 	BillingPaymentURLKey    = "billing.payment_url"
-	BillingR2QuotaKey       = "billing.r2_quota_gb" // platform default, 0 = unlimited
+	BillingR2QuotaKey       = "billing.r2_quota_gb" // platform default; empty = no cap, 0 = none
 
 	DefaultGracePeriod   = "3d"
 	DefaultR2Retention   = "3m"
 	DefaultNodeRetention = "2w"
 )
 
-// R2QuotaExceeded reports whether a tenant is at or over their R2 backup quota.
-// Quota resolution (first that is set wins): per-user override
-// (user_billing.r2_quota_gb), else the platform setting (billing.r2_quota_gb),
-// else 0 = unlimited. A 0/unset quota never blocks (so solo/hoster and unmetered
-// tenants are unaffected).
+// r2QuotaGB resolves a tenant's R2 backup quota in GB. nil means NO CAP.
 //
-// The plan step between those two is gone along with plans themselves.
+// Resolution walks per-user override -> platform setting -> no cap, and each
+// step ANSWERS if it is set at all. That is the platform limit convention
+// (services.Limits): absent is the only thing that defers, and 0 is a real cap
+// of none like any other number.
+//
+// It used to collapse both into one int with 0 standing for unlimited, which
+// inverted the meaning of every zero an admin typed: the panel's limit control
+// says 0 is "none", and this read it as "no limit at all". Measured before the
+// fix - a per-user quota of 0 returned exceeded=false and blocked nothing.
+func r2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
+	if b != nil && b.R2QuotaGB != nil {
+		return b.R2QuotaGB
+	}
+	if v, _ := st.GetSetting(BillingR2QuotaKey); v != "" {
+		if n, perr := strconv.ParseInt(v, 10, 64); perr == nil {
+			if n < 0 {
+				return nil // a stored negative is legacy "unlimited"; honour it as no cap
+			}
+			return &n
+		}
+	}
+	return nil
+}
+
+// R2QuotaExceeded reports whether a tenant may store one more byte of R2 backup.
+// It is a CREATE gate, so it answers at-or-over: sitting exactly on the quota
+// means the next backup does not fit.
+//
+// quotaBytes is 0 when there is no cap, and both callers only read the numbers
+// on the exceeded path, so that overload never reaches a message.
+//
+// The plan step between the two scopes is gone along with plans themselves.
 func R2QuotaExceeded(st store.Store, ownerID string) (exceeded bool, usedBytes, quotaBytes int64) {
+	// A nil billing row is legal on this interface (the Postgres store
+	// substitutes a default one, but a caller's store need not), so it is
+	// guarded here rather than assumed away.
 	b, err := st.GetUserBilling(ownerID)
 	if err != nil {
 		return false, 0, 0
 	}
-	quotaGB := int64(-1)
-	// 1. per-user override.
-	if b.R2QuotaGB != nil {
-		quotaGB = *b.R2QuotaGB
+	quota := r2QuotaGB(st, b)
+	if quota == nil {
+		return false, 0, 0
 	}
-	// 2. the platform setting.
-	if quotaGB < 0 {
-		if v, _ := st.GetSetting(BillingR2QuotaKey); v != "" {
-			if n, perr := strconv.ParseInt(v, 10, 64); perr == nil {
-				quotaGB = n
-			}
-		}
-	}
-	if quotaGB <= 0 {
-		return false, 0, 0 // unlimited / unset
-	}
-	quotaBytes = quotaGB * 1024 * 1024 * 1024
+	quotaBytes = *quota * 1024 * 1024 * 1024
 	used, err := st.BackupBytesByOwner(ownerID)
 	if err != nil {
 		return false, 0, quotaBytes

@@ -18,8 +18,14 @@ type UserBilling struct {
 	GracePeriod   string     `json:"gracePeriod,omitempty"`
 	R2Retention   string     `json:"r2Retention,omitempty"`
 	NodeRetention string     `json:"nodeRetention,omitempty"`
-	R2QuotaGB     *int64     `json:"r2QuotaGb,omitempty"` // per-user override; nil = use the plan value
-	// Per-user LIMIT overrides (nil = use the plan value). 0 = unlimited.
+	R2QuotaGB     *int64     `json:"r2QuotaGb,omitempty"`
+	// Per-user LIMIT overrides, on the platform limit convention: nil = no cap,
+	// 0 = none, n = the cap. See services.Limits.
+	//
+	// These used to read "nil = use the plan value, 0 = unlimited". BOTH halves
+	// are now wrong - plans are gone, and a stored 0 is a real cap of none. The
+	// comment outlived the code it described, which is how a reader ends up
+	// writing the old semantics back in.
 	MaxNodes          *int64 `json:"maxNodes,omitempty"`
 	MaxLinks          *int64 `json:"maxLinks,omitempty"`
 	TrafficEdgeGB     *int64 `json:"trafficEdgeGb,omitempty"`

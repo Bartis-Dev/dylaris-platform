@@ -439,7 +439,8 @@ export interface BackupStorage {
 // credentials still live in the BackupStorage rows above.
 export interface BackupConfig {
     mode: 'shared' | 's3' | 'node-local';
-    quotaPerServerGb: number;        // 0 = unlimited
+    // null = no cap, 0 = none (node-local backups not allowed), n = the cap.
+    quotaPerServerGb: number | null;
     shareQuotaWithServer: boolean;
 }
 
@@ -683,7 +684,8 @@ export const getDiskUsage = (id: number) => fetchAPI(`/servers/${id}/stats/disk`
 
 // --- SERVER SETTINGS ---
 export interface ServerLimitSettings {
-    maxSubServers: number;
+    // null = no cap, 0 = none may be created, n = the cap.
+    maxSubServers: number | null;
 }
 export const getServerSettings = () => fetchAPI('/settings/servers');
 export const saveServerSettings = (data: ServerLimitSettings) => fetchAPI('/settings/servers', { method: 'POST', body: JSON.stringify(data) });

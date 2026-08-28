@@ -38,7 +38,7 @@ func (h *PlansHandler) SetUserLimitOverrides(w http.ResponseWriter, r *http.Requ
 	}
 	for _, v := range []*int64{req.MaxNodes, req.MaxLinks, req.TrafficEdgeGb, req.TrafficRelayGb, req.TrafficCombinedGb} {
 		if v != nil && *v < 0 {
-			sendJSONError(w, "Limit overrides must be >= 0 (0 = unlimited)", http.StatusBadRequest)
+			sendJSONError(w, "Limit overrides must be >= 0 (0 means none; omit the field for no limit)", http.StatusBadRequest)
 			return
 		}
 	}

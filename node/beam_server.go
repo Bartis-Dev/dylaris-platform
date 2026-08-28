@@ -640,10 +640,10 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("disk limit reached: %d of %d bytes used", total, limit)}, nil
 	}
 	if ok, capBytes := quota.CheckSizeCap(ctx, s.rdb, size); !ok {
-		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("file of %d bytes exceeds the %d byte per-upload limit", size, capBytes)}, nil
+		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("file of %d bytes exceeds the %d byte per-upload limit", size, *capBytes)}, nil
 	}
 	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, size); !ok {
-		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, limit)}, nil
+		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, *limit)}, nil
 	}
 
 	if err := os.WriteFile(filePath, []byte(req.Content), 0644); err != nil {
@@ -1091,7 +1091,7 @@ func beamUploadExceedsDisk(total, limit, incoming int64) bool {
 func (s *beamServer) checkBeamUploadSizeCap(ctx context.Context, incoming int64) error {
 	if ok, capBytes := quota.CheckSizeCap(ctx, s.rdb, incoming); !ok {
 		return status.Errorf(codes.ResourceExhausted,
-			"upload of %d bytes exceeds the %d byte per-upload limit", incoming, capBytes)
+			"upload of %d bytes exceeds the %d byte per-upload limit", incoming, *capBytes)
 	}
 	return nil
 }
@@ -1101,7 +1101,7 @@ func (s *beamServer) checkBeamUploadSizeCap(ctx context.Context, incoming int64)
 func (s *beamServer) checkBeamDailyQuota(ctx context.Context, username string, incoming int64) error {
 	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, incoming); !ok {
 		return status.Errorf(codes.ResourceExhausted,
-			"daily upload quota reached: %d of %d bytes used today, upload is %d bytes", used, limit, incoming)
+			"daily upload quota reached: %d of %d bytes used today, upload is %d bytes", used, *limit, incoming)
 	}
 	return nil
 }

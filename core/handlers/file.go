@@ -930,13 +930,13 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		quotaUploadSize += fh.Size
 		if quota.ExceedsSizeCap(fh.Size, sizeCap) {
 			sendJSONError(w, fmt.Sprintf("Upload of %s exceeds the %s per-file limit",
-				formatBytesHuman(fh.Size), formatBytesHuman(sizeCap)), http.StatusRequestEntityTooLarge)
+				formatBytesHuman(fh.Size), formatBytesHuman(*sizeCap)), http.StatusRequestEntityTooLarge)
 			return
 		}
 	}
 	if ok, used, limit := quota.CheckDailyQuota(r.Context(), h.state.Redis, username, quotaUploadSize); !ok {
 		sendJSONError(w, fmt.Sprintf("Daily upload quota reached — %s of %s used today, upload is %s",
-			formatBytesHuman(used), formatBytesHuman(limit), formatBytesHuman(quotaUploadSize)),
+			formatBytesHuman(used), formatBytesHuman(*limit), formatBytesHuman(quotaUploadSize)),
 			http.StatusRequestEntityTooLarge)
 		return
 	}

@@ -10,6 +10,7 @@ import { SwitchRow } from '@/components/ui/Switch';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import HelpTip from '@/components/ui/HelpTip';
+import { LimitField } from '@/components/settings/LimitField';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -55,11 +56,12 @@ interface BeamSettings {
     refUpExternal?: number;
     refDownExternal?: number;
 
-    // Upload limits (bytes, 0 = unlimited), enforced on the beam upload path.
-    // maxUploadBytes is an absolute per-upload cap; dailyUploadBytes is a
+    // Upload limits (bytes), enforced on the beam upload path, on the platform
+    // limit convention: null = no cap, 0 = none (uploads not allowed), n = the
+    // cap. maxUploadBytes is an absolute per-upload cap; dailyUploadBytes is a
     // per-user daily total.
-    maxUploadBytes?: number;
-    dailyUploadBytes?: number;
+    maxUploadBytes?: number | null;
+    dailyUploadBytes?: number | null;
 }
 
 function authHeader(): Record<string, string> {
@@ -86,8 +88,10 @@ async function getBeamSettings(): Promise<BeamSettings | null> {
             refDownInternal: s.refDownInternal ?? 0,
             refUpExternal: s.refUpExternal ?? 0,
             refDownExternal: s.refDownExternal ?? 0,
-            maxUploadBytes: s.maxUploadBytes ?? 0,
-            dailyUploadBytes: s.dailyUploadBytes ?? 0,
+            // ?? null, not ?? 0: an absent limit is NO cap, and defaulting it to
+            // 0 would render as "uploads are not allowed".
+            maxUploadBytes: s.maxUploadBytes ?? null,
+            dailyUploadBytes: s.dailyUploadBytes ?? null,
         };
     } catch {
         return null;
@@ -242,8 +246,10 @@ export default function BeamTab() {
     type RefKey = 'refUpInternal' | 'refDownInternal' | 'refUpExternal' | 'refDownExternal';
     const setBwField = (k: BwKey, mbit: number) => form.patch({ [k]: mbitToBps(mbit) } as Partial<BeamSettings>);
     const setRefField = (k: RefKey, mbit: number) => form.patch({ [k]: mbitToBps(mbit) } as Partial<BeamSettings>);
-    const setUploadLimit = (k: 'maxUploadBytes' | 'dailyUploadBytes', gib: number) =>
-        form.patch({ [k]: giBToBytes(gib) } as Partial<BeamSettings>);
+    const setUploadLimit = (k: 'maxUploadBytes' | 'dailyUploadBytes', gib: number | null) =>
+        form.patch({ [k]: gib === null ? null : giBToBytes(gib) } as Partial<BeamSettings>);
+    const uploadLimitGiB = (v: number | null | undefined) =>
+        v === null || v === undefined ? null : bytesToGiB(v);
 
     if (form.loading) return (
         <div className="space-y-6">
@@ -510,30 +516,32 @@ export default function BeamTab() {
                     </h3>
                     <p className="text-xs text-(--base-06)">
                         Caps on files pushed to a node over Beam, SFTP and the file manager.
-                        Values in <span className="font-mono">GiB</span> — <strong>0 = unlimited</strong>.
+                        Values in <span className="font-mono">GiB</span>. Switch to
+                        <strong> No limit</strong> to leave an axis uncapped, or set
+                        <strong> 0</strong> to refuse uploads on it entirely.
                         Downloads are not counted.
                     </p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Max per upload</label>
-                        <input
-                            type="number" min={0} step={0.1}
-                            value={bytesToGiB(settings.maxUploadBytes) || ''}
-                            onChange={e => setUploadLimit('maxUploadBytes', parseFloat(e.target.value) || 0)}
-                            placeholder="0"
-                            className="input-field input-mono"
+                        <label className="input-label" htmlFor="beam-max-upload">Max per upload</label>
+                        <LimitField
+                            id="beam-max-upload"
+                            value={uploadLimitGiB(settings.maxUploadBytes)}
+                            onChange={v => setUploadLimit('maxUploadBytes', v)}
+                            unit="GiB"
+                            step={0.1}
                         />
                         <p className="text-xs text-(--base-06)">Refuses any single file larger than this, before the transfer starts.</p>
                     </div>
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Daily per user</label>
-                        <input
-                            type="number" min={0} step={0.1}
-                            value={bytesToGiB(settings.dailyUploadBytes) || ''}
-                            onChange={e => setUploadLimit('dailyUploadBytes', parseFloat(e.target.value) || 0)}
-                            placeholder="0"
-                            className="input-field input-mono"
+                        <label className="input-label" htmlFor="beam-daily-upload">Daily per user</label>
+                        <LimitField
+                            id="beam-daily-upload"
+                            value={uploadLimitGiB(settings.dailyUploadBytes)}
+                            onChange={v => setUploadLimit('dailyUploadBytes', v)}
+                            unit="GiB"
+                            step={0.1}
                         />
                         <p className="text-xs text-(--base-06)">Running total per account, reset at midnight UTC.</p>
                     </div>

@@ -121,7 +121,12 @@ func (f *billingFakeStore) GetUserByID(string) (*models.User, error) {
 
 func timePtr(t time.Time) *time.Time { return &t }
 
-// --- R2QuotaExceeded: quota resolution priority (per-user > plan > platform setting > unlimited) ---
+// --- R2QuotaExceeded: quota resolution (per-user > platform setting > no cap) ---
+//
+// These follow the platform limit convention: absent is the only thing that
+// defers to the next scope, and 0 is a real cap of none. This table used to
+// assert the opposite for a stored zero, which is how the defect survived - the
+// test named the bug and then guarded it.
 
 func TestR2QuotaExceeded(t *testing.T) {
 	const GB = int64(1024 * 1024 * 1024)
@@ -154,12 +159,52 @@ func TestR2QuotaExceeded(t *testing.T) {
 			wantQuotaGB:  10,
 		},
 		{
-			name: "per-user override explicit 0 means unlimited",
+			// The inversion this fixes. An admin who types 0 into the panel's
+			// limit control is saying "none"; this read it as "no limit at all",
+			// so the one number meaning none was the number that switched the
+			// check off. Fourth instance of that shape in this codebase.
+			name: "per-user override explicit 0 is a cap of NONE, not unlimited",
 			store: &billingFakeStore{
 				billing:     &store.UserBilling{R2QuotaGB: ptr(0)},
 				backupBytes: 999 * GB,
 			},
-			wantExceeded: false,
+			wantExceeded: true,
+			wantUsed:     999 * GB,
+			wantQuotaGB:  0,
+		},
+		{
+			// ...and a cap of none with nothing stored still blocks the first
+			// byte, which is what a create gate has to answer.
+			name: "a cap of none blocks the first backup",
+			store: &billingFakeStore{
+				billing: &store.UserBilling{R2QuotaGB: ptr(0)},
+			},
+			wantExceeded: true,
+			wantQuotaGB:  0,
+		},
+		{
+			// The platform setting answers the same way: it is set, so it decides.
+			name: "platform setting of 0 is a cap of none",
+			store: &billingFakeStore{
+				billing:     &store.UserBilling{},
+				settings:    map[string]string{BillingR2QuotaKey: "0"},
+				backupBytes: 1 * GB,
+			},
+			wantExceeded: true,
+			wantUsed:     1 * GB,
+			wantQuotaGB:  0,
+		},
+		{
+			// An override of 0 still wins over a permissive platform setting.
+			// If it deferred, "none for this one tenant" would be unsayable.
+			name: "an override of 0 beats a platform setting that allows more",
+			store: &billingFakeStore{
+				billing:     &store.UserBilling{R2QuotaGB: ptr(0)},
+				settings:    map[string]string{BillingR2QuotaKey: "100"},
+				backupBytes: 1 * GB,
+			},
+			wantExceeded: true,
+			wantUsed:     1 * GB,
 			wantQuotaGB:  0,
 		},
 		{
@@ -176,7 +221,7 @@ func TestR2QuotaExceeded(t *testing.T) {
 			wantQuotaGB:  1,
 		},
 		{
-			name: "nothing set anywhere means unlimited",
+			name: "nothing set anywhere means no cap",
 			store: &billingFakeStore{
 				billing:     &store.UserBilling{},
 				backupBytes: 999 * GB,

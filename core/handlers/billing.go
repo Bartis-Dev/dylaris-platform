@@ -187,7 +187,7 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		req.R2QuotaGb = "0"
 	}
 	if n, err := strconv.ParseInt(req.R2QuotaGb, 10, 64); err != nil || n < 0 {
-		sendJSONError(w, "R2 quota must be a non-negative number of GB (0 = unlimited)", http.StatusBadRequest)
+		sendJSONError(w, "R2 quota must be a non-negative number of GB (0 means none; leave it empty for no limit)", http.StatusBadRequest)
 		return
 	}
 	for _, ttl := range []string{req.PresignTtlNodeMin, req.PresignTtlByonMin} {
@@ -252,7 +252,7 @@ func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if req.R2QuotaGb != nil && *req.R2QuotaGb < 0 {
-		sendJSONError(w, "R2 quota must be a non-negative number of GB (0 = unlimited)", http.StatusBadRequest)
+		sendJSONError(w, "R2 quota must be a non-negative number of GB (0 means none; leave it empty for no limit)", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetUserBillingOverrides(userID, req.GracePeriod, req.R2Retention, req.NodeRetention, req.R2QuotaGb); err != nil {

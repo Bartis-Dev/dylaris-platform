@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"dylaris-core/services"
 )
 
 // TicketSettings mirrors the tickets.* keys. Defaults are chosen so a
@@ -21,10 +23,17 @@ type TicketSettings struct {
 	AllowUsersToAddWatchers bool `json:"allowUsersToAddWatchers"`
 	AuditRetentionDays      int  `json:"auditRetentionDays"`
 
-	// Attachment quotas (megabytes). 0 = unlimited.
-	MaxFileSizeMB   int `json:"maxFileSizeMb"`
-	MaxTicketSizeMB int `json:"maxTicketSizeMb"`
-	MaxUserSizeMB   int `json:"maxUserSizeMb"`
+	// Attachment quotas (megabytes), on the platform limit convention: nil is no
+	// cap, 0 is a real "none" (attachments not allowed), n is the cap. They used
+	// to be ints documented as "0 = unlimited", and every enforcement site
+	// guarded on `> 0`, so an admin who set 0 to forbid attachments switched the
+	// check off instead.
+	//
+	// The per-file limit still meets a hard body cap regardless; see
+	// ticketUploadBodyLimit.
+	MaxFileSizeMB   *int64 `json:"maxFileSizeMb"`
+	MaxTicketSizeMB *int64 `json:"maxTicketSizeMb"`
+	MaxUserSizeMB   *int64 `json:"maxUserSizeMb"`
 
 	// Auto-close. When enabled, resolved tickets get closed by
 	// the background job after AutoCloseDaysAfterResolved days of no activity.
@@ -43,9 +52,9 @@ var defaultTicketSettings = TicketSettings{
 	WatchersDefaultCanReply:    false,
 	AllowUsersToAddWatchers:    true,
 	AuditRetentionDays:         0,
-	MaxFileSizeMB:              10,
-	MaxTicketSizeMB:            50,
-	MaxUserSizeMB:              500,
+	MaxFileSizeMB:              services.LimitPtr(10),
+	MaxTicketSizeMB:            services.LimitPtr(50),
+	MaxUserSizeMB:              services.LimitPtr(500),
 	AutoCloseEnabled:           false,
 	AutoCloseDaysAfterResolved: 7,
 	DeletionEnabled:            false,
@@ -68,22 +77,19 @@ func LoadTicketSettings(state *AppState) TicketSettings {
 			s.AuditRetentionDays = n
 		}
 	}
-	if v, _ := state.Store.GetSetting("tickets.max_file_size_mb"); v != "" {
-		var n int
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 && n <= 1024 {
-			s.MaxFileSizeMB = n
+	if v, err := state.Store.GetSetting("tickets.max_file_size_mb"); err == nil {
+		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxFileSizeMB); q == nil || *q <= 1024 {
+			s.MaxFileSizeMB = q
 		}
 	}
-	if v, _ := state.Store.GetSetting("tickets.max_ticket_size_mb"); v != "" {
-		var n int
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 && n <= 10240 {
-			s.MaxTicketSizeMB = n
+	if v, err := state.Store.GetSetting("tickets.max_ticket_size_mb"); err == nil {
+		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxTicketSizeMB); q == nil || *q <= 10240 {
+			s.MaxTicketSizeMB = q
 		}
 	}
-	if v, _ := state.Store.GetSetting("tickets.max_user_size_mb"); v != "" {
-		var n int
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 && n <= 102400 {
-			s.MaxUserSizeMB = n
+	if v, err := state.Store.GetSetting("tickets.max_user_size_mb"); err == nil {
+		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxUserSizeMB); q == nil || *q <= 102400 {
+			s.MaxUserSizeMB = q
 		}
 	}
 	if v, _ := state.Store.GetSetting("tickets.auto_close_enabled"); v != "" {
@@ -130,14 +136,12 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 	if s.AuditRetentionDays > 3650 {
 		s.AuditRetentionDays = 3650
 	}
-	if s.MaxFileSizeMB < 0 {
-		s.MaxFileSizeMB = 0
-	}
-	if s.MaxTicketSizeMB < 0 {
-		s.MaxTicketSizeMB = 0
-	}
-	if s.MaxUserSizeMB < 0 {
-		s.MaxUserSizeMB = 0
+	// A negative quota is clamped to 0, which now means "no attachments" rather
+	// than the old "unlimited". nil is left alone: it IS the no-cap answer.
+	for _, q := range []**int64{&s.MaxFileSizeMB, &s.MaxTicketSizeMB, &s.MaxUserSizeMB} {
+		if *q != nil && **q < 0 {
+			*q = services.LimitPtr(0)
+		}
 	}
 	if s.AutoCloseDaysAfterResolved < 1 {
 		s.AutoCloseDaysAfterResolved = 1
@@ -151,9 +155,9 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 		{"tickets.watchers_default_can_reply", fmt.Sprintf("%t", s.WatchersDefaultCanReply)},
 		{"tickets.allow_users_to_add_watchers", fmt.Sprintf("%t", s.AllowUsersToAddWatchers)},
 		{"tickets.audit_retention_days", fmt.Sprintf("%d", s.AuditRetentionDays)},
-		{"tickets.max_file_size_mb", fmt.Sprintf("%d", s.MaxFileSizeMB)},
-		{"tickets.max_ticket_size_mb", fmt.Sprintf("%d", s.MaxTicketSizeMB)},
-		{"tickets.max_user_size_mb", fmt.Sprintf("%d", s.MaxUserSizeMB)},
+		{"tickets.max_file_size_mb", services.FormatLimitSetting(s.MaxFileSizeMB)},
+		{"tickets.max_ticket_size_mb", services.FormatLimitSetting(s.MaxTicketSizeMB)},
+		{"tickets.max_user_size_mb", services.FormatLimitSetting(s.MaxUserSizeMB)},
 		{"tickets.auto_close_enabled", fmt.Sprintf("%t", s.AutoCloseEnabled)},
 		{"tickets.auto_close_days_after_resolved", fmt.Sprintf("%d", s.AutoCloseDaysAfterResolved)},
 		{"tickets.deletion_enabled", fmt.Sprintf("%t", s.DeletionEnabled)},

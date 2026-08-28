@@ -31,7 +31,14 @@ import (
 
 const (
 	// MaxUploadBytesKey / DailyUploadBytesKey are the Redis config keys core
-	// publishes from BeamSettings. Both hold a byte count; 0 or missing = no limit.
+	// publishes from BeamSettings. Each holds a byte count, and the key is
+	// DELETED when the operator wants no limit.
+	//
+	// Missing = no limit, present = that cap INCLUDING 0, which means uploads are
+	// not allowed. Both used to read 0 as "no limit", so the one number an
+	// operator could type to forbid uploads was the number that switched the
+	// check off - the platform limit convention (services.Limits) exists to make
+	// that unrepresentable, and this is its Redis-side half.
 	MaxUploadBytesKey   = "beam:max_upload_bytes"
 	DailyUploadBytesKey = "beam:daily_upload_bytes"
 
@@ -48,36 +55,30 @@ func DailyKey(username string, day time.Time) string {
 }
 
 // ExceedsSizeCap reports whether a single upload of `size` bytes is larger than
-// `capBytes`. A non-positive cap means "no cap".
-func ExceedsSizeCap(size, capBytes int64) bool {
-	if capBytes <= 0 {
-		return false
-	}
-	return size > capBytes
+// `capBytes`. A nil cap means "no cap"; a cap of 0 refuses any non-empty upload.
+func ExceedsSizeCap(size int64, capBytes *int64) bool {
+	return capBytes != nil && size > *capBytes
 }
 
 // ExceedsDaily reports whether adding `incoming` to today's `used` would exceed
-// `limit`. A non-positive limit means "no limit".
-func ExceedsDaily(used, limit, incoming int64) bool {
-	if limit <= 0 {
-		return false
-	}
-	return used+incoming > limit
+// `limit`. A nil limit means "no limit"; a limit of 0 refuses any upload.
+func ExceedsDaily(used int64, limit *int64, incoming int64) bool {
+	return limit != nil && used+incoming > *limit
 }
 
-// MaxUploadCap returns the configured absolute per-upload cap in bytes (0 = no
-// cap). A caller checking many items (e.g. a multi-file HTTP upload) reads it
-// ONCE and applies ExceedsSizeCap per item, instead of a Redis round-trip each.
-// Fail-open: nil rdb, or a missing/unparseable key = 0 (no cap).
-func MaxUploadCap(ctx context.Context, rdb *redis.Client) int64 {
+// MaxUploadCap returns the configured absolute per-upload cap in bytes, or nil
+// for no cap. A caller checking many items (e.g. a multi-file HTTP upload) reads
+// it ONCE and applies ExceedsSizeCap per item, instead of a Redis round-trip
+// each. Fail-open: nil rdb, or a missing/unparseable key, means no cap.
+func MaxUploadCap(ctx context.Context, rdb *redis.Client) *int64 {
 	if rdb == nil {
-		return 0
+		return nil
 	}
 	capBytes, err := rdb.Get(ctx, MaxUploadBytesKey).Int64()
-	if err != nil {
-		return 0
+	if err != nil || capBytes < 0 {
+		return nil
 	}
-	return capBytes
+	return &capBytes
 }
 
 // CheckSizeCap reports whether a single upload of `size` bytes is allowed under
@@ -85,29 +86,29 @@ func MaxUploadCap(ctx context.Context, rdb *redis.Client) int64 {
 // returned capBytes is the configured cap (0 when none) for the caller's error
 // message. For many items in one request, read MaxUploadCap once and use
 // ExceedsSizeCap instead of calling this per item.
-func CheckSizeCap(ctx context.Context, rdb *redis.Client, size int64) (allowed bool, capBytes int64) {
+func CheckSizeCap(ctx context.Context, rdb *redis.Client, size int64) (allowed bool, capBytes *int64) {
 	capBytes = MaxUploadCap(ctx, rdb)
 	return !ExceedsSizeCap(size, capBytes), capBytes
 }
 
 // DailyUsage returns the user's bytes uploaded today and the configured daily
-// limit. Both are 0 when there is no limit (nil rdb, empty username, a missing
-// or unparseable or non-positive limit). A caller that needs a remaining-quota
-// ceiling (e.g. the streaming SFTP path) uses limit-used. Fail-open: a counter
-// read error reports used=0.
-func DailyUsage(ctx context.Context, rdb *redis.Client, username string) (used, limit int64) {
+// limit, which is nil when there is none (nil rdb, empty username, a missing or
+// unparseable key). A caller that needs a remaining-quota ceiling (e.g. the
+// streaming SFTP path) uses limit-used. Fail-open: a counter read error reports
+// used=0.
+func DailyUsage(ctx context.Context, rdb *redis.Client, username string) (used int64, limit *int64) {
 	if rdb == nil || username == "" {
-		return 0, 0
+		return 0, nil
 	}
-	limit, err := rdb.Get(ctx, DailyUploadBytesKey).Int64()
-	if err != nil || limit <= 0 {
-		return 0, 0
+	n, err := rdb.Get(ctx, DailyUploadBytesKey).Int64()
+	if err != nil || n < 0 {
+		return 0, nil
 	}
 	used, err = rdb.Get(ctx, DailyKey(username, time.Now())).Int64()
 	if err != nil {
 		used = 0 // no counter yet today
 	}
-	return used, limit
+	return used, &n
 }
 
 // CheckDailyQuota reports whether adding `incoming` bytes to `username`'s daily
@@ -117,7 +118,7 @@ func DailyUsage(ctx context.Context, rdb *redis.Client, username string) (used, 
 // message. Best-effort: the counter is advisory (bumped on completion via
 // RecordDailyUsage), so this reflects the value at call time and concurrent
 // uploads by the same user are not serialized against the limit.
-func CheckDailyQuota(ctx context.Context, rdb *redis.Client, username string, incoming int64) (allowed bool, used, limit int64) {
+func CheckDailyQuota(ctx context.Context, rdb *redis.Client, username string, incoming int64) (allowed bool, used int64, limit *int64) {
 	used, limit = DailyUsage(ctx, rdb, username)
 	return !ExceedsDaily(used, limit, incoming), used, limit
 }

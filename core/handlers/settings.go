@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"dylaris-core/services"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type SettingsHandler struct {
@@ -669,12 +671,30 @@ func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
 
 // --- Server Settings ---
 
+// SettingMaxSubServers is the settings key. Named so the setter, the loader and
+// the enforcement site in servers_lifecycle.go cannot drift apart by a typo -
+// they used to spell it out three times.
+const SettingMaxSubServers = "srv.max_sub_servers"
+
+// ServerSettings carries the per-server caps an operator types in.
+//
+// MaxSubServers follows the platform limit convention: nil is no cap, 0 is a
+// real "none", n is the cap. It used to be a plain int documented as
+// "0 = unlimited" - and it was neither, because the enforcement site guarded on
+// `n > 0` and silently discarded the zero. Measured before this change: saving
+// 0 produced a cap of THREE, so neither meaning an operator might have intended
+// was reachable and nothing said so.
 type ServerSettings struct {
-	MaxSubServers int `json:"maxSubServers"` // 0 = unlimited
+	MaxSubServers *int64 `json:"maxSubServers"`
 }
 
+// defaultMaxSubServers is the product default, used when the setting has never
+// been saved. Deliberately a cap and not "unlimited": a fresh install should not
+// let one server spawn sub-servers without bound.
+var defaultMaxSubServers = services.LimitPtr(3)
+
 var defaultServerSettings = ServerSettings{
-	MaxSubServers: 3,
+	MaxSubServers: defaultMaxSubServers,
 }
 
 // GetServerSettings GET /api/settings/servers - PANEL settings.read (RequireCap at the route).
@@ -694,7 +714,11 @@ func (h *SettingsHandler) SaveServerSettings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.state.Store.SetSetting("srv.max_sub_servers", fmt.Sprintf("%d", req.MaxSubServers)); err != nil {
+	if req.MaxSubServers != nil && *req.MaxSubServers < 0 {
+		sendJSONError(w, "Sub-server limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.SetSetting(SettingMaxSubServers, services.FormatLimitSetting(req.MaxSubServers)); err != nil {
 		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
@@ -705,15 +729,29 @@ func (h *SettingsHandler) SaveServerSettings(w http.ResponseWriter, r *http.Requ
 // LoadServerSettings reads server settings from the database.
 func (h *SettingsHandler) LoadServerSettings() ServerSettings {
 	settings := defaultServerSettings
-
-	if val, err := h.state.Store.GetSetting("srv.max_sub_servers"); err == nil && val != "" {
-		var n int
-		if _, err := fmt.Sscanf(val, "%d", &n); err == nil && n >= 0 {
-			settings.MaxSubServers = n
-		}
+	val, err := h.state.Store.GetSetting(SettingMaxSubServers)
+	if err != nil {
+		return settings
 	}
-
+	settings.MaxSubServers = services.ParseLimitSetting(val, defaultMaxSubServers)
 	return settings
+}
+
+// publishLimit mirrors an operator-typed cap into the Redis key the node reads.
+//
+// A nil cap DELETES the key rather than writing 0. On the reading side a missing
+// key already meant "no cap", so this keeps "no limit" and "a limit of none"
+// distinguishable end to end without changing the wire format - the value stays
+// a plain number, and neither side has to negotiate anything.
+func publishLimit(ctx context.Context, rdb *redis.Client, key string, v *int64) {
+	if rdb == nil {
+		return
+	}
+	if v == nil {
+		rdb.Del(ctx, key)
+		return
+	}
+	rdb.Set(ctx, key, strconv.FormatInt(*v, 10), 0)
 }
 
 // ─── Beam Settings ───────────────────────────────────────────────────
@@ -769,13 +807,19 @@ type BeamSettings struct {
 	RefUpExternal   int64 `json:"refUpExternal"`
 	RefDownExternal int64 `json:"refDownExternal"`
 
-	// Upload limits (bytes, 0 = unlimited). Enforced by the node on the beam
-	// upload path, which bypasses Core's HTTP body-size cap and disk precheck.
-	// MaxUploadBytes is an absolute per-upload cap; DailyUploadBytes is a
-	// per-user daily total. Published to Redis keys beam:max_upload_bytes /
-	// beam:daily_upload_bytes, which the node reads per upload.
-	MaxUploadBytes   int64 `json:"maxUploadBytes"`
-	DailyUploadBytes int64 `json:"dailyUploadBytes"`
+	// Upload limits (bytes), on the platform limit convention: nil is no cap, 0
+	// is a real "none" (uploads not allowed), n is the cap. Enforced by the node
+	// on the beam upload path, which bypasses Core's HTTP body-size cap and disk
+	// precheck. MaxUploadBytes is an absolute per-upload cap; DailyUploadBytes is
+	// a per-user daily total.
+	//
+	// Published to Redis keys beam:max_upload_bytes / beam:daily_upload_bytes,
+	// which the node reads per upload. No cap DELETES the key rather than writing
+	// 0 - the wire format stays a plain number, and "missing" already meant no
+	// cap on the reading side, so the two states stay distinguishable without a
+	// format change either end has to negotiate.
+	MaxUploadBytes   *int64 `json:"maxUploadBytes"`
+	DailyUploadBytes *int64 `json:"dailyUploadBytes"`
 }
 
 // GetBeamSettings GET /api/settings/beam — all authenticated users (relay address + download link needed in Files tab)
@@ -866,8 +910,8 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		{"beam.ref_down_external", fmt.Sprintf("%d", req.RefDownExternal)},
 
 		// Beam upload limits (bytes, 0 = unlimited), enforced node-side.
-		{"beam.max_upload_bytes", fmt.Sprintf("%d", req.MaxUploadBytes)},
-		{"beam.daily_upload_bytes", fmt.Sprintf("%d", req.DailyUploadBytes)},
+		{"beam.max_upload_bytes", services.FormatLimitSetting(req.MaxUploadBytes)},
+		{"beam.daily_upload_bytes", services.FormatLimitSetting(req.DailyUploadBytes)},
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
@@ -887,8 +931,10 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		h.state.Redis.Set(ctx, "beam:bw_down_internal", fmt.Sprintf("%d", req.BwDownInternal), 0)
 		h.state.Redis.Set(ctx, "beam:bw_up_external", fmt.Sprintf("%d", req.BwUpExternal), 0)
 		h.state.Redis.Set(ctx, "beam:bw_down_external", fmt.Sprintf("%d", req.BwDownExternal), 0)
-		h.state.Redis.Set(ctx, "beam:max_upload_bytes", fmt.Sprintf("%d", req.MaxUploadBytes), 0)
-		h.state.Redis.Set(ctx, "beam:daily_upload_bytes", fmt.Sprintf("%d", req.DailyUploadBytes), 0)
+		// A nil cap DELETES the key. Writing 0 would publish "uploads are not
+		// allowed", which is the opposite of what the operator asked for.
+		publishLimit(ctx, h.state.Redis, "beam:max_upload_bytes", req.MaxUploadBytes)
+		publishLimit(ctx, h.state.Redis, "beam:daily_upload_bytes", req.DailyUploadBytes)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -937,8 +983,8 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 	fmt.Sscanf(getSetting("beam.ref_down_external"), "%d", &settings.RefDownExternal)
 
 	// Beam upload limits (bytes). Default 0 (unlimited) when never set.
-	fmt.Sscanf(getSetting("beam.max_upload_bytes"), "%d", &settings.MaxUploadBytes)
-	fmt.Sscanf(getSetting("beam.daily_upload_bytes"), "%d", &settings.DailyUploadBytes)
+	settings.MaxUploadBytes = services.ParseLimitSetting(getSetting("beam.max_upload_bytes"), nil)
+	settings.DailyUploadBytes = services.ParseLimitSetting(getSetting("beam.daily_upload_bytes"), nil)
 
 	return settings
 }
@@ -974,11 +1020,15 @@ type BackupConfig struct {
 	Mode string `json:"mode"`
 
 	// QuotaPerServerGB is the per-server hard cap on the .dylaris-backups/
-	// folder when Mode == "node-local". 0 means unlimited. The cap is
-	// enforced at the application layer (Core checks current usage before
-	// approving a new backup); filesystem-level enforcement via XFS project
-	// quotas is intentionally out of scope for this round.
-	QuotaPerServerGB int `json:"quotaPerServerGb"`
+	// folder when Mode == "node-local", on the platform limit convention: nil is
+	// no cap, 0 is a real "none" (node-local backups not allowed), n is the cap.
+	// It used to be an int documented as "0 means unlimited", so the one number
+	// meaning none was the number that switched the check off.
+	//
+	// The cap is enforced at the application layer (Core checks current usage
+	// before approving a new backup); filesystem-level enforcement via XFS
+	// project quotas is intentionally out of scope for this round.
+	QuotaPerServerGB *int64 `json:"quotaPerServerGb"`
 
 	// ShareQuotaWithServer folds the backup folder into the same quota
 	// the server's container storage uses, instead of accounting for it
@@ -992,7 +1042,7 @@ type BackupConfig struct {
 // the panel draws a bar against one number and Core refuses against another.
 var defaultBackupConfig = BackupConfig{
 	Mode:                 services.DefaultBackupMode,
-	QuotaPerServerGB:     services.DefaultBackupQuotaPerServer,
+	QuotaPerServerGB:     services.LimitPtr(services.DefaultBackupQuotaPerServer),
 	ShareQuotaWithServer: false,
 }
 
@@ -1025,13 +1075,14 @@ func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Invalid backup mode (expected s3, node-local, shared, or core-storage)", http.StatusBadRequest)
 		return
 	}
-	if req.QuotaPerServerGB < 0 {
-		req.QuotaPerServerGB = 0
+	if req.QuotaPerServerGB != nil && *req.QuotaPerServerGB < 0 {
+		sendJSONError(w, "Backup quota must be 0 or more GB (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		return
 	}
 
 	pairs := []struct{ k, v string }{
 		{"backup.mode", req.Mode},
-		{"backup.quota_per_server_gb", fmt.Sprintf("%d", req.QuotaPerServerGB)},
+		{services.SettingBackupQuotaPerServer, services.FormatLimitSetting(req.QuotaPerServerGB)},
 		{"backup.share_quota_with_server", fmt.Sprintf("%t", req.ShareQuotaWithServer)},
 	}
 	for _, p := range pairs {
@@ -1050,11 +1101,8 @@ func (h *SettingsHandler) LoadBackupConfig() BackupConfig {
 	if v, _ := h.state.Store.GetSetting("backup.mode"); v != "" && validBackupMode(v) {
 		cfg.Mode = v
 	}
-	if v, _ := h.state.Store.GetSetting("backup.quota_per_server_gb"); v != "" {
-		var n int
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 {
-			cfg.QuotaPerServerGB = n
-		}
+	if v, err := h.state.Store.GetSetting(services.SettingBackupQuotaPerServer); err == nil {
+		cfg.QuotaPerServerGB = services.ParseLimitSetting(v, defaultBackupConfig.QuotaPerServerGB)
 	}
 	if v, _ := h.state.Store.GetSetting("backup.share_quota_with_server"); v != "" {
 		cfg.ShareQuotaWithServer = v == "true"

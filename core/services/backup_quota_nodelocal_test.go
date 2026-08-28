@@ -87,8 +87,29 @@ func TestNodeLocalBackupQuota(t *testing.T) {
 			wantExceeded: false,
 		},
 		{
-			name:         "0 is unlimited, as the form says",
+			// A cap of 0 GB means node-local backups are not allowed at all. It
+			// used to read as "unlimited", which made the one number meaning
+			// "none" the number that switched the check off - the same inversion
+			// the platform limit convention exists to remove.
+			name:         "0 is a cap of NONE, so any usage is over",
 			kv:           map[string]string{"backup.mode": "node-local", "backup.quota_per_server_gb": "0"},
+			used:         500 * gb,
+			usageKnown:   true,
+			wantExceeded: true,
+		},
+		{
+			// ...and it blocks the first byte, which is what a create gate asks.
+			name:         "a cap of 0 blocks a server with nothing stored",
+			kv:           map[string]string{"backup.mode": "node-local", "backup.quota_per_server_gb": "0"},
+			used:         0,
+			usageKnown:   true,
+			wantExceeded: true,
+		},
+		{
+			// The operator asking for no cap says so with the word, which is
+			// what the settings form now writes.
+			name:         "the unlimited sentinel means no cap",
+			kv:           map[string]string{"backup.mode": "node-local", "backup.quota_per_server_gb": LimitUnlimited},
 			used:         500 * gb,
 			usageKnown:   true,
 			wantExceeded: false,

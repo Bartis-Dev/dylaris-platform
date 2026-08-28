@@ -17,12 +17,12 @@ func TestSaveBeamSettings_PersistsUploadLimits(t *testing.T) {
 	fs := newCoreStorageHTTPFakeStore()
 	h := &SettingsHandler{state: &AppState{Store: fs}}
 
-	const maxUpload = int64(5) << 30    // 5 GiB
-	const dailyUpload = int64(20) << 30 // 20 GiB
+	maxUpload := int64(5) << 30    // 5 GiB
+	dailyUpload := int64(20) << 30 // 20 GiB
 
 	body, _ := json.Marshal(BeamSettings{
-		MaxUploadBytes:   maxUpload,
-		DailyUploadBytes: dailyUpload,
+		MaxUploadBytes:   &maxUpload,
+		DailyUploadBytes: &dailyUpload,
 	})
 	rw := httptest.NewRecorder()
 	h.SaveBeamSettings(rw, httptest.NewRequest(http.MethodPost, "/api/settings/beam", bytes.NewReader(body)))
@@ -39,18 +39,42 @@ func TestSaveBeamSettings_PersistsUploadLimits(t *testing.T) {
 	}
 
 	loaded := h.LoadBeamSettings()
-	if loaded.MaxUploadBytes != maxUpload {
-		t.Errorf("loaded MaxUploadBytes = %d, want %d", loaded.MaxUploadBytes, maxUpload)
+	if loaded.MaxUploadBytes == nil || *loaded.MaxUploadBytes != maxUpload {
+		t.Errorf("loaded MaxUploadBytes = %v, want %d", loaded.MaxUploadBytes, maxUpload)
 	}
-	if loaded.DailyUploadBytes != dailyUpload {
-		t.Errorf("loaded DailyUploadBytes = %d, want %d", loaded.DailyUploadBytes, dailyUpload)
+	if loaded.DailyUploadBytes == nil || *loaded.DailyUploadBytes != dailyUpload {
+		t.Errorf("loaded DailyUploadBytes = %v, want %d", loaded.DailyUploadBytes, dailyUpload)
 	}
 }
 
-// TestSaveBeamSettings_UploadLimitsDefaultZero pins that an unset limit stays 0
-// (unlimited) through a round-trip, so the feature is inert until an admin sets
-// a value.
-func TestSaveBeamSettings_UploadLimitsDefaultZero(t *testing.T) {
+// A cap of 0 is the operator saying uploads are not allowed. It has to SURVIVE
+// the round-trip as a cap: it used to be indistinguishable from "no limit",
+// which is the inversion the platform limit convention removes.
+func TestSaveBeamSettings_ZeroIsACapOfNone(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	h := &SettingsHandler{state: &AppState{Store: fs}}
+
+	zero := int64(0)
+	body, _ := json.Marshal(BeamSettings{MaxUploadBytes: &zero, DailyUploadBytes: &zero})
+	rw := httptest.NewRecorder()
+	h.SaveBeamSettings(rw, httptest.NewRequest(http.MethodPost, "/api/settings/beam", bytes.NewReader(body)))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
+	}
+	if got := fs.kv["beam.max_upload_bytes"]; got != "0" {
+		t.Errorf("stored beam.max_upload_bytes = %q, want %q", got, "0")
+	}
+	loaded := h.LoadBeamSettings()
+	if loaded.MaxUploadBytes == nil || *loaded.MaxUploadBytes != 0 {
+		t.Errorf("loaded MaxUploadBytes = %v, want a cap of 0", loaded.MaxUploadBytes)
+	}
+}
+
+// An unset limit stays UNSET through a round-trip, so the feature is inert until
+// an admin sets a value. It is stored as the "unlimited" sentinel rather than as
+// an empty string, because empty means "never saved" and would be re-read as
+// whatever default ships - silently replacing the operator's choice.
+func TestSaveBeamSettings_UploadLimitsDefaultToNoCap(t *testing.T) {
 	fs := newCoreStorageHTTPFakeStore()
 	h := &SettingsHandler{state: &AppState{Store: fs}}
 
@@ -62,7 +86,7 @@ func TestSaveBeamSettings_UploadLimitsDefaultZero(t *testing.T) {
 	}
 
 	loaded := h.LoadBeamSettings()
-	if loaded.MaxUploadBytes != 0 || loaded.DailyUploadBytes != 0 {
-		t.Errorf("defaults = (%d, %d), want (0, 0)", loaded.MaxUploadBytes, loaded.DailyUploadBytes)
+	if loaded.MaxUploadBytes != nil || loaded.DailyUploadBytes != nil {
+		t.Errorf("defaults = (%v, %v), want no cap on both", loaded.MaxUploadBytes, loaded.DailyUploadBytes)
 	}
 }

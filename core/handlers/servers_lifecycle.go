@@ -409,17 +409,17 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce sub-server limit (skip for first setup / admins)
+	// Enforce sub-server limit (skip for first setup / admins).
+	//
+	// Read through the shared parser: this site used to hold its own copy of the
+	// rule, guarded on `n > 0`, and therefore threw away a stored 0 and fell back
+	// to the default of three. An operator asking for none silently got three,
+	// and an operator asking for unlimited got three as well.
 	if srv.Status != "pending_setup" {
-		maxSub := 3 // default
-		if val, err := h.state.Store.GetSetting("srv.max_sub_servers"); err == nil && val != "" {
-			if n, err := strconv.Atoi(val); err == nil && n > 0 {
-				maxSub = n
-			}
-		}
-		if maxSub > 0 {
-			if known, ok := h.knownSubServers(r.Context(), srv.UUID); ok && len(known) >= maxSub {
-				sendJSONError(w, fmt.Sprintf("Sub-server limit reached (%d). Increase the limit in Settings → Servers.", maxSub), 400)
+		val, _ := h.state.Store.GetSetting(SettingMaxSubServers)
+		if maxSub := services.ParseLimitSetting(val, defaultMaxSubServers); maxSub != nil {
+			if known, ok := h.knownSubServers(r.Context(), srv.UUID); ok && services.AtOrOver(maxSub, int64(len(known))) {
+				sendJSONError(w, fmt.Sprintf("Sub-server limit reached (%d). Change the limit in Settings → Servers.", *maxSub), 400)
 				return
 			}
 		}

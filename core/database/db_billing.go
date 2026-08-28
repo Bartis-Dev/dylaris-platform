@@ -23,7 +23,8 @@ func applyBillingSchema(db *sql.DB) error {
 		grace_period   TEXT,
 		r2_retention   TEXT,
 		node_retention TEXT,
-		-- per-user R2 backup quota override in GB (NULL = platform default). 0 = unlimited.
+		-- per-user R2 backup quota override in GB. NULL = ask the platform setting,
+		-- 0 = a cap of none, n = the cap. See services.Limits.
 		r2_quota_gb    BIGINT,
 		updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`); err != nil {

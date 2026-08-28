@@ -466,10 +466,12 @@ export default function OverviewView({ server }: OverviewViewProps) {
         && !backupUsage.degraded
         && (() => {
           const used = backupUsage.usedBytes;
-          // backupConfig.quotaPerServerGb is the GLOBAL cap; 0 = unlimited.
-          const limit = backupConfig.quotaPerServerGb > 0
-            ? backupConfig.quotaPerServerGb * 1024 ** 3
-            : 0;
+          // backupConfig.quotaPerServerGb is the GLOBAL cap: null = no cap,
+          // 0 = none allowed. A cap of 0 has to render as a real ceiling, not as
+          // "unlimited" - the bar would otherwise say a server with backups
+          // disabled has room.
+          const quota = backupConfig.quotaPerServerGb;
+          const limit = quota !== null ? quota * 1024 ** 3 : 0;
           const capacity = limit > 0 ? limit : Math.max(used, 1);
           const pct = capacity > 0 ? (used / capacity) * 100 : 0;
           const freeBytes = limit > 0 ? Math.max(limit - used, 0) : 0;

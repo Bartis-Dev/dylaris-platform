@@ -25,6 +25,7 @@ export function LimitField({
     onChange,
     unit,
     min = 0,
+    step = 1,
     id,
     describedBy,
 }: {
@@ -34,6 +35,12 @@ export function LimitField({
     unit?: string;
     /** Lowest acceptable cap. 0 by default, because "none" is a valid cap. */
     min?: number;
+    /**
+     * Input step. Integral by default, and the value is truncated to match -
+     * "3.7 nodes" is not a thing. A fractional step turns that off, for the few
+     * limits measured in a unit where a fraction is meaningful (GiB).
+     */
+    step?: number;
     id?: string;
     describedBy?: string;
 }) {
@@ -47,6 +54,7 @@ export function LimitField({
                         id={id}
                         type="number"
                         min={min}
+                        step={step}
                         value={value}
                         aria-describedby={describedBy}
                         onChange={e => {
@@ -56,7 +64,8 @@ export function LimitField({
                             const raw = e.target.value;
                             if (raw === '') return;
                             const n = Number(raw);
-                            onChange(Number.isFinite(n) ? Math.max(min, Math.trunc(n)) : value);
+                            if (!Number.isFinite(n)) return onChange(value);
+                            onChange(Math.max(min, Number.isInteger(step) ? Math.trunc(n) : n));
                         }}
                         className="input-mono w-20 text-center"
                     />

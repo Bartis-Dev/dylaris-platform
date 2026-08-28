@@ -429,14 +429,17 @@ func sftpWriteCeiling(ctx context.Context, rdb *redis.Client, serverUUID, userna
 			ceil, reason = remaining, label
 		}
 	}
-	if capBytes := quota.MaxUploadCap(ctx, rdb); capBytes > 0 {
-		consider(true, capBytes, "per-upload size limit")
+	// A nil cap is no cap. A cap of 0 is a real one and yields a ceiling of 0,
+	// which rejects any non-empty write - that is the operator saying uploads are
+	// not allowed, and it used to be indistinguishable from "no limit".
+	if capBytes := quota.MaxUploadCap(ctx, rdb); capBytes != nil {
+		consider(true, *capBytes, "per-upload size limit")
 	}
 	if total, limit := serverDiskGauge(ctx, rdb, serverUUID); limit > 0 {
 		consider(true, limit-total, "server disk limit")
 	}
-	if used, limit := quota.DailyUsage(ctx, rdb, username); limit > 0 {
-		consider(true, limit-used, "daily upload quota")
+	if used, limit := quota.DailyUsage(ctx, rdb, username); limit != nil {
+		consider(true, *limit-used, "daily upload quota")
 	}
 	return ceil, reason
 }

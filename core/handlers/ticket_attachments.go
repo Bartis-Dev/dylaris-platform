@@ -366,10 +366,18 @@ const (
 )
 
 // ticketUploadBodyLimit converts the per-file setting into a request-body cap.
-func ticketUploadBodyLimit(maxFileMB int) int64 {
-	mb := int64(maxFileMB)
-	if mb <= 0 || mb > ticketUploadHardCapMB {
-		mb = ticketUploadHardCapMB
+func ticketUploadBodyLimit(maxFileMB *int64) int64 {
+	// No cap configured, or one above the hard cap, both land on the hard cap:
+	// this bounds what the SERVER will read, and "the admin set no limit" cannot
+	// mean "read an unbounded body".
+	//
+	// A cap of 0 is different and is honoured as 0 - attachments are not allowed,
+	// so nothing needs reading. The envelope slack still rides along, because the
+	// multipart framing is not the file and refusing it before the handler can
+	// name the reason would surface as a hang rather than a message.
+	mb := int64(ticketUploadHardCapMB)
+	if maxFileMB != nil && *maxFileMB >= 0 && *maxFileMB < ticketUploadHardCapMB {
+		mb = *maxFileMB
 	}
 	return mb*1024*1024 + ticketUploadEnvelopeSlack
 }
@@ -443,13 +451,14 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	size := header.Size
 
 	// Quota checks before writing.
-	maxFile := int64(settings.MaxFileSizeMB) * 1024 * 1024
-	if maxFile > 0 && size > maxFile {
-		sendJSONError(w, fmt.Sprintf("File exceeds the %d MB per-file limit", settings.MaxFileSizeMB), http.StatusRequestEntityTooLarge)
+	// Each of these three guarded on `> 0`, so a cap of 0 - the admin saying
+	// attachments are not allowed - disabled the very check it was setting.
+	if settings.MaxFileSizeMB != nil && size > *settings.MaxFileSizeMB*1024*1024 {
+		sendJSONError(w, fmt.Sprintf("File exceeds the %d MB per-file limit", *settings.MaxFileSizeMB), http.StatusRequestEntityTooLarge)
 		return
 	}
-	maxTicket := int64(settings.MaxTicketSizeMB) * 1024 * 1024
-	if maxTicket > 0 {
+	if settings.MaxTicketSizeMB != nil {
+		maxTicket := *settings.MaxTicketSizeMB * 1024 * 1024
 		// A quota that cannot be read must not read as empty: discarding this
 		// error made `current` 0, so only the per-FILE limit still applied and
 		// the per-ticket total could be exceeded freely.
@@ -459,19 +468,19 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 			return
 		}
 		if current+size > maxTicket {
-			sendJSONError(w, fmt.Sprintf("Adding this file would exceed the %d MB per-ticket limit", settings.MaxTicketSizeMB), http.StatusRequestEntityTooLarge)
+			sendJSONError(w, fmt.Sprintf("Adding this file would exceed the %d MB per-ticket limit", *settings.MaxTicketSizeMB), http.StatusRequestEntityTooLarge)
 			return
 		}
 	}
-	maxUser := int64(settings.MaxUserSizeMB) * 1024 * 1024
-	if maxUser > 0 {
+	if settings.MaxUserSizeMB != nil {
+		maxUser := *settings.MaxUserSizeMB * 1024 * 1024
 		current, cerr := h.state.Store.SumAttachmentBytesByUser(userID)
 		if cerr != nil {
 			sendJSONError(w, "Could not verify your attachment quota", http.StatusInternalServerError)
 			return
 		}
 		if current+size > maxUser {
-			sendJSONError(w, fmt.Sprintf("Adding this file would exceed your %d MB attachment quota", settings.MaxUserSizeMB), http.StatusRequestEntityTooLarge)
+			sendJSONError(w, fmt.Sprintf("Adding this file would exceed your %d MB attachment quota", *settings.MaxUserSizeMB), http.StatusRequestEntityTooLarge)
 			return
 		}
 	}

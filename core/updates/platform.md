@@ -20,6 +20,11 @@ Newest release first. The format is fixed and checked in CI - see the
   `panel`
 - Release announcements now go out on Discord, one message per audience, with
   roles you pick yourself under Channels & Roles.
+- Every operator-set limit now uses the same control and the same meaning: No
+  limit for uncapped, or a number where 0 means none. That covers sub-servers per
+  server, the node-local backup quota, ticket attachment quotas and the beam
+  upload limits, which each had their own widget and their own reading of a
+  zero. `core` `panel` `node`
 - Limits read the same way everywhere: leave a limit empty for unlimited, or
   switch it off and type a number, where 0 means none. Route allowances used to
   spell unlimited as -1 on one screen and as 0 on another. `core` `panel`
@@ -44,6 +49,14 @@ Newest release first. The format is fixed and checked in CI - see the
   to 24 hours, including the one it was meant to close. `core`
 
 ### Fixes
+- A limit of 0 now means none instead of switching the check off. A per-user
+  backup quota of 0 granted unlimited storage, ticket attachment quotas of 0
+  allowed any attachment, and beam upload limits of 0 allowed any upload - in
+  each case the guard tested "greater than zero" and so skipped itself on the one
+  value an operator would type to forbid something. `core` `node`
+- The sub-server limit could express neither extreme. A saved 0 was discarded by
+  the same kind of guard and fell back to the built-in default, so asking for
+  none and asking for unlimited both produced a cap of three. `core` `panel`
 - A node whose owner has missed a mandatory update is now warned at connect and
   refused once the deadline passes, with the reason stated instead of a
   connection that simply stops working. Set RELEASE_ENFORCE_MIN_VERSION=false on

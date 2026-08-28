@@ -1,7 +1,6 @@
 package services
 
 import (
-	"strconv"
 	"time"
 
 	nodegrpc "dylaris-core/grpc"
@@ -18,9 +17,13 @@ import (
 // check that enforces them have to agree: the panel shows "1.2 GB / 10.0 GB"
 // off the same number the refusal uses, and an install that never saved the
 // form has no row at all.
+// SettingBackupQuotaPerServer is the settings key, named once so the form, the
+// usage card and this check cannot drift apart by a typo.
+const SettingBackupQuotaPerServer = "backup.quota_per_server_gb"
+
 const (
 	DefaultBackupMode           = "shared"
-	DefaultBackupQuotaPerServer = 10 // GB, 0 = unlimited
+	DefaultBackupQuotaPerServer = 10 // GB; used when the setting was never saved
 )
 
 // backupUsageRPCTimeout matches the one BackupUsage already uses for the
@@ -93,19 +96,16 @@ func nodeLocalBackupQuotaExceeded(st store.Store, srv *models.Server, usage func
 		return false, 0, 0
 	}
 
-	quotaGB := int64(DefaultBackupQuotaPerServer)
-	if v, _ := st.GetSetting("backup.quota_per_server_gb"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			// A malformed row must not silently become "unlimited". Fall back to
-			// the same default the settings GET renders.
-			n = DefaultBackupQuotaPerServer
-		}
-		quotaGB = n
-	}
-	if quotaGB <= 0 {
+	// Read through the shared parser so this cap follows the platform limit
+	// convention: never saved -> the default, the word -> no cap, and 0 -> a real
+	// cap of NONE. A malformed row must not silently become "unlimited"; it falls
+	// back to the same default the settings GET renders.
+	v, _ := st.GetSetting(SettingBackupQuotaPerServer)
+	quota := ParseLimitSetting(v, LimitPtr(DefaultBackupQuotaPerServer))
+	if quota == nil {
 		return false, 0, 0
 	}
+	quotaGB := *quota
 	quotaBytes = quotaGB * 1024 * 1024 * 1024
 
 	used, ok := usage()

@@ -79,9 +79,10 @@ export interface TicketSettings {
     watchersDefaultCanReply: boolean;
     allowUsersToAddWatchers: boolean;
     auditRetentionDays: number;
-    maxFileSizeMb: number;
-    maxTicketSizeMb: number;
-    maxUserSizeMb: number;
+    // null = no cap, 0 = none (attachments not allowed), n = the cap.
+    maxFileSizeMb: number | null;
+    maxTicketSizeMb: number | null;
+    maxUserSizeMb: number | null;
     autoCloseEnabled: boolean;
     autoCloseDaysAfterResolved: number;
     // Admin-only DELETE /api/tickets/{id} gate. Default false. When false the

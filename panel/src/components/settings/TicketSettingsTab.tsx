@@ -7,6 +7,7 @@ import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup, SettingsRow } from '@/components/settings/SettingsCard';
 import { SwitchRow } from '@/components/ui/Switch';
+import { LimitField } from '@/components/settings/LimitField';
 
 const defaultSettings: TicketSettings = {
     crossTeamVisibility: true,
@@ -94,37 +95,34 @@ export default function TicketSettingsTab() {
 
                 <SettingsGroup
                     title="Attachment quotas (MB)"
-                    description="Set 0 on any axis to disable that limit. The file quota gates a single upload, the ticket quota caps the total per ticket, and the user quota caps the total one user has stored across all their tickets."
+                    description="Switch an axis to No limit to leave it uncapped, or set 0 to forbid attachments on that axis entirely. The file quota gates a single upload, the ticket quota caps the total per ticket, and the user quota caps the total one user has stored across all their tickets."
                 >
                     <div className="grid grid-cols-3 gap-3">
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label" htmlFor="ticket-quota-file">Per file</label>
-                            <input
+                            <LimitField
                                 id="ticket-quota-file"
-                                type="number" min={0} max={1024}
                                 value={s.maxFileSizeMb}
-                                onChange={e => patch({ maxFileSizeMb: Number(e.target.value) || 0 })}
-                                className="input-field w-full"
+                                onChange={maxFileSizeMb => patch({ maxFileSizeMb })}
+                                unit="MB"
                             />
                         </div>
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label" htmlFor="ticket-quota-ticket">Per ticket</label>
-                            <input
+                            <LimitField
                                 id="ticket-quota-ticket"
-                                type="number" min={0} max={10240}
                                 value={s.maxTicketSizeMb}
-                                onChange={e => patch({ maxTicketSizeMb: Number(e.target.value) || 0 })}
-                                className="input-field w-full"
+                                onChange={maxTicketSizeMb => patch({ maxTicketSizeMb })}
+                                unit="MB"
                             />
                         </div>
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label" htmlFor="ticket-quota-user">Per user</label>
-                            <input
+                            <LimitField
                                 id="ticket-quota-user"
-                                type="number" min={0} max={102400}
                                 value={s.maxUserSizeMb}
-                                onChange={e => patch({ maxUserSizeMb: Number(e.target.value) || 0 })}
-                                className="input-field w-full"
+                                onChange={maxUserSizeMb => patch({ maxUserSizeMb })}
+                                unit="MB"
                             />
                         </div>
                     </div>

@@ -11,6 +11,7 @@ import {
     listStorageConnections,
     type StorageConnection, type BackupConnectionConfig,
 } from '@/lib/api';
+import { LimitField } from '@/components/settings/LimitField';
 import { SkeletonHeader, SkeletonCard, SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { useBusy } from '@/lib/useBusy';
@@ -150,7 +151,6 @@ function NodeLocalQuotaPanel({
     config: BackupConfig;
     onChange: (next: BackupConfig) => void;
 }) {
-    const unlimited = config.quotaPerServerGb === 0;
     return (
         <div className="rounded-md border border-(--base-04) bg-(--base-02) p-3 space-y-3">
             <div className="flex items-start gap-2 text-xs text-(--base-06)">
@@ -161,34 +161,19 @@ function NodeLocalQuotaPanel({
             </div>
 
             <div className="flex items-center gap-3">
-                <label className="input-label whitespace-nowrap">Backup quota per server</label>
-                <div className="flex items-center gap-2">
-                    <input
-                        type="number"
-                        min={0}
-                        disabled={unlimited}
-                        value={unlimited ? '' : config.quotaPerServerGb}
-                        onChange={(e) => {
-                            const n = Math.max(0, parseInt(e.target.value || '0', 10));
-                            onChange({ ...config, quotaPerServerGb: n });
-                        }}
-                        className="input-field input-sm w-24 font-mono"
-                        placeholder="10"
-                    />
-                    <span className="text-xs text-(--base-06)">GB</span>
-                </div>
-                <label className="flex items-center gap-2 text-xs text-(--base-08) cursor-pointer">
-                    <input
-                        type="checkbox"
-                        checked={unlimited}
-                        onChange={(e) => onChange({
-                            ...config,
-                            quotaPerServerGb: e.target.checked ? 0 : Math.max(1, config.quotaPerServerGb || 10),
-                        })}
-                        className="checkbox"
-                    />
-                    unlimited
+                <label className="input-label whitespace-nowrap" htmlFor="backup-quota-per-server">
+                    Backup quota per server
                 </label>
+                {/* One control, not a number field plus an "unlimited" checkbox.
+                    The old pair could not say "none": ticking unlimited WROTE 0,
+                    so 0 and unlimited were the same value and a cap of none was
+                    unreachable from this screen. */}
+                <LimitField
+                    id="backup-quota-per-server"
+                    value={config.quotaPerServerGb}
+                    onChange={quotaPerServerGb => onChange({ ...config, quotaPerServerGb })}
+                    unit="GB"
+                />
             </div>
 
             <label className="flex items-start gap-2 text-xs text-(--base-08) cursor-pointer">

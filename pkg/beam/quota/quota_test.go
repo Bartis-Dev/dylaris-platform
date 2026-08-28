@@ -9,23 +9,30 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func cap64(v int64) *int64 { return &v }
+
 func TestExceedsSizeCap(t *testing.T) {
 	cases := []struct {
-		name           string
-		size, capBytes int64
-		want           bool
+		name     string
+		size     int64
+		capBytes *int64
+		want     bool
 	}{
-		{"zero cap is unlimited", 999999, 0, false},
-		{"negative cap is unlimited", 999999, -1, false},
-		{"under the cap", 100, 200, false},
-		{"exactly at the cap", 200, 200, false},
-		{"one byte over", 201, 200, true},
-		{"empty upload under cap", 0, 200, false},
+		// nil is the only "no cap" now. A zero cap used to mean unlimited, which
+		// made the one value an operator could type to forbid uploads the value
+		// that turned the check off.
+		{"no cap", 999999, nil, false},
+		{"a cap of NONE refuses any non-empty upload", 1, cap64(0), true},
+		{"a cap of NONE still allows an empty one", 0, cap64(0), false},
+		{"under the cap", 100, cap64(200), false},
+		{"exactly at the cap", 200, cap64(200), false},
+		{"one byte over", 201, cap64(200), true},
+		{"empty upload under cap", 0, cap64(200), false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := ExceedsSizeCap(c.size, c.capBytes); got != c.want {
-				t.Errorf("ExceedsSizeCap(%d, %d) = %v, want %v", c.size, c.capBytes, got, c.want)
+				t.Errorf("ExceedsSizeCap(%d, %v) = %v, want %v", c.size, c.capBytes, got, c.want)
 			}
 		})
 	}
@@ -33,22 +40,25 @@ func TestExceedsSizeCap(t *testing.T) {
 
 func TestExceedsDaily(t *testing.T) {
 	cases := []struct {
-		name                  string
-		used, limit, incoming int64
-		want                  bool
+		name     string
+		used     int64
+		limit    *int64
+		incoming int64
+		want     bool
 	}{
-		{"zero limit is unlimited", 100, 0, 999999, false},
-		{"negative limit is unlimited", 100, -1, 999999, false},
-		{"fits exactly at limit", 100, 200, 100, false},
-		{"one byte over", 100, 200, 101, true},
-		{"already at limit, empty upload", 200, 200, 0, false},
-		{"already over", 300, 200, 0, true},
-		{"comfortable headroom", 50, 1000, 100, false},
+		{"no limit", 100, nil, 999999, false},
+		{"a limit of NONE refuses any upload", 0, cap64(0), 1, true},
+		{"a limit of NONE allows an empty one", 0, cap64(0), 0, false},
+		{"fits exactly at limit", 100, cap64(200), 100, false},
+		{"one byte over", 100, cap64(200), 101, true},
+		{"already at limit, empty upload", 200, cap64(200), 0, false},
+		{"already over", 300, cap64(200), 0, true},
+		{"comfortable headroom", 50, cap64(1000), 100, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := ExceedsDaily(c.used, c.limit, c.incoming); got != c.want {
-				t.Errorf("ExceedsDaily(%d, %d, %d) = %v, want %v", c.used, c.limit, c.incoming, got, c.want)
+				t.Errorf("ExceedsDaily(%d, %v, %d) = %v, want %v", c.used, c.limit, c.incoming, got, c.want)
 			}
 		})
 	}
@@ -100,19 +110,26 @@ func TestMaxUploadCap(t *testing.T) {
 	ctx := context.Background()
 	rdb, mr := newTestRedis(t)
 
-	if got := MaxUploadCap(ctx, rdb); got != 0 {
-		t.Errorf("no cap set: got %d, want 0", got)
+	// A MISSING key is the no-cap answer now. Core deletes it rather than
+	// writing 0, so "no limit" and "a limit of none" stay distinguishable all
+	// the way to the node.
+	if got := MaxUploadCap(ctx, rdb); got != nil {
+		t.Errorf("no cap set: got %d, want nil", *got)
 	}
 	mr.Set(MaxUploadBytesKey, "4096")
-	if got := MaxUploadCap(ctx, rdb); got != 4096 {
-		t.Errorf("cap set: got %d, want 4096", got)
+	if got := MaxUploadCap(ctx, rdb); got == nil || *got != 4096 {
+		t.Errorf("cap set: got %v, want 4096", got)
+	}
+	mr.Set(MaxUploadBytesKey, "0")
+	if got := MaxUploadCap(ctx, rdb); got == nil || *got != 0 {
+		t.Errorf("a stored 0 must survive as a cap of NONE, got %v", got)
 	}
 	mr.Set(MaxUploadBytesKey, "not-a-number")
-	if got := MaxUploadCap(ctx, rdb); got != 0 {
-		t.Errorf("unparseable cap: got %d, want 0", got)
+	if got := MaxUploadCap(ctx, rdb); got != nil {
+		t.Errorf("unparseable cap: got %d, want nil", *got)
 	}
-	if got := MaxUploadCap(ctx, nil); got != 0 {
-		t.Errorf("nil rdb: got %d, want 0", got)
+	if got := MaxUploadCap(ctx, nil); got != nil {
+		t.Errorf("nil rdb: got %d, want nil", *got)
 	}
 }
 
@@ -124,8 +141,8 @@ func TestCheckSizeCap(t *testing.T) {
 		t.Error("no cap configured should allow")
 	}
 	mr.Set(MaxUploadBytesKey, "1000")
-	if ok, capB := CheckSizeCap(ctx, rdb, 1001); ok || capB != 1000 {
-		t.Errorf("over cap: ok=%v cap=%d, want ok=false cap=1000", ok, capB)
+	if ok, capB := CheckSizeCap(ctx, rdb, 1001); ok || capB == nil || *capB != 1000 {
+		t.Errorf("over cap: ok=%v cap=%v, want ok=false cap=1000", ok, capB)
 	}
 	if ok, _ := CheckSizeCap(ctx, rdb, 1000); !ok {
 		t.Error("exactly at cap should allow")
@@ -143,8 +160,8 @@ func TestCheckDailyQuota(t *testing.T) {
 		t.Error("no limit configured should allow")
 	}
 	mr.Set(DailyUploadBytesKey, "1000")
-	if ok, used, limit := CheckDailyQuota(ctx, rdb, "alice", 500); !ok || used != 0 || limit != 1000 {
-		t.Errorf("no counter yet + under limit: ok=%v used=%d limit=%d, want ok=true used=0 limit=1000", ok, used, limit)
+	if ok, used, limit := CheckDailyQuota(ctx, rdb, "alice", 500); !ok || used != 0 || limit == nil || *limit != 1000 {
+		t.Errorf("no counter yet + under limit: ok=%v used=%d limit=%v, want ok=true used=0 limit=1000", ok, used, limit)
 	}
 	mr.Set(DailyKey("alice", time.Now()), "800")
 	if ok, used, _ := CheckDailyQuota(ctx, rdb, "alice", 300); ok || used != 800 {
@@ -162,22 +179,29 @@ func TestDailyUsage(t *testing.T) {
 	ctx := context.Background()
 	rdb, mr := newTestRedis(t)
 
-	if used, limit := DailyUsage(ctx, rdb, "alice"); used != 0 || limit != 0 {
-		t.Errorf("no limit set: (%d, %d), want (0, 0)", used, limit)
+	isLimit := func(l *int64, want int64) bool { return l != nil && *l == want }
+
+	if used, limit := DailyUsage(ctx, rdb, "alice"); used != 0 || limit != nil {
+		t.Errorf("no limit set: (%d, %v), want (0, nil)", used, limit)
 	}
 	mr.Set(DailyUploadBytesKey, "1000")
-	if used, limit := DailyUsage(ctx, rdb, "alice"); used != 0 || limit != 1000 {
-		t.Errorf("limit set, no counter: (%d, %d), want (0, 1000)", used, limit)
+	if used, limit := DailyUsage(ctx, rdb, "alice"); used != 0 || !isLimit(limit, 1000) {
+		t.Errorf("limit set, no counter: (%d, %v), want (0, 1000)", used, limit)
 	}
 	mr.Set(DailyKey("alice", time.Now()), "750")
-	if used, limit := DailyUsage(ctx, rdb, "alice"); used != 750 || limit != 1000 {
-		t.Errorf("counter set: (%d, %d), want (750, 1000)", used, limit)
+	if used, limit := DailyUsage(ctx, rdb, "alice"); used != 750 || !isLimit(limit, 1000) {
+		t.Errorf("counter set: (%d, %v), want (750, 1000)", used, limit)
 	}
-	if used, limit := DailyUsage(ctx, rdb, ""); used != 0 || limit != 0 {
-		t.Errorf("empty username: (%d, %d), want (0, 0)", used, limit)
+	// A stored 0 is a limit of NONE and must reach the caller as one.
+	mr.Set(DailyUploadBytesKey, "0")
+	if _, limit := DailyUsage(ctx, rdb, "alice"); !isLimit(limit, 0) {
+		t.Errorf("a stored 0 came back as %v, want a limit of 0", limit)
 	}
-	if used, limit := DailyUsage(ctx, nil, "alice"); used != 0 || limit != 0 {
-		t.Errorf("nil rdb: (%d, %d), want (0, 0)", used, limit)
+	if used, limit := DailyUsage(ctx, rdb, ""); used != 0 || limit != nil {
+		t.Errorf("empty username: (%d, %v), want (0, nil)", used, limit)
+	}
+	if used, limit := DailyUsage(ctx, nil, "alice"); used != 0 || limit != nil {
+		t.Errorf("nil rdb: (%d, %v), want (0, nil)", used, limit)
 	}
 }
 
