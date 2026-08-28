@@ -233,6 +233,7 @@ func main() {
 		TabProxyHostSuffix:  cfg.TabProxyHostSuffix,
 		UpdatesURLPlatform:  cfg.UpdatesURLPlatform,
 		UpdatesURLHosted:    cfg.UpdatesURLHosted,
+		ReleaseVersion:      coreReleaseVersion().String(),
 	}
 
 	// Demo showcase read access flows through the resolver so the RequireCap

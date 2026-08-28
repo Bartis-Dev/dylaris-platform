@@ -182,7 +182,7 @@ func (h *UpdatesHandler) components(r *http.Request, releases []release.Release,
 	byService := map[string][]instance{}
 
 	if isAdmin {
-		byService["core"] = []instance{versioned("core", updates.Version().String(), releases, "core")}
+		byService["core"] = []instance{versioned("core", h.state.ReleaseVersion, releases, "core")}
 		if pv := strings.TrimSpace(r.URL.Query().Get("panelVersion")); pv != "" {
 			// The panel is a static bundle in someone's browser, so Core has no
 			// other way to see which build it is. Spoofable, and harmless: it

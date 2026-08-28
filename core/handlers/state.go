@@ -195,6 +195,15 @@ type AppState struct {
 	UpdatesURLPlatform string
 	UpdatesURLHosted   string
 
+	// ReleaseVersion is the release THIS Core image was built from, stamped in at
+	// build time. Empty on a local build, which reads as "not reporting".
+	//
+	// Deliberately not derived from the embedded platform.md: the repo has one
+	// version and more than one audience, so a release that only concerns
+	// customers leaves platform.md's top block behind and Core would report
+	// itself behind for a release it already contains.
+	ReleaseVersion string
+
 	// modpackStorage caches "does modpack storage resolve to a provider", which
 	// GET /api/system/features reports to every user at boot. See
 	// modpack_storage_state.go for why that call must not run per request.

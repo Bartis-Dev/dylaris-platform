@@ -6,10 +6,11 @@
 // changing the mail settings" and "your node needs updating by Friday" have no
 // reader in common.
 //
-// The embedded copy is BOTH the offline fallback and this build's own version:
-// the top release in platform.md is, by construction, the release Core was
-// built from. Core therefore needs no version stamp of its own, unlike the node
-// (ldflags) and the panel (build-time env), neither of which carries the file.
+// The embedded copy is the OFFLINE FALLBACK, and nothing more. It is not this
+// build's version: the repo has one version and more than one audience, so a
+// release that only concerns customers leaves platform.md's top block behind
+// while the images are still built from the newer release. Every component -
+// Core included - reports the version STAMPED into it at build time.
 package updates
 
 import (
@@ -67,15 +68,4 @@ func Hosted() []release.Release {
 func ParseError() error {
 	parse()
 	return parseErr
-}
-
-// Version is the release THIS build was made from: the newest block in the
-// embedded platform notes. Zero when the file has no releases yet, which reads
-// as "unknown" everywhere downstream and never as "very old".
-func Version() release.Version {
-	parse()
-	if r, ok := release.Latest(platform); ok {
-		return r.Version
-	}
-	return release.Version{}
 }

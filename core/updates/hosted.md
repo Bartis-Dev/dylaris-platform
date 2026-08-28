@@ -28,8 +28,9 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Fixes
 - Node allowances now count correctly. Enrolment tokens and warp keys were
   counted by separate gates, so an account could end up holding more pending
-  node identities than its plan allows and then be warned for it. `core`
+  node identities than its plan allows and then be warned for it. Fixed on our
+  side; nothing for you to do.
 - An address allowance of zero now means zero. It was being read as "no setting"
   and fell back to the platform default, which is unlimited when none is
   configured. Addresses on your own domain stay unlimited and uncounted either
-  way. `core`
+  way. Fixed on our side; nothing for you to do.

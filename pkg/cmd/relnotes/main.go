@@ -7,8 +7,15 @@
 // Discord announcement that disagrees with what the panel shows.
 //
 //	relnotes validate FILE...
-//	relnotes version FILE          newest version, or empty when the file has none
-//	relnotes services FILE         services the newest release names, space separated
+//	relnotes version FILE...       newest version ACROSS the files, or empty
+//	relnotes services FILE...      services the newest release names, space separated
+//
+// version and services take every notes file, not one, because the repo has a
+// SINGLE release version and more than one audience. A release that only
+// concerns customers adds a block to hosted.md and none to platform.md, and
+// reading platform.md alone would then stamp images with a version older than
+// the release they were built from - which no component could ever reach.
+//
 //	relnotes discord -title T [-role ID] [-url U] FILE
 //
 // Go's flag package stops at the first positional argument, so the flags come
@@ -45,14 +52,11 @@ func main() {
 			fmt.Printf("%s: ok, %d release(s)\n", p, len(rs))
 		}
 	case "version":
-		r, ok := top(one(args))
-		if ok {
-			fmt.Println(r.Version)
+		if v, ok := newest(args); ok {
+			fmt.Println(v)
 		}
 	case "services":
-		if r, ok := top(one(args)); ok {
-			fmt.Println(strings.Join(r.AllServices(), " "))
-		}
+		fmt.Println(strings.Join(servicesInNewest(args), " "))
 	case "discord":
 		discord(args)
 	default:
@@ -70,11 +74,54 @@ func fail(format string, a ...any) {
 	os.Exit(1)
 }
 
-func one(args []string) string {
-	if len(args) != 1 {
+// newest is the release version of the repo: the newest block across every
+// notes file.
+func newest(paths []string) (release.Version, bool) {
+	if len(paths) == 0 {
 		usage()
 	}
-	return args[0]
+	var best release.Version
+	for _, p := range paths {
+		r, ok := top(p)
+		if !ok {
+			continue
+		}
+		if best.IsZero() || r.Version.Compare(best) > 0 {
+			best = r.Version
+		}
+	}
+	return best, !best.IsZero()
+}
+
+// servicesInNewest is every service named by a block that IS the release, in
+// any file. Those are the components the release claims changed, and CI checks
+// each of them was actually rebuilt - a component named by a release it can
+// never reach would read as behind forever with nothing failing.
+//
+// Older blocks are excluded: they were built when they were written.
+func servicesInNewest(paths []string) []string {
+	v, ok := newest(paths)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, p := range paths {
+		r, found := top(p)
+		if !found || r.Version.Compare(v) != 0 {
+			continue
+		}
+		for _, s := range r.AllServices() {
+			seen[s] = true
+		}
+	}
+	// Ordered by the shared service list so the output is stable.
+	var out []string
+	for _, s := range release.Services {
+		if seen[s] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func load(path string) ([]release.Release, error) {
@@ -117,7 +164,7 @@ const (
 func discord(args []string) {
 	fs := flag.NewFlagSet("discord", flag.ExitOnError)
 	title := fs.String("title", "", "audience name shown before the version, e.g. \"Platform\"")
-	role := fs.String("role", "", "Discord role ID to ping; omitted when empty")
+	role := fs.String("role", "", "comma-separated Discord role IDs to ping; empty entries are dropped")
 	url := fs.String("url", "", "link to the full notes")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
@@ -184,8 +231,12 @@ func discord(args []string) {
 	payload := map[string]any{"embeds": []any{embed}}
 	// The ping has to sit in content: a role mention inside an embed renders as
 	// a mention but notifies nobody.
-	if *role != "" {
-		payload["content"] = "<@&" + *role + ">"
+	//
+	// Empty entries are dropped rather than rendered. One audience is pinged
+	// through two roles, and a role whose secret is unset would otherwise post a
+	// literal "<@&>" - visible nonsense in a channel people are told to trust.
+	if ping := mentions(*role); ping != "" {
+		payload["content"] = ping
 	}
 
 	out, err := json.Marshal(payload)
@@ -197,6 +248,22 @@ func discord(args []string) {
 			len(out), maxEmbedTotal)
 	}
 	fmt.Println(string(out))
+}
+
+// mentions renders a comma-separated role list as Discord mentions, skipping
+// blanks and duplicates so an unset role secret cannot post an empty mention.
+func mentions(list string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range strings.Split(list, ",") {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, "<@&"+id+">")
+	}
+	return strings.Join(out, " ")
 }
 
 // truncate cuts to at most n BYTES without splitting a rune, so a trimmed line
