@@ -20,7 +20,7 @@ jobs:
     # macOS still needs its own runner; when that lands, convert this into a matrix.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Wails Linux build deps
         # GTK3 + WebKit2GTK 4.0 for the linux/amd64 webview build. The Windows
@@ -34,13 +34,13 @@ jobs:
         run: echo "VERSION=${GITHUB_REF_NAME#beam-v}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26.7'
           cache-dependency-path: beam/app/go.sum
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'npm'
@@ -126,7 +126,7 @@ jobs:
             windows-amd64=dist-dev/DylarisBeam-windows-amd64.exe
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: Beam ${{ steps.ver.outputs.VERSION }}
@@ -149,7 +149,7 @@ jobs:
         # pointer (that must stay the stable release). The tag ref may lag on an
         # older commit; only the assets matter for the download URL.
         if: contains(github.ref_name, '-dev')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: beam-dev
           name: Beam Dev Channel

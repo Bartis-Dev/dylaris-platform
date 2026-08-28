@@ -39,6 +39,12 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: bartis-dev/dylaris-platform
+  # build-push-action v6 generates a build summary and uploads a build RECORD
+  # artifact for every build. On this runner that is four to six extra artifact
+  # uploads per run for a page nobody opens, on a workflow whose whole problem
+  # today was time spent moving bytes around. The builds themselves are
+  # unaffected.
+  DOCKER_BUILD_SUMMARY: "false"
 
 jobs:
   # ----------------------------------------------
@@ -51,7 +57,7 @@ jobs:
       matrix:
         module: [core, node, pkg, log-shipper, beam/app]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # cache: false is DELIBERATE and was measured, not assumed.
       #
@@ -77,7 +83,7 @@ jobs:
       #
       # Result across the whole workflow: 20 minutes to 5.
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26.7'
           cache: false
@@ -173,6 +179,16 @@ jobs:
       - name: govulncheck
         working-directory: ${{ matrix.module }}
         run: |
+          # setup-go installs a problem matcher for "file.go:line:col: message",
+          # and govulncheck's call traces look exactly like that. Ten
+          # informational lines ("X calls Y", the evidence for a finding the
+          # gate below deliberately does NOT fail on) were therefore posted as
+          # ten ERRORS on a job that passed - which is how a green run learns to
+          # look broken. Removed for the rest of this job, which is only this
+          # step: go build, staticcheck and go test all ran before it, and there
+          # an annotation is exactly right.
+          echo "::remove-matcher owner=go::"
+
           # Installed rather than `go run ...@version` like staticcheck above,
           # and that is not a style choice: `go run` reports the tool's exit
           # status as its own 1, so "found vulnerabilities" (3) and "the scanner
@@ -220,13 +236,13 @@ jobs:
     # machine, so a slow run under cross-repo contention must not go red.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # BUILDKIT_PROGRESS=plain so the test output lands in the job log. Without
       # it buildx collapses the RUN and a PASSING run tells you nothing about
       # what actually ran; a gate you cannot read is a gate you stop trusting.
       - name: go test -race (all Go modules)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           BUILDKIT_PROGRESS: plain
         with:
@@ -270,7 +286,7 @@ jobs:
   db-tests:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: go test against a real Postgres
         run: |
@@ -312,10 +328,10 @@ jobs:
   panel-tests:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'npm'
@@ -351,19 +367,19 @@ jobs:
       version: ${{ steps.rel.outputs.VERSION }}
       notes: ${{ steps.filter.outputs.notes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # The release check below reads the PREVIOUS commit's notes, to tell a
           # new release from an edit to one that already shipped.
           fetch-depth: 2
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: pkg/go.mod
           # See the go-tests job: this runner is long-lived and already holds
           # the module and build caches, so restoring them costs minutes and
           # buys nothing.
           cache: false
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           # The root Dockerfile builds ALL THREE Go images (build-service.yml
@@ -492,7 +508,7 @@ jobs:
           mkdir -p "$DIR"
           echo "DOCKER_CONFIG=$DIR" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -509,14 +525,14 @@ jobs:
           fi
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Core
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -575,10 +591,10 @@ jobs:
           mkdir -p "$DIR"
           echo "DOCKER_CONFIG=$DIR" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26.7'
           # Same reason as the go-tests job above: restoring that cache costs
@@ -593,7 +609,7 @@ jobs:
           ./build_shipper.sh
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -616,7 +632,7 @@ jobs:
       # the version pickers offer 26.x, so without this image the newest
       # selectable version installs a server that can never boot.
       - name: Build and push java25
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: docker/mc-server
           file: docker/mc-server/Dockerfile.java25
@@ -626,7 +642,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java25:${{ steps.tags.outputs.TAG_SHA }}
 
       - name: Build and push java21
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: docker/mc-server
           file: docker/mc-server/Dockerfile.java21
@@ -636,7 +652,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java21:${{ steps.tags.outputs.TAG_SHA }}
 
       - name: Build and push java17
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: docker/mc-server
           file: docker/mc-server/Dockerfile.java17
@@ -646,7 +662,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java17:${{ steps.tags.outputs.TAG_SHA }}
 
       - name: Build and push java8
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: docker/mc-server
           file: docker/mc-server/Dockerfile.java8
@@ -683,10 +699,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: pkg/go.mod
           cache: false

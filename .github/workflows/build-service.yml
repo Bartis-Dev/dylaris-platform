@@ -40,6 +40,12 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: bartis-dev/dylaris-platform
+  # build-push-action v6 generates a build summary and uploads a build RECORD
+  # artifact for every build. On this runner that is four to six extra artifact
+  # uploads per run for a page nobody opens, on a workflow whose whole problem
+  # today was time spent moving bytes around. The builds themselves are
+  # unaffected.
+  DOCKER_BUILD_SUMMARY: "false"
 
 jobs:
   build-and-push:
@@ -79,7 +85,7 @@ jobs:
           echo "DOCKER_CONFIG=$DIR" >> "$GITHUB_ENV"
 
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -97,14 +103,14 @@ jobs:
           echo "IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ inputs.component }}" >> $GITHUB_OUTPUT
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
