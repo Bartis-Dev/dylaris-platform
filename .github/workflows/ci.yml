@@ -352,6 +352,10 @@ jobs:
       notes: ${{ steps.filter.outputs.notes }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The release check below reads the PREVIOUS commit's notes, to tell a
+          # new release from an edit to one that already shipped.
+          fetch-depth: 2
       - uses: actions/setup-go@v5
         with:
           go-version-file: pkg/go.mod
@@ -409,13 +413,43 @@ jobs:
       # reach that block - so the panel shows core as behind FOREVER, and nothing
       # anywhere fails. A silent permanent-orange is worth a red pipeline.
       #
-      # Checked only when the notes changed in THIS push: on any other push the
-      # top block is old and its services were built when it was written.
+      # What must be built is what this push NEWLY claims, which is not the same
+      # as what the top block names. A release is cut once and then its wording
+      # gets edited - a typo, a softened sentence, a corrected file path - and
+      # those edits touch core/updates/*.md without touching the panel or the
+      # node. Demanding a rebuild of everything the block names would make every
+      # such edit red from then on, which is what happened on 2026-08-28: the
+      # release had built core, panel and node an hour earlier, and a docs-only
+      # push that reworded it failed for naming them.
+      #
+      # So: an unchanged version means the release was already cut, and only
+      # names ADDED since the previous commit need a build in this run. A changed
+      # version is a new release, and everything it names must be built here.
       - name: Every service the release names must be built here
         if: steps.filter.outputs.notes == 'true'
         run: |
+          VERSION="${{ steps.rel.outputs.VERSION }}"
+          NAMES=$(cd pkg && go run ./cmd/relnotes services ../core/updates/platform.md ../core/updates/hosted.md)
+
+          # The previous commit's notes, read with the same parser. Unreadable
+          # (first commit, or the file was just added) leaves PREV empty, which
+          # requires everything - the safe direction.
+          PREV=""
+          OLD=$(mktemp -d)
+          if git show "HEAD^:core/updates/platform.md" > "$OLD/platform.md" 2>/dev/null              && git show "HEAD^:core/updates/hosted.md" > "$OLD/hosted.md" 2>/dev/null; then
+            PREV_VERSION=$(cd pkg && go run ./cmd/relnotes version "$OLD/platform.md" "$OLD/hosted.md" || true)
+            if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" = "$VERSION" ]; then
+              PREV=$(cd pkg && go run ./cmd/relnotes services "$OLD/platform.md" "$OLD/hosted.md" || true)
+              echo "Release $VERSION was already cut; only names added since HEAD^ need a build here."
+            fi
+          fi
+          rm -rf "$OLD"
+
           MISSING=""
-          for svc in $(cd pkg && go run ./cmd/relnotes services ../core/updates/platform.md ../core/updates/hosted.md); do
+          for svc in $NAMES; do
+            case " $PREV " in
+              *" $svc "*) continue ;;
+            esac
             case "$svc" in
               core)        BUILT="${{ steps.filter.outputs.core }}" ;;
               node)        BUILT="${{ steps.filter.outputs.node }}" ;;
@@ -436,7 +470,7 @@ jobs:
             echo "was supposed to accompany it is missing from this push."
             exit 1
           fi
-          echo "Every service the release names is being built."
+          echo "Every service this push newly claims is being built."
 
   # ----------------------------------------------
   # 3. Build + push. Changed images on push; every image on workflow_dispatch.
