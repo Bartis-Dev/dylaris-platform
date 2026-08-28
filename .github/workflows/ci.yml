@@ -14,6 +14,24 @@ on:
   pull_request:
   workflow_dispatch:
 
+# One run of this workflow at a time, per ref. QUEUED, not cancelled.
+#
+# This runner is a single shared machine, and the workflow's cost is disk and CPU
+# rather than wall-clock waiting: two runs at once do not finish in the time of
+# one, they thrash. Measured - a push and a manual dispatch five seconds apart on
+# the same commit put sixteen jobs on one runner and pushed db-tests back over
+# ten minutes, undoing the cache fix that had just taken the whole workflow from
+# 20 minutes to 5.
+#
+# cancel-in-progress stays FALSE deliberately, even though cancelling is the
+# usual reflex. This workflow BUILDS AND PUSHES IMAGES, and change detection is
+# per-service: if a push that touches core were cancelled by a later push that
+# touches only the panel, core's image would simply never be built, and nothing
+# would say so. Queueing costs a wait; cancelling costs a missing deploy.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
