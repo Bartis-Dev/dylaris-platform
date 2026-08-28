@@ -150,6 +150,19 @@ func top(path string) (release.Release, bool) {
 const (
 	maxFieldValue = 1024
 	maxEmbedTotal = 6000
+
+	// maxFieldEntries caps how many entries of a section reach Discord. The
+	// message is a NOTICE, not the notes: three lines are what someone reads in
+	// a channel, and the embed links to the full file for the rest.
+	//
+	// It also removes the failure this was written for. Discord's 1024-character
+	// field limit was being hit by the third or fourth entry, so the section
+	// ended in a bare "- ..." with no indication of how much was missing.
+	maxFieldEntries = 3
+
+	// moreReserve is space kept free for the trailing "and N more" line, so
+	// appending it can never be what pushes the field over the limit.
+	moreReserve = 48
 )
 
 // Colours by the most serious thing in the release, so the channel is skimmable
@@ -282,27 +295,34 @@ func renderEntries(entries []release.Entry) string {
 	if len(entries) == 0 {
 		return "Nothing this time."
 	}
-	const more = "- ...\n"
 	var b strings.Builder
+	shown := 0
 	for _, e := range entries {
+		if shown == maxFieldEntries {
+			break
+		}
 		line := "- " + e.Text
 		if len(e.Services) > 0 {
 			line += " (`" + strings.Join(e.Services, "`, `") + "`)"
 		}
-		// Truncate at the ENTRY boundary rather than mid-sentence, so a trimmed
-		// field never ends in half a claim about what changed.
-		if b.Len()+len(line)+1 > maxFieldValue {
+		// Cut at the ENTRY boundary rather than mid-sentence, so a trimmed field
+		// never ends in half a claim about what changed.
+		if b.Len()+len(line)+1 > maxFieldValue-moreReserve {
 			// ...unless the very first entry is already too long on its own, in
-			// which case dropping it would render the category as nothing but an
-			// ellipsis. A cut sentence beats a silent one.
-			if b.Len() == 0 {
-				b.WriteString(truncate(line, maxFieldValue-len(more)-1) + "...")
+			// which case dropping it would render the category as nothing but a
+			// pointer. A cut sentence beats a silent one.
+			if shown == 0 {
+				b.WriteString(truncate(line, maxFieldValue-moreReserve-4) + "...\n")
+				shown = 1
 			}
-			b.WriteString(more)
 			break
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
+		shown++
+	}
+	if rest := len(entries) - shown; rest > 0 {
+		fmt.Fprintf(&b, "- ...and %d more, in the full notes\n", rest)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

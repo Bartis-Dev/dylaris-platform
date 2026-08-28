@@ -15,10 +15,9 @@ Newest release first. The format is fixed and checked in CI - see the
 
 ### Features
 - Your node now reports which build it is running, so the panel can tell you
-  when an update is waiting instead of leaving you to guess. `node`
-- Updates are announced on our Discord. Pick the **BYON** or **Route-Only** role
-  under Channels & Roles to get the ones that concern you - or ignore it, the
-  panel tells you the same things.
+  when an update is waiting. `node`
+- Updates are announced on our Discord. Pick the **BYON** or **Route-Only**
+  role under Channels & Roles, or ignore it - the panel tells you the same.
 
 ### Breaking
 - Nothing.
@@ -27,14 +26,12 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Fixes
-- If your node goes offline while a server is installing, the panel now tells you
-  that instead of showing a spinner that never finishes. Nothing is lost: the
-  install picks up again on its own once the node reconnects. `node`
-- Node allowances now count correctly. Enrolment tokens and warp keys were
-  counted by separate gates, so an account could end up holding more pending
-  node identities than its plan allows and then be warned for it. Fixed on our
-  side; nothing for you to do.
-- An address allowance of zero now means zero. It was being read as "no setting"
-  and fell back to the platform default, which is unlimited when none is
-  configured. Addresses on your own domain stay unlimited and uncounted either
-  way. Fixed on our side; nothing for you to do.
+- If your node goes offline mid-install, the panel now says so instead of
+  showing a spinner. Nothing is lost; it resumes when the node reconnects.
+  `node`
+- Node allowances now count correctly. Two kinds of pending node identity were
+  counted separately, so an account could exceed its plan and then be warned
+  for it. Fixed on our side.
+- An address allowance of zero now means zero. It was read as "no setting" and
+  fell back to unlimited. Addresses on your own domain stay unlimited and
+  uncounted. Fixed on our side.
