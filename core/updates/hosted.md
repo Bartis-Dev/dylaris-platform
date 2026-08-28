@@ -16,9 +16,9 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Features
 - Your node now reports which build it is running, so the panel can tell you
   when an update is waiting instead of leaving you to guess. `node`
-- Updates are announced on our Discord. Pick the BYON or route-only role under
-  Channels & Roles to get the ones that concern you - or ignore it, the panel
-  tells you the same things.
+- Updates are announced on our Discord. Pick the **BYON** or **Route-Only** role
+  under Channels & Roles to get the ones that concern you - or ignore it, the
+  panel tells you the same things.
 
 ### Breaking
 - Nothing.

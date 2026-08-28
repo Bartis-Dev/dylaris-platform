@@ -18,10 +18,10 @@ Newest release first. The format is fixed and checked in CI - see the
   that concern them and the versions their own machines report, which for a
   BYON customer is the only place their node's build was ever visible. `core`
   `panel`
-- Releases are announced on our Discord, one message per audience, with roles you
-  pick yourself under Channels & Roles. Nothing here depends on it: the panel
-  keeps showing the same releases whether or not you use Discord, and a
-  self-hosted build announces nothing of its own.
+- Releases are announced on our Discord, one message per audience. Pick the
+  **Platform** role under Channels & Roles to be notified. Nothing here depends
+  on it: the panel keeps showing the same releases whether or not you use
+  Discord, and a self-hosted build announces nothing of its own.
 - Every operator-set limit now uses the same control and the same meaning: No
   limit for uncapped, or a number where 0 means none. That covers sub-servers per
   server, the node-local backup quota, ticket attachment quotas and the beam

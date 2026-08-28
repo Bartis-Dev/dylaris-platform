@@ -406,8 +406,16 @@ jobs:
               - 'log-shipper/**'
               - 'docker/mc-server/**'
               - 'Dockerfile'
+            # The two release-notes files BY NAME, not core/updates/*.md.
+            # That glob also matched README.md, which is documentation ABOUT the
+            # notes - and this output arms the announcement. On 2026-08-28 a push
+            # that edited only that README announced release 2026.08.28 to
+            # Discord and claimed both git tags, so the release could never be
+            # announced again. It went out with no role ping, because the role
+            # secrets were added forty minutes later.
             notes:
-              - 'core/updates/*.md'
+              - 'core/updates/platform.md'
+              - 'core/updates/hosted.md'
 
       # Validate the release notes and read the version every image is stamped
       # with. One reader, shared with Core, so the stamp cannot disagree with
