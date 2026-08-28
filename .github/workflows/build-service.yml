@@ -22,6 +22,20 @@ on:
         required: false
         type: string
         default: ""
+      release_version:
+        description: >-
+          The release this image is built from, stamped into the binary so the
+          component can report its OWN position rather than being assumed to have
+          moved whenever Core did. Computed once in detect-changes with the same
+          parser Core uses, so the stamp cannot disagree with the file.
+
+          Empty is legitimate and means "no releases yet": the component then
+          reports nothing, which is honest. It must never be given a placeholder,
+          because a component claiming a version it does not have is worse than
+          one claiming none.
+        required: false
+        type: string
+        default: ""
 
 env:
   REGISTRY: ghcr.io
@@ -82,22 +96,6 @@ jobs:
           fi
           echo "IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ inputs.component }}" >> $GITHUB_OUTPUT
 
-      # The feed length this image is being built at, stamped into the binary so
-      # the component can report its OWN update position. Counted the same way
-      # updates.LineCount does it (non-blank lines only), or the stamp would
-      # disagree with the baseline Core computes from the same file.
-      - name: Compute the update-feed baseline
-        id: feed
-        run: |
-          FEED="core/updates/feed.jsonl"
-          if [ -f "$FEED" ]; then
-            N=$(grep -cve '^[[:space:]]*$' "$FEED" || true)
-          else
-            N=""
-          fi
-          echo "BASELINE=${N}" >> $GITHUB_OUTPUT
-          echo "Update-feed baseline: ${N:-unavailable}"
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -116,6 +114,6 @@ jobs:
             ${{ steps.tags.outputs.IMAGE }}:${{ steps.tags.outputs.TAG_SHA }}
           build-args: |
             ${{ inputs.entry_path != '' && format('ENTRY_PATH={0}', inputs.entry_path) || '' }}
-            FEED_BASELINE=${{ steps.feed.outputs.BASELINE }}
-            NEXT_PUBLIC_FEED_BASELINE=${{ steps.feed.outputs.BASELINE }}
+            RELEASE_VERSION=${{ inputs.release_version }}
+            NEXT_PUBLIC_RELEASE_VERSION=${{ inputs.release_version }}
             ${{ inputs.extra_build_args }}

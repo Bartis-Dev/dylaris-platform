@@ -20,11 +20,11 @@ WORKDIR /app
 ARG NEXT_PUBLIC_API_URL=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
-# The update-feed position this bundle is built at. Baked in (not runtime) on
-# purpose: it describes THIS build, so a runtime override would only ever be a
-# lie about which panel the browser is running.
-ARG NEXT_PUBLIC_FEED_BASELINE=""
-ENV NEXT_PUBLIC_FEED_BASELINE=$NEXT_PUBLIC_FEED_BASELINE
+# The release this bundle is built from. Baked in (not runtime) on purpose: it
+# describes THIS build, so a runtime override would only ever be a lie about
+# which panel the browser is running.
+ARG NEXT_PUBLIC_RELEASE_VERSION=""
+ENV NEXT_PUBLIC_RELEASE_VERSION=$NEXT_PUBLIC_RELEASE_VERSION
 
 # Copy deps + workspace structure
 COPY --from=deps /app/ ./

@@ -144,7 +144,8 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     <UtilityCluster>
                     <CoreRegionChip />
                     <UploadManagerWidget />
-                    {/* UpdatesBell self-gates to admins only (regular users never see it). */}
+                    {/* UpdatesBell is for everyone now: an admin sees the platform notes and
+                        every component, a customer sees the customer notes and their own nodes. */}
                     <UpdatesBell />
                     <NotificationsDropdown />
                     {/* NotificationsDropdown self-gates: admins see both system checks and inbox;

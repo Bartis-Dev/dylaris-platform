@@ -11,9 +11,9 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.08.28
 
 ### Features
-- Updates now have a version. Every image carries the release it was built from,
-  and the panel shows which of your components are behind rather than a running
-  count of changelog lines. `core` `panel` `node` `log-shipper`
+- Updates now have a version. Core, the panel and every node report the release
+  they were built from, and the updates view shows which of yours are behind
+  rather than a running count of changelog lines. `core` `panel` `node`
 - Limits read the same way everywhere: leave a limit empty for unlimited, or
   switch it off and type a number, where 0 means none. Route allowances used to
   spell unlimited as -1 on one screen and as 0 on another. `core` `panel`

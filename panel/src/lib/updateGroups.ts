@@ -1,177 +1,153 @@
-// Grouping for the "What's new" modal.
+import type { UpdateComponent, UpdateInstance, Release, ReleaseEntry } from '@/lib/api/updates';
+
+// Presentation helpers for the updates view. Pure functions, so the grouping
+// rules can be tested without rendering anything.
+
+// One version, and how many of a component's instances are on it. This is what
+// turns "you have three nodes" into "two are current, one is not" - the shape a
+// single fleet-wide number could never express, and the reason node versions are
+// carried per node.
+export interface VersionGroup {
+    version: string;   // '' means the instances did not report one
+    count: number;
+    total: number;
+    outdated: boolean;
+    labels: string[];
+}
+
+// groupInstances collapses a component's instances by version.
 //
-// The feed is an append-only log, newest first once reversed by Core, so a
-// "release" is not a thing it records - the closest honest unit is a date. The
-// modal shows the newest date on its own at the top ("the last update") and every
-// older date beneath it, which is what makes it readable without inventing
-// version numbers the platform deliberately does not have.
+// Ordering is deliberate: outdated groups first, then unknown, then current.
+// The reason to open this view is to find what needs doing, so what needs doing
+// goes at the top rather than wherever the fleet happens to sort.
+export function groupInstances(instances: UpdateInstance[]): VersionGroup[] {
+    const total = instances.length;
+    const byVersion = new Map<string, VersionGroup>();
 
-export interface UpdateEntryLike {
-    date?: string;
-    service?: string;
-    type?: string;
-    summary?: string;
-}
-
-export interface UpdateGroup<T extends UpdateEntryLike> {
-    /** The group's date, verbatim from the feed. Empty when entries carry none. */
-    date: string;
-    entries: T[];
-}
-
-/**
- * Groups entries by date, preserving the order they arrive in (Core sends newest
- * first). Entries without a date land in one trailing group with an empty date
- * rather than being dropped - a malformed line should still be readable.
- */
-export function groupByDate<T extends UpdateEntryLike>(entries: T[]): UpdateGroup<T>[] {
-    const out: UpdateGroup<T>[] = [];
-    for (const e of entries) {
-        const date = (e.date ?? '').trim();
-        const last = out[out.length - 1];
-        // Consecutive-run grouping, not a map: it keeps the feed's own order
-        // instead of imposing a sort the feed never promised.
-        if (last && last.date === date) {
-            last.entries.push(e);
+    for (const inst of instances) {
+        const version = inst.version ?? '';
+        const g = byVersion.get(version);
+        if (g) {
+            g.count += 1;
+            g.labels.push(inst.label);
+            // An instance is outdated on its own merits; the group inherits it
+            // if any member has it. In practice every member of a version group
+            // agrees, but deriving it rather than assuming keeps the display
+            // honest if they ever do not.
+            g.outdated = g.outdated || inst.outdated;
         } else {
-            out.push({ date, entries: [e] });
+            byVersion.set(version, {
+                version,
+                count: 1,
+                total,
+                outdated: inst.outdated,
+                labels: [inst.label],
+            });
         }
     }
-    return out;
+
+    const rank = (g: VersionGroup) => (g.outdated ? 0 : g.version === '' ? 1 : 2);
+    return [...byVersion.values()].sort((a, b) => {
+        const r = rank(a) - rank(b);
+        if (r !== 0) return r;
+        // Newest first within a rank. Versions are CalVer with an optional
+        // same-day counter, so a plain string compare gets .10 vs .2 wrong.
+        return compareVersions(b.version, a.version);
+    });
 }
 
-/**
- * Splits the grouped feed into the newest group and the rest. Returns
- * latest = null for an empty feed, so a caller can render its empty state
- * without a length check.
- */
-export function splitLatest<T extends UpdateEntryLike>(entries: T[]): {
-    latest: UpdateGroup<T> | null;
-    earlier: UpdateGroup<T>[];
-} {
-    const groups = groupByDate(entries);
-    if (groups.length === 0) return { latest: null, earlier: [] };
-    return { latest: groups[0], earlier: groups.slice(1) };
+// compareVersions orders CalVer versions numerically per part, so 2026.08.28.10
+// sorts after 2026.08.28.2. An empty version sorts lowest, which is only ever
+// used for a stable order and never to call something outdated.
+export function compareVersions(a: string, b: string): number {
+    if (a === b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    const pa = a.split('.').map(n => parseInt(n, 10) || 0);
+    const pb = b.split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+        if (d !== 0) return d < 0 ? -1 : 1;
+    }
+    return 0;
 }
 
-/**
- * The three states the navbar icon can be in, in order of loudness:
- *  - 'new'    something arrived that this admin has not opened yet: glow + badge.
- *  - 'unread' entries exist and have been seen: outlined violet, no badge.
- *  - 'idle'   nothing to show (up to date, or an empty feed): grey.
- *
- * Kept as a pure function because the difference between the last two is exactly
- * the bug this fixes: before, "seen" and "nothing at all" rendered identically,
- * so opening the panel made the button look like a dead control.
- */
-export type BellState = 'new' | 'unread' | 'idle';
+const SERVICE_LABELS: Record<string, string> = {
+    core: 'Core',
+    panel: 'Panel',
+    node: 'Nodes',
+    'log-shipper': 'Log shipper',
+    edge: 'Edge',
+    link: 'Link',
+    hub: 'Hub',
+    warp: 'Warp',
+};
 
-export function bellState(unseen: number, entryCount: number): BellState {
-    if (unseen > 0) return 'new';
-    if (entryCount > 0) return 'unread';
+export function serviceLabel(service: string): string {
+    return SERVICE_LABELS[service] ?? service;
+}
+
+// anythingOutdated is what decides whether the button advertises work. It reads
+// the components rather than comparing the newest release to what was seen,
+// because those answer different questions: "something was published" and
+// "something of yours is behind" are not the same, and only the second is
+// actionable.
+export function anythingOutdated(components: UpdateComponent[]): boolean {
+    return components.some(c => c.outdated);
+}
+
+export type BellState = 'attention' | 'unseen' | 'idle';
+
+// bellState decides how loud the trigger is.
+//
+//   attention  something of yours is behind, or a deadline applies
+//   unseen     nothing to do, but a release you have not acknowledged exists
+//   idle       nothing to say
+//
+// The two are separate on purpose. A release that does not touch anything you
+// run is worth reading and not worth alarming you about, and collapsing the two
+// is how a notification badge becomes something people learn to ignore.
+export function bellState(opts: {
+    outdated: boolean;
+    required: boolean;
+    latest?: string;
+    seen?: string;
+}): BellState {
+    if (opts.outdated || opts.required) return 'attention';
+    if (opts.latest && opts.latest !== opts.seen) return 'unseen';
     return 'idle';
 }
 
-/**
- * How many entries in a set are BREAKING - a change that does not apply itself.
- *
- * The other types describe what changed; this one is the only one that says the
- * operator has to do something, so it is the one piece of the feed that must be
- * impossible to miss. Counting is separate from rendering so the modal can lead
- * with it instead of leaving it to be spotted in a list.
- */
-export function breakingCount<T extends UpdateEntryLike>(entries: T[]): number {
-    return entries.filter(e => (e.type ?? '').trim().toLowerCase() === 'breaking').length;
+export interface Category {
+    key: 'breaking' | 'security' | 'features' | 'fixes';
+    label: string;
+    entries: ReleaseEntry[];
 }
 
-/** True when any entry in the set is breaking. */
-export function hasBreaking<T extends UpdateEntryLike>(entries: T[]): boolean {
-    return breakingCount(entries) > 0;
+// categories returns all four, always, in the order that matters to a reader:
+// what forces action, what affects safety, what is new, what was repaired.
+//
+// The FILE stores them Features/Breaking/Security/Fixes because that is the
+// order they are written in; the reader is served by a different one, and an
+// empty category is still shown so "nothing this time" is visible rather than
+// inferred from an absence.
+export function categories(r: Release): Category[] {
+    return [
+        { key: 'breaking', label: 'Breaking', entries: r.breaking ?? [] },
+        { key: 'security', label: 'Security', entries: r.security ?? [] },
+        { key: 'features', label: 'Features', entries: r.features ?? [] },
+        { key: 'fixes', label: 'Fixes', entries: r.fixes ?? [] },
+    ];
 }
 
-/**
- * Counts per change type, in the feed's own order of first appearance, for the
- * one-line "what came with this update" summary above the latest group.
- */
-export function typeCounts<T extends UpdateEntryLike>(entries: T[]): Array<{ type: string; count: number }> {
-    const out: Array<{ type: string; count: number }> = [];
-    for (const e of entries) {
-        const type = (e.type ?? '').trim().toLowerCase() || 'update';
-        const found = out.find(o => o.type === type);
-        if (found) found.count++;
-        else out.push({ type, count: 1 });
-    }
-    return out;
-}
-
-/** Entries of one component, in the order the feed listed them. */
-export interface ServiceGroup<T extends UpdateEntryLike> {
-    /** Lowercased service name, '' for entries that carry none. */
-    service: string;
-    entries: T[];
-}
-
-/**
- * Groups entries by component, in order of first appearance.
- *
- * Unlike groupByDate this is a MAP, not a consecutive run: the feed is written
- * one line per change, so a day's entries arrive interleaved across components.
- * Run-grouping them would produce "Core, Panel, Core, Panel" for a single day,
- * which is the shape this replaces - the reader wants everything Core did, once.
- */
-export function groupByService<T extends UpdateEntryLike>(entries: T[]): ServiceGroup<T>[] {
-    const out: ServiceGroup<T>[] = [];
-    const index = new Map<string, ServiceGroup<T>>();
-    for (const e of entries) {
-        const service = (e.service ?? '').trim().toLowerCase();
-        let group = index.get(service);
-        if (!group) {
-            group = { service, entries: [] };
-            index.set(service, group);
-            out.push(group);
-        }
-        group.entries.push(e);
-    }
-    return out;
-}
-
-/**
- * The newest date's entries grouped by component, and everything older grouped
- * by component ACROSS all remaining dates.
- *
- * The older half deliberately loses its date grouping. Reading history one day
- * at a time means the same component's changes are scattered over a dozen
- * headings; per-component is how someone actually reads it ("what changed in
- * the node since I last looked"). Each entry keeps its own date for the detail.
- */
-export function splitLatestByService<T extends UpdateEntryLike>(entries: T[]): {
-    latestDate: string;
-    latest: ServiceGroup<T>[];
-    earlier: ServiceGroup<T>[];
-} {
-    const { latest, earlier } = splitLatest(entries);
-    return {
-        latestDate: latest?.date ?? '',
-        latest: latest ? groupByService(latest.entries) : [],
-        earlier: groupByService(earlier.flatMap(g => g.entries)),
-    };
-}
-
-/** Display name for a service key. Unknown keys are title-cased, not dropped. */
-export function serviceLabel(service: string): string {
-    const s = service.trim();
-    if (!s) return 'Other';
-    const known: Record<string, string> = {
-        core: 'Core',
-        panel: 'Panel',
-        node: 'Node',
-        'log-shipper': 'Log shipper',
-        edge: 'Edge',
-        link: 'Link',
-        hub: 'Hub',
-        warp: 'Warp',
-        splice: 'Splice',
-        beam: 'Beam',
-    };
-    return known[s.toLowerCase()] ?? s.charAt(0).toUpperCase() + s.slice(1);
+// formatDeadline renders a mandatory-update deadline in the reader's own zone.
+// A UTC timestamp in a warning about when their server stops working is exactly
+// the wrong place to make somebody do arithmetic.
+export function formatDeadline(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+    });
 }

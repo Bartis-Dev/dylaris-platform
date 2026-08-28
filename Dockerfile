@@ -15,19 +15,23 @@ COPY . .
 # Arguments
 ARG ENTRY_PATH
 ARG BUILD_TAGS=""
-# FEED_BASELINE stamps the update-feed line count this image is built at into
-# main.feedBaseline, so a component can report which feed position it is running
-# instead of Core assuming they all moved together. Left empty for components
-# that carry no such variable; the linker ignores -X for a symbol that does not
-# exist, so passing it everywhere is harmless.
-ARG FEED_BASELINE=""
+# RELEASE_VERSION stamps the release this image is built from into
+# main.releaseVersion, so a component can report its OWN position instead of
+# Core assuming they all moved together. Left empty for components that carry no
+# such variable; the linker ignores -X for a symbol that does not exist, so
+# passing it everywhere is harmless.
+#
+# Empty is also the correct value when the repo has no releases yet: the
+# component then reports nothing, which reads as "not reporting" rather than as
+# a version it does not have.
+ARG RELEASE_VERSION=""
 
 # Build
 # We explicitly specify the path and use sh expansion
 # BUILD_TAGS allows excluding packages (e.g. "noxdp" to skip eBPF)
-RUN echo "Building from: ${ENTRY_PATH} (tags: ${BUILD_TAGS:-none}, feed baseline: ${FEED_BASELINE:-unstamped})" && \
+RUN echo "Building from: ${ENTRY_PATH} (tags: ${BUILD_TAGS:-none}, release: ${RELEASE_VERSION:-unstamped})" && \
     LD="-s -w"; \
-    if [ -n "${FEED_BASELINE}" ]; then LD="${LD} -X main.feedBaseline=${FEED_BASELINE}"; fi && \
+    if [ -n "${RELEASE_VERSION}" ]; then LD="${LD} -X main.releaseVersion=${RELEASE_VERSION}"; fi && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags="${BUILD_TAGS}" -ldflags="${LD}" -o /app/binary ${ENTRY_PATH} && \
     chmod +x /app/binary
 

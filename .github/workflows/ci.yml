@@ -342,8 +342,16 @@ jobs:
       node: ${{ steps.filter.outputs.node }}
       panel: ${{ steps.filter.outputs.panel }}
       log-shipper: ${{ steps.filter.outputs.log-shipper }}
+      version: ${{ steps.rel.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pkg/go.mod
+          # See the go-tests job: this runner is long-lived and already holds
+          # the module and build caches, so restoring them costs minutes and
+          # buys nothing.
+          cache: false
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -371,6 +379,57 @@ jobs:
               - 'log-shipper/**'
               - 'docker/mc-server/**'
               - 'Dockerfile'
+            notes:
+              - 'core/updates/*.md'
+
+      # Validate the release notes and read the version every image is stamped
+      # with. One reader, shared with Core, so the stamp cannot disagree with
+      # the file. A malformed file fails HERE rather than shipping as an
+      # announcement nobody can parse.
+      - name: Validate the release notes
+        id: rel
+        run: |
+          cd pkg
+          go run ./cmd/relnotes validate ../core/updates/platform.md ../core/updates/hosted.md
+          V=$(go run ./cmd/relnotes version ../core/updates/platform.md)
+          echo "VERSION=${V}" >> $GITHUB_OUTPUT
+          echo "Release version: ${V:-none}"
+
+      # The failure mode one-version-per-repo introduces, closed.
+      #
+      # Only services whose files changed get rebuilt. If a release block names
+      # `core` and this run does not build core, core's stamped version can never
+      # reach that block - so the panel shows core as behind FOREVER, and nothing
+      # anywhere fails. A silent permanent-orange is worth a red pipeline.
+      #
+      # Checked only when the notes changed in THIS push: on any other push the
+      # top block is old and its services were built when it was written.
+      - name: Every service the release names must be built here
+        if: steps.filter.outputs.notes == 'true'
+        run: |
+          MISSING=""
+          for svc in $(cd pkg && go run ./cmd/relnotes services ../core/updates/platform.md); do
+            case "$svc" in
+              core)        BUILT="${{ steps.filter.outputs.core }}" ;;
+              node)        BUILT="${{ steps.filter.outputs.node }}" ;;
+              panel)       BUILT="${{ steps.filter.outputs.panel }}" ;;
+              log-shipper) BUILT="${{ steps.filter.outputs.log-shipper }}" ;;
+              # Gateway components are released from the other repo and are not
+              # built here. Naming one in platform.md is a mistake, but it is a
+              # mistake about the wrong FILE, which the parser cannot see.
+              *) echo "::warning::platform.md names '$svc', which this repo does not build"; continue ;;
+            esac
+            [ "$BUILT" = "true" ] || MISSING="$MISSING $svc"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::The new release names$MISSING, but this run does not rebuild"
+            echo "$MISSING. Those components could never reach the release that"
+            echo "names them, so the panel would show them as behind forever."
+            echo "Either the entry names the wrong service, or the change that"
+            echo "was supposed to accompany it is missing from this push."
+            exit 1
+          fi
+          echo "Every service the release names is being built."
 
   # ----------------------------------------------
   # 3. Build + push. Changed images on push; every image on workflow_dispatch.
@@ -435,6 +494,7 @@ jobs:
     uses: ./.github/workflows/build-service.yml
     with:
       component: node
+      release_version: ${{ needs.detect-changes.outputs.version }}
       entry_path: ./node/
       extra_build_args: "INSTALL_QUOTA=1"
     secrets: inherit
@@ -445,6 +505,7 @@ jobs:
     uses: ./.github/workflows/build-service.yml
     with:
       component: panel
+      release_version: ${{ needs.detect-changes.outputs.version }}
       dockerfile: ./panel/Dockerfile
       context: .
       # No baked API URL: NEXT_PUBLIC_API_URL stays empty so the published image

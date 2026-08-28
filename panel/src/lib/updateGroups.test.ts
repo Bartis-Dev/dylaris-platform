@@ -1,190 +1,157 @@
 import { describe, it, expect } from 'vitest';
 import {
-    groupByDate, splitLatest, bellState, breakingCount, hasBreaking, typeCounts,
-    groupByService, splitLatestByService, serviceLabel,
+    groupInstances, compareVersions, serviceLabel, anythingOutdated,
+    bellState, categories, formatDeadline,
 } from './updateGroups';
+import type { UpdateInstance, Release } from './api/updates';
 
-const e = (date: string, summary: string) => ({ date, summary, service: 'core', type: 'fix' });
+const inst = (label: string, version: string, outdated = false): UpdateInstance =>
+    ({ label, version: version || undefined, outdated });
 
-describe('groupByDate', () => {
-    it('groups consecutive entries that share a date', () => {
-        const groups = groupByDate([e('2026-08-17', 'a'), e('2026-08-17', 'b'), e('2026-08-16', 'c')]);
-        expect(groups.map(g => [g.date, g.entries.length])).toEqual([
-            ['2026-08-17', 2],
-            ['2026-08-16', 1],
+describe('groupInstances', () => {
+    // The case a single fleet-wide number could not express, and the reason node
+    // versions travel per node.
+    it('collapses instances by version and counts them against the total', () => {
+        const groups = groupInstances([
+            inst('node-a', '2026.08.28'),
+            inst('node-b', '2026.08.28'),
+            inst('node-c', '2026.08.20', true),
         ]);
+        expect(groups).toHaveLength(2);
+        // Outdated first: the reason to open this view is to find what needs doing.
+        expect(groups[0]).toMatchObject({ version: '2026.08.20', count: 1, total: 3, outdated: true });
+        expect(groups[1]).toMatchObject({ version: '2026.08.28', count: 2, total: 3, outdated: false });
     });
 
-    it('keeps the feed order instead of sorting', () => {
-        // The feed is append-only and Core reverses it; imposing a sort here
-        // would fight that and reorder same-day entries.
-        const groups = groupByDate([e('2026-08-01', 'older first'), e('2026-08-17', 'newer second')]);
-        expect(groups.map(g => g.date)).toEqual(['2026-08-01', '2026-08-17']);
-    });
-
-    it('starts a new group when a date repeats non-consecutively', () => {
-        const groups = groupByDate([e('2026-08-17', 'a'), e('2026-08-16', 'b'), e('2026-08-17', 'c')]);
-        expect(groups).toHaveLength(3);
-    });
-
-    it('keeps undated entries instead of dropping them', () => {
-        const groups = groupByDate([{ summary: 'malformed line' }]);
+    it('reports a uniform fleet as one group', () => {
+        const groups = groupInstances([inst('a', '2026.08.28'), inst('b', '2026.08.28')]);
         expect(groups).toHaveLength(1);
-        expect(groups[0].date).toBe('');
-        expect(groups[0].entries[0].summary).toBe('malformed line');
+        expect(groups[0]).toMatchObject({ count: 2, total: 2 });
     });
 
-    it('returns nothing for an empty feed', () => {
-        expect(groupByDate([])).toEqual([]);
+    // "Not reporting" is its own state. It must never be rendered as behind: an
+    // image built before release stamping reports nothing, and calling that
+    // outdated would flag deployments nobody has touched.
+    it('keeps unreported versions separate and not outdated', () => {
+        const groups = groupInstances([inst('a', '2026.08.28'), inst('b', '')]);
+        const unknown = groups.find(g => g.version === '');
+        expect(unknown).toBeDefined();
+        expect(unknown!.outdated).toBe(false);
+        // ...and it sorts after anything outdated but before what is current, so
+        // it reads as "look at this" without claiming a problem.
+        expect(groups[groups.length - 1].version).toBe('2026.08.28');
+    });
+
+    it('carries the instance labels so the row can name them', () => {
+        const groups = groupInstances([inst('node-fra-1', '2026.08.28'), inst('node-fra-2', '2026.08.28')]);
+        expect(groups[0].labels).toEqual(['node-fra-1', 'node-fra-2']);
+    });
+
+    it('handles a component with no instances', () => {
+        expect(groupInstances([])).toEqual([]);
     });
 });
 
-describe('splitLatest', () => {
-    it('separates the newest date from the history', () => {
-        const { latest, earlier } = splitLatest([e('2026-08-17', 'a'), e('2026-08-17', 'b'), e('2026-08-16', 'c')]);
-        expect(latest?.date).toBe('2026-08-17');
-        expect(latest?.entries).toHaveLength(2);
-        expect(earlier.map(g => g.date)).toEqual(['2026-08-16']);
+describe('compareVersions', () => {
+    // The reason versions are compared part by part rather than as strings.
+    it('orders the same-day counter numerically', () => {
+        expect(compareVersions('2026.08.28.10', '2026.08.28.2')).toBe(1);
+        expect(compareVersions('2026.08.28.2', '2026.08.28.10')).toBe(-1);
     });
 
-    it('gives a null latest for an empty feed so the caller can render its empty state', () => {
-        expect(splitLatest([])).toEqual({ latest: null, earlier: [] });
+    it('treats a bare date as older than the same date with a counter', () => {
+        expect(compareVersions('2026.08.28.1', '2026.08.28')).toBe(1);
     });
 
-    it('leaves earlier empty when there is only one date', () => {
-        const { latest, earlier } = splitLatest([e('2026-08-17', 'a')]);
-        expect(latest?.date).toBe('2026-08-17');
-        expect(earlier).toEqual([]);
+    it('orders by date', () => {
+        expect(compareVersions('2026.09.01', '2026.08.28')).toBe(1);
+        expect(compareVersions('2025.12.31', '2026.01.01')).toBe(-1);
+        expect(compareVersions('2026.08.28', '2026.08.28')).toBe(0);
+    });
+
+    it('sorts an unknown version lowest without crashing', () => {
+        expect(compareVersions('', '2026.08.28')).toBe(-1);
+        expect(compareVersions('2026.08.28', '')).toBe(1);
+        expect(compareVersions('', '')).toBe(0);
     });
 });
 
 describe('bellState', () => {
-    it('is new while something is unseen', () => {
-        expect(bellState(3, 5)).toBe('new');
+    // The two states are separate on purpose. A release that touches nothing you
+    // run is worth reading and not worth alarming you about, and collapsing them
+    // is how a badge becomes something people learn to ignore.
+    it('is attention when something you run is behind', () => {
+        expect(bellState({ outdated: true, required: false, latest: '2026.08.28', seen: '2026.08.28' }))
+            .toBe('attention');
     });
 
-    // The distinction this function exists for: before it, "seen" and "nothing
-    // at all" rendered identically, so opening the panel made the icon go grey
-    // and look like a dead control.
-    it('is unread once seen but entries remain', () => {
-        expect(bellState(0, 5)).toBe('unread');
+    it('is attention when a deadline applies, even with nothing else to say', () => {
+        expect(bellState({ outdated: false, required: true, latest: '2026.08.28', seen: '2026.08.28' }))
+            .toBe('attention');
     });
 
-    it('is idle only when there is nothing to show', () => {
-        expect(bellState(0, 0)).toBe('idle');
+    it('is unseen for a new release that does not affect you', () => {
+        expect(bellState({ outdated: false, required: false, latest: '2026.08.28', seen: '2026.08.20' }))
+            .toBe('unseen');
     });
 
-    it('treats unseen as authoritative even with no entries listed', () => {
-        // Entries are capped per service, so a large unseen count can outrun the
-        // list. The badge must still light up.
-        expect(bellState(2, 0)).toBe('new');
-    });
-});
-
-describe('breakingCount / hasBreaking', () => {
-    // "breaking" is the only type that means the operator must act. Everything
-    // else describes what changed; this decides whether the modal leads with a
-    // warning, so it must not be lost to casing or stray whitespace in a feed
-    // line nobody validates.
-    it('counts breaking entries regardless of casing or padding', () => {
-        expect(breakingCount([
-            { type: 'breaking' }, { type: 'BREAKING' }, { type: '  Breaking ' },
-            { type: 'feature' }, { type: 'fix' },
-        ])).toBe(3);
+    it('is idle once acknowledged and nothing is behind', () => {
+        expect(bellState({ outdated: false, required: false, latest: '2026.08.28', seen: '2026.08.28' }))
+            .toBe('idle');
     });
 
-    it('is zero for a feed with nothing breaking', () => {
-        expect(breakingCount([{ type: 'feature' }, { type: 'fix' }])).toBe(0);
-        expect(hasBreaking([{ type: 'feature' }])).toBe(false);
-        expect(hasBreaking([])).toBe(false);
-    });
-
-    it('does not treat a missing type as breaking', () => {
-        expect(hasBreaking([{ summary: 'no type at all' }])).toBe(false);
+    it('is idle when nothing has been published at all', () => {
+        expect(bellState({ outdated: false, required: false })).toBe('idle');
     });
 });
 
-describe('typeCounts', () => {
-    it('counts per type in first-appearance order', () => {
-        expect(typeCounts([
-            { type: 'feature' }, { type: 'fix' }, { type: 'feature' },
-        ])).toEqual([{ type: 'feature', count: 2 }, { type: 'fix', count: 1 }]);
+describe('anythingOutdated', () => {
+    it('is true when any component is behind', () => {
+        expect(anythingOutdated([
+            { service: 'core', outdated: false, instances: [] },
+            { service: 'node', outdated: true, instances: [] },
+        ])).toBe(true);
     });
-
-    it('buckets an absent type as "update" rather than dropping the entry', () => {
-        expect(typeCounts([{ summary: 'x' }])).toEqual([{ type: 'update', count: 1 }]);
-    });
-});
-
-describe('groupByService', () => {
-    const e = (service: string, summary: string, date = '2026-08-18') => ({ service, summary, date });
-
-    it('collects a component ONCE even when its entries are interleaved', () => {
-        // The regression this exists for: the feed is one line per change, so a
-        // day arrives as core, panel, core, panel and run-grouping produced four
-        // headings for two components.
-        const groups = groupByService([
-            e('core', 'a'), e('panel', 'b'), e('core', 'c'), e('panel', 'd'), e('core', 'x'),
-        ]);
-        expect(groups.map(g => g.service)).toEqual(['core', 'panel']);
-        expect(groups[0].entries).toHaveLength(3);
-        expect(groups[1].entries).toHaveLength(2);
-    });
-
-    it('keeps first-appearance order rather than sorting', () => {
-        const groups = groupByService([e('node', 'a'), e('core', 'b')]);
-        expect(groups.map(g => g.service)).toEqual(['node', 'core']);
-    });
-
-    it('normalises case and whitespace so one component never becomes two', () => {
-        const groups = groupByService([e('Core', 'a'), e(' core ', 'b')]);
-        expect(groups).toHaveLength(1);
-        expect(groups[0].service).toBe('core');
-    });
-
-    it('keeps entries with no service instead of dropping them', () => {
-        const groups = groupByService([e('', 'orphan')]);
-        expect(groups).toHaveLength(1);
-        expect(groups[0].entries[0].summary).toBe('orphan');
+    it('is false for an empty or current fleet', () => {
+        expect(anythingOutdated([])).toBe(false);
+        expect(anythingOutdated([{ service: 'core', outdated: false, instances: [] }])).toBe(false);
     });
 });
 
-describe('splitLatestByService', () => {
-    const e = (date: string, service: string, summary: string) => ({ date, service, summary });
+describe('categories', () => {
+    const empty: Release = { version: '2026.08.28', features: null, breaking: null, security: null, fixes: null };
 
-    it('splits the newest date out and groups both halves by component', () => {
-        const { latestDate, latest, earlier } = splitLatestByService([
-            e('2026-08-18', 'core', 'new core'),
-            e('2026-08-18', 'panel', 'new panel'),
-            e('2026-08-17', 'core', 'old core'),
-            e('2026-08-16', 'core', 'older core'),
-            e('2026-08-16', 'node', 'old node'),
-        ]);
-        expect(latestDate).toBe('2026-08-18');
-        expect(latest.map(g => g.service)).toEqual(['core', 'panel']);
-        // The older half loses its date grouping on purpose: both older core
-        // entries belong under ONE Core heading, across the two dates.
-        expect(earlier.map(g => g.service)).toEqual(['core', 'node']);
-        expect(earlier[0].entries).toHaveLength(2);
+    // All four, always. An absent Security heading reads as "nobody filled this
+    // in", which is a very different statement from "no security fixes".
+    it('returns all four even when every one is empty', () => {
+        const cats = categories(empty);
+        expect(cats.map(c => c.key)).toEqual(['breaking', 'security', 'features', 'fixes']);
+        expect(cats.every(c => c.entries.length === 0)).toBe(true);
     });
 
-    it('is empty for an empty feed rather than throwing', () => {
-        const { latestDate, latest, earlier } = splitLatestByService([]);
-        expect(latestDate).toBe('');
-        expect(latest).toEqual([]);
-        expect(earlier).toEqual([]);
+    // Reader order, not file order: what forces action comes first.
+    it('leads with breaking and security', () => {
+        const cats = categories({ ...empty, features: [{ text: 'f' }], breaking: [{ text: 'b' }] });
+        expect(cats[0].entries[0].text).toBe('b');
+        expect(cats.find(c => c.key === 'features')!.entries[0].text).toBe('f');
     });
 });
 
 describe('serviceLabel', () => {
-    it('names the known components', () => {
-        expect(serviceLabel('core')).toBe('Core');
+    it('names the known components and passes anything else through', () => {
+        expect(serviceLabel('node')).toBe('Nodes');
         expect(serviceLabel('log-shipper')).toBe('Log shipper');
+        expect(serviceLabel('something-new')).toBe('something-new');
     });
-    it('title-cases an unknown one instead of dropping it', () => {
-        expect(serviceLabel('solder')).toBe('Solder');
+});
+
+describe('formatDeadline', () => {
+    it('returns the input unchanged when it is not a date', () => {
+        expect(formatDeadline('not a date')).toBe('not a date');
     });
-    it('has a label for an entry with no service', () => {
-        expect(serviceLabel('')).toBe('Other');
+    it('renders a real timestamp as something other than the raw ISO string', () => {
+        const out = formatDeadline('2026-09-05T14:00:00Z');
+        expect(out).not.toBe('2026-09-05T14:00:00Z');
+        expect(out).toContain('2026');
     });
 });
