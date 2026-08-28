@@ -351,9 +351,17 @@ func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request
 			filter.AssignedTeam = me.SupportTeam
 		}
 	case "unassigned":
-		filter.AssignedTeam = "__unassigned__"
-		// Special sentinel handled in store would be ideal; we instead
-		// post-filter below for simplicity since the cardinality is low.
+		// No store-side filter here on purpose - the post-filter below does it.
+		//
+		// This used to set filter.AssignedTeam to a "__unassigned__" sentinel,
+		// with a comment saying the store would ideally understand it and that
+		// we post-filter instead. The store does not understand it: AssignedTeam
+		// goes straight into "t.assigned_team = $n", so the query asked for
+		// tickets belonging to a team literally named __unassigned__. No row has
+		// ever matched, and a post-filter can only narrow what the query
+		// returned - so the unassigned scope came back empty for everyone,
+		// admins included, and the triage queue a supporter picks work up from
+		// simply had nothing in it.
 	}
 
 	tickets, err := h.state.Store.ListTickets(filter)
