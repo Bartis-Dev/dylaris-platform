@@ -33,8 +33,25 @@ const coreLeaderKey = "dylaris:core:leader"
 // one HTTP request walk an unbounded keyspace.
 const coreScanKeyBudget = 10000
 
-// OnlineCoreIDs returns the ids of the Core instances currently heartbeating,
-// sorted and deduplicated.
+// OnlineCoreIDs returns just the ids, for the callers that only need to know
+// how many Cores are online. It is the same walk as OnlineCores, so the two can
+// never disagree about who is up.
+func OnlineCoreIDs(ctx context.Context, rdb *redis.Client) ([]string, error) {
+	cores, err := OnlineCores(ctx, rdb)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(cores))
+	for _, c := range cores {
+		ids = append(ids, c.ID)
+	}
+	return ids, nil
+}
+
+// OnlineCores returns the heartbeat of every Core instance currently
+// heartbeating, sorted by id and deduplicated. The version each carries is
+// what lets a reader report the whole fleet rather than only the process it
+// happens to be talking to.
 //
 // The key budget is checked once per SCAN batch rather than per key, and the
 // COUNT passed to SCAN is a hint the server may exceed, so the real bound is
@@ -60,12 +77,12 @@ const coreScanKeyBudget = 10000
 //     the key then expires rather than being deleted. A Core that shuts down
 //     cleanly deletes its own key (CoreHeartbeatService.Stop), so an orderly
 //     rolling restart no longer shows the outgoing instance.
-func OnlineCoreIDs(ctx context.Context, rdb *redis.Client) ([]string, error) {
+func OnlineCores(ctx context.Context, rdb *redis.Client) ([]CoreHeartbeat, error) {
 	if rdb == nil {
 		return nil, fmt.Errorf("core instances: no redis client")
 	}
 
-	seen := make(map[string]struct{})
+	seen := make(map[string]CoreHeartbeat)
 	var cursor uint64
 	examined := 0
 
@@ -111,7 +128,9 @@ func OnlineCoreIDs(ctx context.Context, rdb *redis.Client) ([]string, error) {
 			// Keyed on the id inside the payload rather than the key name, so
 			// a stray key holding a duplicate heartbeat cannot inflate the
 			// count past the number of distinct instances.
-			seen[hb.ID] = struct{}{}
+			if _, dup := seen[hb.ID]; !dup {
+				seen[hb.ID] = hb
+			}
 		}
 
 		cursor = next
@@ -120,10 +139,10 @@ func OnlineCoreIDs(ctx context.Context, rdb *redis.Client) ([]string, error) {
 		}
 	}
 
-	ids := make([]string, 0, len(seen))
-	for id := range seen {
-		ids = append(ids, id)
+	out := make([]CoreHeartbeat, 0, len(seen))
+	for _, hb := range seen {
+		out = append(out, hb)
 	}
-	sort.Strings(ids)
-	return ids, nil
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }

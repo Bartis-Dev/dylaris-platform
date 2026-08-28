@@ -234,6 +234,7 @@ func main() {
 		UpdatesURLPlatform:  cfg.UpdatesURLPlatform,
 		UpdatesURLHosted:    cfg.UpdatesURLHosted,
 		ReleaseVersion:      coreReleaseVersion().String(),
+		CoreID:              cfg.CoreID,
 	}
 
 	// Demo showcase read access flows through the resolver so the RequireCap
@@ -624,7 +625,7 @@ func main() {
 	}
 
 	// Core Heartbeat in Redis (so Nodes can discover this Core)
-	coreHeartbeat := services.NewCoreHeartbeatService(redisClient, cfg.CoreID, cfg.Region, cfg.GRPCPort)
+	coreHeartbeat := services.NewCoreHeartbeatService(redisClient, cfg.CoreID, cfg.Region, coreReleaseVersion().String(), cfg.GRPCPort)
 	coreHeartbeat.Start()
 
 	// Shared-storage reachability. This Core PROVES it can write to and read

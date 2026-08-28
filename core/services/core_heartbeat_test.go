@@ -34,7 +34,7 @@ func waitForStop(t *testing.T, s *CoreHeartbeatService) {
 // the reader are pinned together.
 func TestCoreHeartbeat_StopRemovesThisCoreFromTheOnlineSet(t *testing.T) {
 	rdb, _ := newCoreInstancesRedis(t)
-	svc := NewCoreHeartbeatService(rdb, "core-a", "default", 25501)
+	svc := NewCoreHeartbeatService(rdb, "core-a", "default", "2026.08.28", 25501)
 
 	svc.Start()
 
@@ -63,7 +63,7 @@ func TestCoreHeartbeat_StopRemovesThisCoreFromTheOnlineSet(t *testing.T) {
 // Stop would block the whole shutdown sequence forever.
 func TestCoreHeartbeat_StopWithoutStartReturns(t *testing.T) {
 	rdb, _ := newCoreInstancesRedis(t)
-	svc := NewCoreHeartbeatService(rdb, "core-a", "default", 25501)
+	svc := NewCoreHeartbeatService(rdb, "core-a", "default", "2026.08.28", 25501)
 
 	waitForStop(t, svc)
 }
@@ -73,7 +73,7 @@ func TestCoreHeartbeat_StopWithoutStartReturns(t *testing.T) {
 // Stop must take the already-stopped branch.
 func TestCoreHeartbeat_StopTwiceReturns(t *testing.T) {
 	rdb, _ := newCoreInstancesRedis(t)
-	svc := NewCoreHeartbeatService(rdb, "core-a", "default", 25501)
+	svc := NewCoreHeartbeatService(rdb, "core-a", "default", "2026.08.28", 25501)
 
 	svc.Start()
 	waitForStop(t, svc)
@@ -86,7 +86,7 @@ func TestCoreHeartbeat_StopTwiceReturns(t *testing.T) {
 // observable, since that is when the close happens.
 func TestCoreHeartbeat_StartTwiceDoesNotLaunchASecondLoop(t *testing.T) {
 	rdb, _ := newCoreInstancesRedis(t)
-	svc := NewCoreHeartbeatService(rdb, "core-a", "default", 25501)
+	svc := NewCoreHeartbeatService(rdb, "core-a", "default", "2026.08.28", 25501)
 
 	svc.Start()
 	svc.Start()
@@ -99,7 +99,7 @@ func TestCoreHeartbeat_StartTwiceDoesNotLaunchASecondLoop(t *testing.T) {
 // panicking on the way out is not.
 func TestCoreHeartbeat_StopSurvivesAnUnreachableRedis(t *testing.T) {
 	rdb, mr := newCoreInstancesRedis(t)
-	svc := NewCoreHeartbeatService(rdb, "core-a", "default", 25501)
+	svc := NewCoreHeartbeatService(rdb, "core-a", "default", "2026.08.28", 25501)
 
 	svc.Start()
 	mr.Close()

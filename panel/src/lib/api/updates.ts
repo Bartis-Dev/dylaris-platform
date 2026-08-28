@@ -43,6 +43,12 @@ export interface UpdateComponent {
     service: string;
     latest?: string;
     outdated: boolean;
+    // Whether `instances` is the WHOLE set. True for Cores and nodes, which
+    // announce themselves to Core; false for the panel, which is a static
+    // bundle in a browser and can only report the copy that served this
+    // request. A fraction is a claim about completeness, so it is only shown
+    // where that claim holds.
+    countable: boolean;
     instances: UpdateInstance[];
 }
 

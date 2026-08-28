@@ -88,9 +88,16 @@ type instance struct {
 // newest release that NAMES this component, which is the whole reason one
 // version per repo does not mark everything outdated at once.
 type componentBlock struct {
-	Service   string     `json:"service"`
-	Latest    string     `json:"latest,omitempty"`
-	Outdated  bool       `json:"outdated"`
+	Service  string `json:"service"`
+	Latest   string `json:"latest,omitempty"`
+	Outdated bool   `json:"outdated"`
+
+	// Countable says whether Instances is the WHOLE set. It is for Cores and
+	// nodes, which announce themselves; it is not for the panel, which is a
+	// static bundle in a browser and can only ever report the one copy that
+	// served this request. Rendering "1/1" for a panel behind two replicas
+	// would be a claim Core is in no position to make.
+	Countable bool       `json:"countable"`
 	Instances []instance `json:"instances"`
 }
 
@@ -182,7 +189,7 @@ func (h *UpdatesHandler) components(r *http.Request, releases []release.Release,
 	byService := map[string][]instance{}
 
 	if isAdmin {
-		byService["core"] = []instance{versioned("core", h.state.ReleaseVersion, releases, "core")}
+		byService["core"] = h.cores(r.Context(), releases)
 		if pv := strings.TrimSpace(r.URL.Query().Get("panelVersion")); pv != "" {
 			// The panel is a static bundle in someone's browser, so Core has no
 			// other way to see which build it is. Spoofable, and harmless: it
@@ -210,7 +217,7 @@ func (h *UpdatesHandler) components(r *http.Request, releases []release.Release,
 		if !seen && named == "" {
 			continue
 		}
-		block := componentBlock{Service: svc, Latest: named, Instances: insts}
+		block := componentBlock{Service: svc, Latest: named, Countable: svc != "panel", Instances: insts}
 		if block.Instances == nil {
 			block.Instances = []instance{}
 		}
@@ -220,6 +227,50 @@ func (h *UpdatesHandler) components(r *http.Request, releases []release.Release,
 			}
 		}
 		out = append(out, block)
+	}
+	return out
+}
+
+// cores lists every Core instance, not just the one answering this request.
+//
+// Cores announce themselves in Redis with a 30s TTL (services.CoreHeartbeat),
+// which is the same set the shared-storage checks already gate on, so the
+// updates view reports the fleet the operator actually runs. Reporting only
+// the responder is how two Cores on two builds read as "1/1, current" - the
+// one case a per-component version is supposed to catch.
+//
+// Falls back to this Core alone when Redis cannot answer: a version this
+// process knows for certain beats an error, and an under-reported fleet is the
+// same thing the caller saw before. The responder is always present even if its
+// own heartbeat has not landed yet.
+func (h *UpdatesHandler) cores(ctx context.Context, releases []release.Release) []instance {
+	self := h.state.CoreID
+	if self == "" {
+		self = "core"
+	}
+
+	hbs, err := services.OnlineCores(ctx, h.state.Redis)
+	if err != nil || len(hbs) == 0 {
+		if err != nil {
+			log.Printf("updates: listing Core instances: %v", err)
+		}
+		return []instance{versioned(self, h.state.ReleaseVersion, releases, "core")}
+	}
+
+	out := make([]instance, 0, len(hbs)+1)
+	seenSelf := false
+	for _, hb := range hbs {
+		v := hb.Version
+		if hb.ID == self {
+			seenSelf = true
+			// Trust the running process over its own heartbeat, which may
+			// predate a restart onto a new build by up to its TTL.
+			v = h.state.ReleaseVersion
+		}
+		out = append(out, versioned(hb.ID, v, releases, "core"))
+	}
+	if !seenSelf {
+		out = append(out, versioned(self, h.state.ReleaseVersion, releases, "core"))
 	}
 	return out
 }

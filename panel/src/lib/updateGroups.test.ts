@@ -108,13 +108,13 @@ describe('bellState', () => {
 describe('anythingOutdated', () => {
     it('is true when any component is behind', () => {
         expect(anythingOutdated([
-            { service: 'core', outdated: false, instances: [] },
-            { service: 'node', outdated: true, instances: [] },
+            { service: 'core', outdated: false, countable: true, instances: [] },
+            { service: 'node', outdated: true, countable: true, instances: [] },
         ])).toBe(true);
     });
     it('is false for an empty or current fleet', () => {
         expect(anythingOutdated([])).toBe(false);
-        expect(anythingOutdated([{ service: 'core', outdated: false, instances: [] }])).toBe(false);
+        expect(anythingOutdated([{ service: 'core', outdated: false, countable: true, instances: [] }])).toBe(false);
     });
 });
 

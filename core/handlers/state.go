@@ -204,6 +204,11 @@ type AppState struct {
 	// itself behind for a release it already contains.
 	ReleaseVersion string
 
+	// CoreID is DYLARIS_CORE_ID, this instance's own name in the heartbeat
+	// keyspace. The updates view needs it to tell its own row apart from a
+	// sibling Core's.
+	CoreID string
+
 	// modpackStorage caches "does modpack storage resolve to a provider", which
 	// GET /api/system/features reports to every user at boot. See
 	// modpack_storage_state.go for why that call must not run per request.

@@ -45,13 +45,19 @@ const CATEGORY_STYLES: Record<string, { color: string; dot: string }> = {
 // The count is written as a fraction rather than a bare number because "1 on
 // 2026.08.20" does not say whether that is all of them or one straggler, and
 // the straggler is the whole reason to look.
-function VersionRow({ group }: { group: VersionGroup }) {
+//
+// It is omitted entirely where the fraction would lie. The panel reports itself
+// through the browser that loaded it, so Core sees exactly one copy however many
+// replicas are running, and "1/1" would read as "all of them are current".
+function VersionRow({ group, countable }: { group: VersionGroup; countable: boolean }) {
     const unknown = group.version === '';
     return (
         <div className="flex items-baseline gap-2 text-[12px] leading-relaxed">
-            <span className="font-mono text-(--base-06) tabular-nums shrink-0">
-                {group.count}/{group.total}
-            </span>
+            {countable && (
+                <span className="font-mono text-(--base-06) tabular-nums shrink-0">
+                    {group.count}/{group.total}
+                </span>
+            )}
             <span
                 className={`font-mono ${
                     group.outdated ? 'text-(--warning-light)' : unknown ? 'text-(--base-05)' : 'text-(--base-08)'
@@ -87,7 +93,9 @@ function ComponentRow({ component }: { component: UpdateComponent }) {
                     // and is never told about is exactly the case this exists for.
                     <div className="text-[12px] text-(--base-05)">Nothing reporting this component.</div>
                 ) : (
-                    groups.map(g => <VersionRow key={g.version || 'unknown'} group={g} />)
+                    groups.map(g => (
+                        <VersionRow key={g.version || 'unknown'} group={g} countable={component.countable} />
+                    ))
                 )}
             </div>
         </div>

@@ -22,6 +22,12 @@ type CoreHeartbeat struct {
 	Region   string  `json:"region"`
 	GRPCAddr string  `json:"grpc_addr"` // host:port for gRPC connections
 	IPs      CoreIPs `json:"ips"`
+
+	// Version is the release this Core image was built from, so the updates
+	// view can report every Core rather than only the one answering the
+	// request. Omitted when unstamped, which reads as "not reporting" and never
+	// as old - a Core built before this field existed must not be flagged.
+	Version string `json:"version,omitempty"`
 }
 
 type CoreIPs struct {
@@ -34,13 +40,14 @@ type CoreHeartbeatService struct {
 	coreID   string
 	region   string
 	grpcPort int
+	version  string
 
 	started atomic.Bool
 	stopCh  chan struct{}
 	doneCh  chan struct{}
 }
 
-func NewCoreHeartbeatService(r *redis.Client, coreID, region string, grpcPort int) *CoreHeartbeatService {
+func NewCoreHeartbeatService(r *redis.Client, coreID, region, version string, grpcPort int) *CoreHeartbeatService {
 	if region == "" {
 		region = "default"
 	}
@@ -48,6 +55,7 @@ func NewCoreHeartbeatService(r *redis.Client, coreID, region string, grpcPort in
 		redis:    r,
 		coreID:   coreID,
 		region:   region,
+		version:  version,
 		grpcPort: grpcPort,
 		stopCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
@@ -141,6 +149,7 @@ func (s *CoreHeartbeatService) writeHeartbeat() {
 	hb := CoreHeartbeat{
 		ID:       s.coreID,
 		Region:   s.region,
+		Version:  s.version,
 		GRPCAddr: grpcAddr,
 		IPs: CoreIPs{
 			Public:  publicIP,
