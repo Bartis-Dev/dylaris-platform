@@ -353,7 +353,12 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 	}
 	defer rc.Close()
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	// Through the shared helper like every other download. safeBackupName
+	// already rejects a name with a slash or "..", and the object has to exist
+	// to get this far, so nothing hostile can reach the header here today -
+	// which is exactly why it is worth routing through the one place that does
+	// not require anybody to re-derive that argument.
+	setAttachmentDisposition(w, name)
 	io.Copy(w, rc)
 }
 
