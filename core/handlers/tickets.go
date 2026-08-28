@@ -551,13 +551,10 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 	// involved minus the actor.
 	link := "/tickets/" + strconv.Itoa(id)
 	if req.IsInternal {
-		// Narrow recipient list: just the assignee (if not the actor).
-		if t.AssignedUserID != nil && *t.AssignedUserID != userID {
-			EmitTicketNotification(h.state, []string{*t.AssignedUserID},
-				NotifyTypeTicketReply,
-				"Internal note on #"+strconv.Itoa(id),
-				t.Title, link)
-		}
+		EmitTicketNotification(h.state, internalNoteRecipients(h.state, t, id, userID),
+			NotifyTypeTicketReply,
+			"Internal note on #"+strconv.Itoa(id),
+			t.Title, link)
 	} else {
 		recipients, _ := h.state.Store.ListTicketParticipantsForNotify(id, userID)
 		EmitTicketNotification(h.state, recipients,
@@ -571,6 +568,55 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": msg,
 	})
+}
+
+// internalNoteRecipients is who may be told an internal note exists: the
+// assignee, plus any watcher who is support or admin. Never the ticket owner
+// and never a plain-user watcher - that is the whole point of an internal note.
+// The actor is excluded, and the list is deduplicated.
+//
+// The watcher half was described at the call site ("assignee + any support
+// watchers") from the first commit and never written: only the assignee was
+// notified, so a supporter deliberately CC'd on a ticket learned nothing about
+// internal notes on it.
+//
+// Each watcher's permissions are resolved individually rather than carried on
+// the watcher row. That is one lookup per watcher, on a list that is small by
+// construction and only walked when an internal note is posted - cheaper than
+// widening the row and keeping a copy of a role in sync with the user table.
+//
+// A watcher lookup failure returns what was collected so far rather than
+// nothing: the assignee still gets told. Failing the other way would make a
+// database blip silently swallow the notification for everyone.
+func internalNoteRecipients(state *AppState, t *models.Ticket, ticketID int, actorID string) []string {
+	if state == nil || t == nil {
+		return nil
+	}
+	seen := map[string]bool{actorID: true}
+	var out []string
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if t.AssignedUserID != nil {
+		add(*t.AssignedUserID)
+	}
+	watchers, err := state.Store.ListTicketWatchers(ticketID)
+	if err != nil {
+		return out
+	}
+	for _, w := range watchers {
+		if seen[w.UserID] {
+			continue
+		}
+		if p := LoadEffectivePermissions(state, w.UserID); p.IsAdmin || p.IsSupport {
+			add(w.UserID)
+		}
+	}
+	return out
 }
 
 type statusRequest struct {
