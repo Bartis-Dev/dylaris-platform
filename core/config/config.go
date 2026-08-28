@@ -151,14 +151,17 @@ type Config struct {
 	// silently. One variable cannot be half-set.
 	TabProxyHostSuffix string
 
-	// UpdatesFeedURLPlatform / UpdatesFeedURLGateway are the PUBLIC raw URLs of
-	// the append-only JSONL update feeds the admin "what's new" bell diffs against
-	// the build-baked baseline. Platform defaults to its own public-repo raw feed;
-	// gateway is empty until the private gateway feed is cross-pushed into the
-	// public platform repo (owner infra). Both fail open when unset or unreachable
-	// (the bell simply shows no updates).
-	UpdatesFeedURLPlatform string
-	UpdatesFeedURLGateway  string
+	// UpdatesURLPlatform / UpdatesURLHosted are the PUBLIC raw URLs of the two
+	// release-notes files the updates view fetches: platform.md for people who RUN
+	// the platform, hosted.md for DYLARIS customers. Both default to this repo's
+	// own public raw URLs.
+	//
+	// Setting either to empty is meaningful, not a mistake: the build's EMBEDDED
+	// copy is used instead, which is what an air-gapped install wants. Fetching
+	// fails open to the same copy, so a changelog outage never becomes an error in
+	// front of an operator's actual work.
+	UpdatesURLPlatform string
+	UpdatesURLHosted   string
 
 	// TrustedProxyCIDRs are the networks a reverse proxy in front of Core may
 	// occupy. It decides whether an X-Forwarded-For header is believed: the
@@ -267,8 +270,8 @@ func LoadConfig() (Config, error) {
 		// Platform defaults to its own public repo's raw feed (works once the repo
 		// is public + the feed is populated); gateway stays empty until the feed is
 		// cross-pushed there. Override both via env for a self-hosted mirror.
-		UpdatesFeedURLPlatform: getEnv("UPDATES_FEED_URL_PLATFORM", "https://raw.githubusercontent.com/Bartis-Dev/dylaris-platform/main/core/updates/feed.jsonl"),
-		UpdatesFeedURLGateway:  getEnv("UPDATES_FEED_URL_GATEWAY", ""),
+		UpdatesURLPlatform: getEnv("UPDATES_URL_PLATFORM", "https://raw.githubusercontent.com/Bartis-Dev/dylaris-platform/main/core/updates/platform.md"),
+		UpdatesURLHosted:   getEnv("UPDATES_URL_HOSTED", "https://raw.githubusercontent.com/Bartis-Dev/dylaris-platform/main/core/updates/hosted.md"),
 
 		TrustedProxyCIDRs: ParseTrustedProxyCIDRs(getEnv("TRUSTED_PROXY_CIDRS", "")),
 	}

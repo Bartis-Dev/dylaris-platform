@@ -983,13 +983,13 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	if portRangeNotice != "" {
 		data["portRangeNotice"] = portRangeNotice
 	}
-	// Which update-feed position this IMAGE was built at. Core cannot see it any
-	// other way, and without it the panel assumes the node moved whenever Core
-	// did - so an operator who updates Core and leaves the nodes alone is told
-	// the node's changes are installed. Omitted entirely when unstamped, so an
-	// older node reads as "unknown" rather than as "built at zero".
-	if b := feedBaselineValue(); b > 0 {
-		data["feedBaseline"] = b
+	// Which release this IMAGE was built from. Core cannot see it any other way,
+	// and without it the panel assumes the node moved whenever Core did - so an
+	// operator who updates Core and leaves the nodes alone is told the node's
+	// changes are installed. Omitted entirely when unstamped, so an unstamped
+	// node reads as "unknown" rather than as older than every release.
+	if v := nodeReleaseVersion(); !v.IsZero() {
+		data["releaseVersion"] = v.String()
 	}
 	// Link sidecar image state. Reported only when this node manages its own
 	// Link: on a node with an operator-deployed Link the panel must not offer an

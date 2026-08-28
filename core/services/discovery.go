@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -57,13 +56,17 @@ type NodeHeartbeat struct {
 	// NEW node presents a valid one, it is bound to that user (owner_id). Empty
 	// for platform nodes.
 	EnrollToken string `json:"enrollToken,omitempty"`
-	// FeedBaseline is the update-feed length this node's IMAGE was built at,
-	// stamped in at build time. It is what lets the panel say whether the NODE is
-	// behind, rather than assuming it moved whenever Core did - an operator who
-	// updates Core and leaves the nodes alone was previously told the node's
-	// changes were installed. 0 means "this build does not report one" (an older
-	// node image), which the reader must treat as unknown, not as zero.
-	FeedBaseline int `json:"feedBaseline,omitempty"`
+	// ReleaseVersion is the release this node's IMAGE was built from, stamped in
+	// at build time. It is what lets the panel say whether the NODE is behind,
+	// rather than assuming it moved whenever Core did - an operator who updates
+	// Core and leaves the nodes alone was previously told the node's changes were
+	// installed. Empty means "this build does not report one", which the reader
+	// must treat as unknown, never as very old.
+	//
+	// It is reported PER NODE and read per node. There used to be a fleet-wide
+	// minimum in Redis, which cannot express "two of your three nodes are
+	// current" - the case an operator most needs to see.
+	ReleaseVersion string `json:"releaseVersion,omitempty"`
 	// Link sidecar image state, reported only by nodes that manage their own Link.
 	// LinkManaged distinguishes "this node has no Link to update" from "this node
 	// runs an operator-deployed Link", so the panel does not offer a button that
@@ -222,12 +225,6 @@ func (s *DiscoveryService) checkCPUTopologyChange(ctx context.Context, node *mod
 	s.redis.Set(ctx, sigKey, sig, 0)
 }
 
-// NodeFleetFeedBaselineKey holds the LOWEST update-feed baseline reported by any
-// live node, refreshed every discovery tick with a short TTL. Read by the
-// updates endpoint so the panel can say whether the node fleet is behind
-// independently of Core.
-const NodeFleetFeedBaselineKey = "dylaris:nodes:feed_baseline"
-
 // NodeLinkStateKey holds a nodeID -> NodeLinkState map for the nodes that manage
 // their own Link sidecar. Published by the discovery sweep so the panel can show
 // pending Link updates without a DB column: the value is live state with a TTL,
@@ -255,11 +252,6 @@ func (s *DiscoveryService) scanNodes() {
 	}
 
 	activeNodeTokens := make(map[string]bool)
-	// The LOWEST baseline any live node reports. A fleet is only as updated as
-	// its oldest member, so one node left behind has to make the whole fleet read
-	// as behind - reporting the newest would hide exactly the case this exists
-	// for. -1 = no live node reported one (all older images, or none online).
-	fleetFeedBaseline := -1
 	linkStates := map[string]NodeLinkState{}
 
 	for _, key := range keys {
@@ -280,9 +272,6 @@ func (s *DiscoveryService) scanNodes() {
 
 		// 3. Find or create Node in DB
 		activeNodeTokens[hb.ID] = true
-		if hb.FeedBaseline > 0 && (fleetFeedBaseline < 0 || hb.FeedBaseline < fleetFeedBaseline) {
-			fleetFeedBaseline = hb.FeedBaseline
-		}
 		if hb.LinkManaged {
 			linkStates[hb.ID] = NodeLinkState{
 				Managed:         true,
@@ -383,13 +372,6 @@ func (s *DiscoveryService) scanNodes() {
 	// but it was indistinguishable from a healthy round in which every node
 	// answered - so an operator watching nodes flip had no way to tell the two
 	// apart. Say which one happened.
-	// Publish the fleet baseline for the updates endpoint. A short TTL rather
-	// than a persistent key: a stale value would keep claiming the fleet is
-	// behind long after the nodes it described stopped reporting, and "no answer"
-	// is the honest reading of a silent fleet.
-	if fleetFeedBaseline > 0 {
-		s.redis.Set(ctx, NodeFleetFeedBaselineKey, strconv.Itoa(fleetFeedBaseline), 5*time.Minute)
-	}
 	// Same short-TTL reasoning as the baseline above: a node that stopped
 	// reporting must stop claiming an update is pending for it, rather than leave
 	// the panel offering a button for a node that is not there.

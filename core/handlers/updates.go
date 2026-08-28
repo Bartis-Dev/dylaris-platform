@@ -4,330 +4,368 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"dylaris-core/services"
 	"dylaris-core/updates"
+
+	"dylaris-pkg/release"
 )
 
-// updatesFeedTTL bounds how often Core re-fetches a remote update feed, and so
-// is the worst-case delay before a freshly pushed changelog entry reaches the
-// admin bell. Short enough to see a same-day push, long enough to shield the
-// upstream from the polling navbar (the panel polls every 60s but is served from
-// this cache).
-const updatesFeedTTL = 15 * time.Minute
+// notesTTL bounds how often Core re-fetches the remote release notes, and so is
+// the worst-case delay before a freshly published release reaches the panel.
+// The panel refreshes every six hours and on demand; this cache is what stops a
+// room full of open panels from polling GitHub.
+const notesTTL = 15 * time.Minute
 
-// updatesEntryCap limits how many since-install entries the endpoint returns per
-// service (newest first) so a long-lived feed never bloats the response.
-const updatesEntryCap = 50
+// notesMaxBytes caps a fetched file. Oversize fails open to the embedded copy.
+const notesMaxBytes = 1 << 20
 
-// updatesFeedMaxBytes caps a fetched feed body (fail-open on oversize).
-const updatesFeedMaxBytes = 1 << 20
+// releasesShown caps how many release blocks travel to the panel. Nobody reads
+// the fortieth one, and the panel links to the full file.
+const releasesShown = 20
 
-// cachedFeed is a TTL-cached snapshot of a remote feed's non-empty lines.
-type cachedFeed struct {
-	lines []string
-	at    time.Time
+// feedPlatform is for people who RUN the platform; feedHosted is for customers,
+// who run a node or nothing. An admin gets the first, everyone else the second.
+const (
+	feedPlatform = "platform"
+	feedHosted   = "hosted"
+)
+
+type cachedNotes struct {
+	releases []release.Release
+	at       time.Time
 }
 
-// UpdatesHandler serves the admin-only in-panel update feed: it diffs the remote
-// append-only changelog(s) against the baseline baked into this build and
-// against each admin's per-service "seen" marker. Fail-open by design: an
-// unreachable or absent feed yields "no updates", never an error to the caller.
+// UpdatesHandler answers "what changed, and which of MY components are behind".
+//
+// Fail-open throughout: an unreachable or malformed remote file falls back to
+// the copy embedded in this build, which by construction describes everything
+// up to this build and therefore reads as "no updates" - never as an error, and
+// never as an empty version that would flag every component.
 type UpdatesHandler struct {
 	state *AppState
 
-	// platformInstalled is the feed line count baked into THIS build (the install
-	// baseline). platformBaked are those baked lines, used as the fallback
-	// "latest" when the remote fetch fails, so a failure reads as "no updates".
-	platformInstalled int
-	platformBaked     []string
+	// urls maps a feed name to where its release notes live. An empty URL means
+	// "embedded only", which is the correct behaviour for an air-gapped install.
+	urls map[string]string
 
-	platformFeedURL string
-	gatewayFeedURL  string
-
-	cacheMu       sync.Mutex
-	platformCache cachedFeed
-	gatewayCache  cachedFeed
+	cacheMu sync.Mutex
+	cache   map[string]cachedNotes
 }
 
-// NewUpdatesHandler wires the handler with the two remote feed URLs (platform
-// always, gateway only used when gateway routing is enabled). An empty URL
-// disables that feed's remote fetch.
-func NewUpdatesHandler(state *AppState, platformFeedURL, gatewayFeedURL string) *UpdatesHandler {
-	baked := updates.NonEmptyLines(updates.PlatformFeed())
+func NewUpdatesHandler(state *AppState, platformURL, hostedURL string) *UpdatesHandler {
+	if err := updates.ParseError(); err != nil {
+		// CI validates these files, so reaching this means a build slipped
+		// through. Log once at startup rather than per request.
+		log.Printf("updates: embedded release notes are malformed, serving nothing: %v", err)
+	}
 	return &UpdatesHandler{
-		state:             state,
-		platformInstalled: len(baked),
-		platformBaked:     baked,
-		platformFeedURL:   platformFeedURL,
-		gatewayFeedURL:    gatewayFeedURL,
+		state: state,
+		urls:  map[string]string{feedPlatform: platformURL, feedHosted: hostedURL},
+		cache: map[string]cachedNotes{},
 	}
 }
 
-// updateServiceBlock is one FEED's slice of the update response (platform,
-// gateway). Not one service - see perServiceBlock for that.
-type updateServiceBlock struct {
-	InstalledCount  int                 `json:"installedCount"`
-	LatestCount     int                 `json:"latestCount"`
-	UpdateAvailable bool                `json:"updateAvailable"`
-	SeenCount       int                 `json:"seenCount"`
-	Unseen          int                 `json:"unseen"`
-	NewEntries      []updates.FeedEntry `json:"newEntries"`
-	// PerService breaks the same delta down by the component each entry names,
-	// each against ITS OWN installed baseline. See perServiceBlock.
-	PerService []perServiceBlock `json:"perService"`
-}
-
-// perServiceBlock answers "is THIS component behind, and by what".
+// instance is one running copy of a component. Nodes have many; core and panel
+// have one each.
 //
-// One baseline for the whole feed is wrong the moment an operator updates
-// unevenly. Core is the only component that answers /api/updates, so its own
-// baked feed count used to stand in for every component - and an operator who
-// deployed a new Core while leaving the node on last month's image was told the
-// node's changes were installed, because Core's baseline had moved past them.
-// The status quo is only correct when everything is deployed together, and
-// nothing enforces that.
+// Version is empty for "not reporting", which is a real and distinct state: an
+// image built before release stamping, or a node that has not checked in. It
+// must never render as "behind", because an unknown version cannot be ordered
+// and reporting it as behind would flag a fleet nobody has touched.
+type instance struct {
+	Label    string `json:"label"`
+	Version  string `json:"version,omitempty"`
+	Outdated bool   `json:"outdated"`
+}
+
+// componentBlock answers "is THIS component behind, and by what". Latest is the
+// newest release that NAMES this component, which is the whole reason one
+// version per repo does not mark everything outdated at once.
+type componentBlock struct {
+	Service   string     `json:"service"`
+	Latest    string     `json:"latest,omitempty"`
+	Outdated  bool       `json:"outdated"`
+	Instances []instance `json:"instances"`
+}
+
+// requiredBlock is a mandatory update the reader is subject to. Present only
+// when at least one of their components is actually behind the floor.
+type requiredBlock struct {
+	Service    string    `json:"service"`
+	MinVersion string    `json:"minVersion"`
+	Deadline   time.Time `json:"deadline"`
+	Passed     bool      `json:"passed"`
+	Note       string    `json:"note,omitempty"`
+}
+
+type updatesResponse struct {
+	Feed string `json:"feed"`
+	// Latest is the newest published release; Seen is the newest release this
+	// user has acknowledged. The panel badges on the two differing, which is why
+	// Seen is stored server-side rather than in the browser: an operator who
+	// dismissed a release at their desk should not be nagged again on a laptop.
+	Latest     string            `json:"latest,omitempty"`
+	Seen       string            `json:"seen,omitempty"`
+	Components []componentBlock  `json:"components"`
+	Releases   []release.Release `json:"releases"`
+	Required   []requiredBlock   `json:"required,omitempty"`
+}
+
+// GetUpdates GET /api/updates.
 //
-// BaselineKnown says whether this number came from the component ITSELF or is
-// Core's baseline standing in. It must be surfaced: "up to date" and "nobody
-// asked" look identical otherwise, and that is the confusion this replaces.
-type perServiceBlock struct {
-	Service string `json:"service"`
-	// InstalledCount is the feed length this component was built at.
-	InstalledCount int  `json:"installedCount"`
-	BaselineKnown  bool `json:"baselineKnown"`
-	// Behind is how many of this component's entries were published after its
-	// own baseline. 0 means up to date, whatever the other components are doing.
-	Behind     int                 `json:"behind"`
-	NewEntries []updates.FeedEntry `json:"newEntries"`
-}
-
-// buildPerServiceBlocks splits a feed into one block per component, each diffed
-// against its own baseline. baselines maps a lowercased service name to the feed
-// length that component was built at; anything absent falls back to
-// coreBaseline, which is the old whole-feed behaviour and stays correct for a
-// fleet deployed in one go.
-//
-// Entries are newest-first, matching the rest of the response.
-func buildPerServiceBlocks(remoteLines []string, coreBaseline int, baselines map[string]int) []perServiceBlock {
-	all := updates.ParseEntries(remoteLines)
-	out := []perServiceBlock{}
-	for _, svc := range updates.Services(all) {
-		installed, known := baselines[svc]
-		if !known {
-			installed = coreBaseline
-		}
-		// Slice the GLOBAL feed at this component's baseline, then keep its own
-		// entries. Slicing per-service positions instead would compare against a
-		// count that never existed as a build.
-		delta := updates.ParseEntries(updates.Delta(remoteLines, installed))
-		mine := updates.EntriesForService(delta, svc)
-		reverseEntries(mine)
-		if len(mine) > updatesEntryCap {
-			mine = mine[:updatesEntryCap]
-		}
-		out = append(out, perServiceBlock{
-			Service:        svc,
-			InstalledCount: installed,
-			BaselineKnown:  known,
-			Behind:         len(mine),
-			NewEntries:     mine,
-		})
-	}
-	return out
-}
-
-// buildServiceBlock diffs a remote feed against the installed baseline and the
-// caller's seen marker. newEntries is the since-install tail (newest first,
-// capped); unseen counts entries published beyond BOTH the installed build and
-// what this admin last acknowledged, so the bell badge only nags for genuinely
-// new changes.
-func buildServiceBlock(remoteLines []string, installedCount, seenCount int) updateServiceBlock {
-	latest := len(remoteLines)
-	entries := updates.ParseEntries(updates.Delta(remoteLines, installedCount))
-	reverseEntries(entries)
-	if len(entries) > updatesEntryCap {
-		entries = entries[:updatesEntryCap]
-	}
-	base := installedCount
-	if seenCount > base {
-		base = seenCount
-	}
-	unseen := latest - base
-	if unseen < 0 {
-		unseen = 0
-	}
-	return updateServiceBlock{
-		InstalledCount:  installedCount,
-		LatestCount:     latest,
-		UpdateAvailable: latest > installedCount,
-		SeenCount:       seenCount,
-		Unseen:          unseen,
-		NewEntries:      entries,
-	}
-}
-
-// serviceBaselines collects what each component reports about ITSELF.
-//
-//   - core: the feed baked into this binary. Authoritative, no round trip.
-//   - node: the LOWEST baseline any live node reported, published by the
-//     discovery loop. Absent when no node runs a build that reports one.
-//   - panel: sent by the caller, because the panel is a static bundle in
-//     someone's browser and Core has no other way to see which build it is.
-//     Spoofable, and harmless: it only changes what that one admin is shown
-//     about their own install, so it is clamped to a sane range rather than
-//     trusted or rejected.
-//
-// A component that reports nothing is simply absent here, and the caller falls
-// back to Core's baseline - the previous whole-feed behaviour, which stays
-// correct for a fleet deployed in one go.
-func (h *UpdatesHandler) serviceBaselines(r *http.Request) map[string]int {
-	out := map[string]int{"core": h.platformInstalled}
-
-	if h.state.Redis != nil {
-		if v, err := h.state.Redis.Get(r.Context(), services.NodeFleetFeedBaselineKey).Int(); err == nil && v > 0 {
-			out["node"] = v
-		}
-	}
-
-	if raw := strings.TrimSpace(r.URL.Query().Get("panelBaseline")); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v > 0 && v <= updatesMaxBaseline {
-			out["panel"] = v
-		}
-	}
-	return out
-}
-
-// updatesMaxBaseline bounds a caller-supplied baseline. Nothing breaks on a
-// large value - Delta already clamps past-the-end to "no entries" - but an
-// absurd one is a typo or a probe, not a build, and it should not be recorded as
-// one.
-const updatesMaxBaseline = 1_000_000
-
-func reverseEntries(e []updates.FeedEntry) {
-	for i, j := 0, len(e)-1; i < j; i, j = i+1, j-1 {
-		e[i], e[j] = e[j], e[i]
-	}
-}
-
-// GetUpdates GET /api/updates - ADMIN ONLY. Returns the platform update-feed
-// delta (always) and the gateway delta (only when gateway routing is enabled
-// AND a gateway feed URL is configured), plus the caller's unseen count for the
-// navbar badge.
+// Two audiences out of one mechanism. An admin runs the platform and sees the
+// platform notes plus every component; a customer runs a node or nothing and
+// sees the customer notes plus their OWN nodes. The old endpoint was admin-only,
+// which left a BYON customer with no way to learn their node needed updating.
 func (h *UpdatesHandler) GetUpdates(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
-		return
-	}
 	userID, _ := r.Context().Value("userID").(string)
-	seenPlatform, seenGateway := 0, 0
-	if userID != "" {
-		if p, g, err := h.state.Store.GetUserUpdatesSeen(userID); err == nil {
-			seenPlatform, seenGateway = p, g
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+
+	feed := feedHosted
+	if isAdmin {
+		feed = feedPlatform
+	}
+	releases := h.notes(r.Context(), feed)
+
+	resp := updatesResponse{Feed: feed, Releases: releases, Components: []componentBlock{}}
+	if len(releases) > releasesShown {
+		resp.Releases = releases[:releasesShown]
+	}
+	if latest, ok := release.Latest(releases); ok {
+		resp.Latest = latest.Version.String()
+	}
+	if h.state.Store != nil && userID != "" {
+		if seen, err := h.state.Store.GetUserUpdatesSeen(userID); err == nil {
+			resp.Seen = seen
 		}
 	}
 
-	// Platform: baked baseline vs remote; on fetch failure fall back to the baked
-	// lines so latest == installed and the panel shows no updates.
-	platformLines := h.fetchFeedLines(r.Context(), h.platformFeedURL, &h.platformCache)
-	if platformLines == nil {
-		platformLines = h.platformBaked
+	for _, c := range h.components(r, releases, userID, isAdmin) {
+		resp.Components = append(resp.Components, c)
+		for _, inst := range c.Instances {
+			v, err := release.ParseVersion(inst.Version)
+			if err != nil {
+				continue
+			}
+			req, min, ok := release.Requirement(releases, c.Service, v)
+			if !ok {
+				continue
+			}
+			resp.Required = append(resp.Required, requiredBlock{
+				Service:    c.Service,
+				MinVersion: min.String(),
+				Deadline:   req.Deadline,
+				Passed:     time.Now().After(req.Deadline),
+				Note:       req.Note,
+			})
+			break // one line per component, not per instance
+		}
 	}
-	platform := buildServiceBlock(platformLines, h.platformInstalled, seenPlatform)
-	platform.PerService = buildPerServiceBlocks(platformLines, h.platformInstalled, h.serviceBaselines(r))
-
-	resp := map[string]interface{}{
-		"success":  true,
-		"platform": platform,
-	}
-	unseen := platform.Unseen
-
-	if h.state.gatewayEnabled() && strings.TrimSpace(h.gatewayFeedURL) != "" {
-		gwLines := h.fetchFeedLines(r.Context(), h.gatewayFeedURL, &h.gatewayCache)
-		// Core bakes no gateway baseline yet (the running gateway build would
-		// report it via heartbeat, a later gateway-side addition), so installed
-		// = 0 and every gateway entry reads as since-install until then.
-		gateway := buildServiceBlock(gwLines, 0, seenGateway)
-		resp["gateway"] = gateway
-		unseen += gateway.Unseen
-	}
-	resp["unseen"] = unseen
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(resp)
 }
 
-// MarkUpdatesSeen PUT /api/me/updates-seen - acknowledge the current feeds so
-// the caller's navbar badge clears. Server-computed (ignores any client body) so
-// a client can never desync the marker. Own data, authed-exempt.
-func (h *UpdatesHandler) MarkUpdatesSeen(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("userID").(string)
-	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	platformLines := h.fetchFeedLines(r.Context(), h.platformFeedURL, &h.platformCache)
-	if platformLines == nil {
-		platformLines = h.platformBaked
-	}
-	seenPlatform := len(platformLines)
+// components builds the per-component picture for this reader.
+//
+// Every service NAMED by any release appears, even when nothing reports a
+// version for it. Omitting those would hide exactly the case the per-component
+// split exists for: a component the operator never updates and is never told
+// about. It shows up with no instances and no version rather than silently.
+func (h *UpdatesHandler) components(r *http.Request, releases []release.Release, userID string, isAdmin bool) []componentBlock {
+	byService := map[string][]instance{}
 
-	// Preserve the prior gateway marker when the gateway block is inactive so
-	// toggling gateway routing off then on again does not resurface old entries.
-	_, seenGateway, _ := h.state.Store.GetUserUpdatesSeen(userID)
-	if h.state.gatewayEnabled() && strings.TrimSpace(h.gatewayFeedURL) != "" {
-		seenGateway = len(h.fetchFeedLines(r.Context(), h.gatewayFeedURL, &h.gatewayCache))
+	if isAdmin {
+		byService["core"] = []instance{versioned("core", updates.Version().String(), releases, "core")}
+		if pv := strings.TrimSpace(r.URL.Query().Get("panelVersion")); pv != "" {
+			// The panel is a static bundle in someone's browser, so Core has no
+			// other way to see which build it is. Spoofable, and harmless: it
+			// only changes what that one admin is shown about their own install.
+			if _, err := release.ParseVersion(pv); err == nil {
+				byService["panel"] = []instance{versioned("panel", pv, releases, "panel")}
+			}
+		}
 	}
 
-	if err := h.state.Store.SetUserUpdatesSeen(userID, seenPlatform, seenGateway); err != nil {
-		sendJSONError(w, "Failed to save", http.StatusInternalServerError)
-		return
+	for _, n := range h.nodes(r.Context(), userID, isAdmin) {
+		label := n.DisplayName
+		if label == "" {
+			label = n.Name
+		}
+		byService["node"] = append(byService["node"], versioned(label, n.version, releases, "node"))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+
+	// Order by the shared service list so the panel renders the same order every
+	// time, then anything else the releases mention.
+	out := []componentBlock{}
+	for _, svc := range release.Services {
+		insts, seen := byService[svc]
+		named := newestNaming(releases, svc)
+		if !seen && named == "" {
+			continue
+		}
+		block := componentBlock{Service: svc, Latest: named, Instances: insts}
+		if block.Instances == nil {
+			block.Instances = []instance{}
+		}
+		for _, i := range insts {
+			if i.Outdated {
+				block.Outdated = true
+			}
+		}
+		out = append(out, block)
+	}
+	return out
 }
 
-// fetchFeedLines returns a remote feed's non-empty lines, TTL-cached. Any error
-// (unset URL, network, non-200, oversize) fails open to nil so the caller falls
-// back to the baked baseline and the panel simply shows no new updates. Failures
-// are cached too, to avoid hammering the upstream on the hot path.
-func (h *UpdatesHandler) fetchFeedLines(ctx context.Context, url string, cache *cachedFeed) []string {
-	h.cacheMu.Lock()
-	defer h.cacheMu.Unlock()
-	if !cache.at.IsZero() && time.Since(cache.at) < updatesFeedTTL {
-		return cache.lines
+// versioned builds one instance, deciding outdated through the shared predicate
+// so no call site can invent its own rule.
+func versioned(label, raw string, releases []release.Release, service string) instance {
+	v, err := release.ParseVersion(raw)
+	if err != nil {
+		return instance{Label: label} // not reporting; never outdated
 	}
-	cache.lines = fetchRemoteFeed(ctx, url)
-	cache.at = time.Now()
-	return cache.lines
+	return instance{Label: label, Version: v.String(), Outdated: release.Outdated(releases, service, v)}
 }
 
-// fetchRemoteFeed GETs a JSONL feed and returns its non-empty lines, or nil on
-// any failure. The body is size-capped; the whole call is fail-open by design.
-func fetchRemoteFeed(ctx context.Context, url string) []string {
-	if strings.TrimSpace(url) == "" {
+// newestNaming is the newest release that names this service, i.e. the version
+// an instance has to reach to be current. Empty when no release ever names it.
+func newestNaming(releases []release.Release, service string) string {
+	for _, r := range releases {
+		if r.Names(service) {
+			return r.Version.String()
+		}
+	}
+	return ""
+}
+
+type nodeVersion struct {
+	Name        string
+	DisplayName string
+	version     string
+}
+
+// nodes returns the nodes this reader may see, each with the version its
+// heartbeat last reported. A non-admin sees only nodes they own: a BYON
+// customer's update view is about their own hardware, and the fleet is not
+// theirs to enumerate.
+func (h *UpdatesHandler) nodes(ctx context.Context, userID string, isAdmin bool) []nodeVersion {
+	if h.state.Store == nil {
 		return nil
 	}
+	all, err := h.state.Store.ListNodes()
+	if err != nil {
+		return nil
+	}
+	beats := services.LoadHeartbeats(ctx, h.state.Redis)
+
+	out := []nodeVersion{}
+	for _, n := range all {
+		if !isAdmin && (n.OwnerID == nil || *n.OwnerID != userID) {
+			continue
+		}
+		nv := nodeVersion{Name: n.Name, DisplayName: n.DisplayName}
+		if hb := beats[n.Token]; hb != nil {
+			nv.version = hb.ReleaseVersion
+		}
+		out = append(out, nv)
+	}
+	return out
+}
+
+// notes returns a feed's releases: the remote file when it is reachable and
+// parses, otherwise the copy embedded in this build.
+//
+// The fallback direction matters. Embedded notes describe everything up to THIS
+// build, so falling back reads as "you are current" - the honest answer when we
+// cannot see what has been published since. Falling back to nothing would read
+// as "no version", which flags nobody, and falling back to an error would put a
+// changelog outage in front of an operator's actual work.
+func (h *UpdatesHandler) notes(ctx context.Context, feed string) []release.Release {
+	embedded := updates.Platform()
+	if feed == feedHosted {
+		embedded = updates.Hosted()
+	}
+	url := h.urls[feed]
+	if url == "" {
+		return embedded
+	}
+
+	h.cacheMu.Lock()
+	if c, ok := h.cache[feed]; ok && time.Since(c.at) < notesTTL {
+		h.cacheMu.Unlock()
+		return c.releases
+	}
+	h.cacheMu.Unlock()
+
+	rs, err := fetchNotes(ctx, url)
+	if err != nil {
+		log.Printf("updates: %s notes unreachable, using the embedded copy: %v", feed, err)
+		rs = embedded
+	}
+	h.cacheMu.Lock()
+	h.cache[feed] = cachedNotes{releases: rs, at: time.Now()}
+	h.cacheMu.Unlock()
+	return rs
+}
+
+func fetchNotes(ctx context.Context, url string) ([]release.Release, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	resp, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		return nil, &httpStatusError{resp.StatusCode}
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, updatesFeedMaxBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, notesMaxBytes))
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return updates.NonEmptyLines(body)
+	return release.Parse(body)
+}
+
+type httpStatusError struct{ code int }
+
+func (e *httpStatusError) Error() string { return http.StatusText(e.code) }
+
+// MarkUpdatesSeen PUT /api/me/updates-seen - acknowledge everything published
+// so far, clearing this user's badge.
+//
+// The version comes from the SERVER, not the request body. A client that sent
+// its own would let a stale panel acknowledge a release it never displayed, and
+// there is nothing the caller could legitimately say here that Core does not
+// already know.
+func (h *UpdatesHandler) MarkUpdatesSeen(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value("userID").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if userID == "" || h.state.Store == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	feed := feedHosted
+	if isAdmin {
+		feed = feedPlatform
+	}
+	version := ""
+	if latest, ok := release.Latest(h.notes(r.Context(), feed)); ok {
+		version = latest.Version.String()
+	}
+	if err := h.state.Store.SetUserUpdatesSeen(userID, version); err != nil {
+		http.Error(w, "could not save", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

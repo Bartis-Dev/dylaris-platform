@@ -712,8 +712,8 @@ type Store interface {
 
 	// In-panel update feed: per-user acknowledged feed counts (platform,
 	// gateway) so the navbar bell badge clears. Missing/legacy rows default to 0.
-	GetUserUpdatesSeen(userID string) (platform int, gateway int, err error)
-	SetUserUpdatesSeen(userID string, platform, gateway int) error
+	GetUserUpdatesSeen(userID string) (version string, err error)
+	SetUserUpdatesSeen(userID, version string) error
 
 	// --- Setup wizard ---
 	// CountUsers is declared above in the Users block; only CountAdmins is new.

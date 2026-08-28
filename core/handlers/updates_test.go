@@ -2,354 +2,89 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/store"
-	"dylaris-core/updates"
+	"dylaris-pkg/release"
 )
 
-// fakeUpdatesStore embeds the (nil) store.Store interface and overrides only the
-// methods the update-feed handler touches. Any other call would panic, which is
-// the point: the test proves exactly which store surface the handler uses.
-type fakeUpdatesStore struct {
-	store.Store
-	seenPlatform int
-	seenGateway  int
-	setPlatform  int
-	setGateway   int
-	setCalled    bool
-	routingMode  string
-}
-
-// newUpdatesHandlerNoBaseline is NewUpdatesHandler with the build-baked
-// baseline forced to empty.
-//
-// NewUpdatesHandler derives platformInstalled from the embedded feed.jsonl, so a
-// test that asserts "all N remote lines are new" only holds while that file is
-// empty - and it stops being empty the first time a real changelog line is
-// appended. Tests that care about the delta arithmetic pin their own baseline
-// here; TestGetUpdatesInstalledBaselineIsTheBakedFeed covers the wiring to the
-// real file.
-func newUpdatesHandlerNoBaseline(state *AppState, platformURL, gatewayURL string) *UpdatesHandler {
-	h := NewUpdatesHandler(state, platformURL, gatewayURL)
-	h.platformInstalled = 0
-	h.platformBaked = nil
-	return h
-}
-
-func (f *fakeUpdatesStore) GetUserUpdatesSeen(userID string) (int, int, error) {
-	return f.seenPlatform, f.seenGateway, nil
-}
-
-func (f *fakeUpdatesStore) SetUserUpdatesSeen(userID string, platform, gateway int) error {
-	f.setCalled = true
-	f.setPlatform, f.setGateway = platform, gateway
-	return nil
-}
-
-func (f *fakeUpdatesStore) GetSetting(key string) (string, error) {
-	if key == "routing_mode" {
-		return f.routingMode, nil
-	}
-	return "", nil
-}
-
-// adminCtx builds a request context matching AuthMiddleware's userID/isAdmin keys.
+// adminCtx builds the request context AuthMiddleware would have installed.
+// Shared by the handler tests in this package.
 func adminCtx(userID string, isAdmin bool) context.Context {
 	ctx := context.WithValue(context.Background(), "userID", userID)
 	return context.WithValue(ctx, "isAdmin", isAdmin)
 }
 
-func TestBuildServiceBlock(t *testing.T) {
-	line := func(s string) string {
-		return `{"date":"2026-07-18","service":"platform","type":"feature","summary":"` + s + `"}`
+func mustParse(t *testing.T, src string) []release.Release {
+	t.Helper()
+	rs, err := release.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
 	}
-	remote := []string{line("A"), line("B"), line("C")}
+	return rs
+}
 
-	cases := []struct {
-		name            string
-		remote          []string
-		installed       int
-		seen            int
-		wantLatest      int
-		wantUnseen      int
-		wantAvailable   bool
-		wantEntries     int
-		wantFirstSummry string // newest-first
-	}{
-		{"fresh install none seen", remote, 0, 0, 3, 3, true, 3, "C"},
-		{"installed one seen none", remote, 1, 0, 3, 2, true, 2, "C"},
-		{"all installed", remote, 3, 0, 3, 0, false, 0, ""},
-		{"seen ahead of install", remote, 1, 3, 3, 0, true, 2, "C"},
-		{"empty feed", nil, 0, 0, 0, 0, false, 0, ""},
+const notesForTest = "## 2026.08.28\n" +
+	"### Features\n- A node change. `node`\n" +
+	"### Breaking\n- Nothing.\n" +
+	"### Security\n- Nothing.\n" +
+	"### Fixes\n- Nothing.\n" +
+	"\n## 2026.08.20\n" +
+	"### Features\n- An old core change. `core`\n" +
+	"### Breaking\n- Nothing.\n" +
+	"### Security\n- Nothing.\n" +
+	"### Fixes\n- Nothing.\n"
+
+// newestNaming is what an instance has to REACH to be current, and it is per
+// service. Reading the newest release outright would tell a Core operator to
+// update for a release that only ever touched the node.
+func TestNewestNaming(t *testing.T) {
+	rs := mustParse(t, notesForTest)
+	if got := newestNaming(rs, "node"); got != "2026.08.28" {
+		t.Errorf("node = %q, want 2026.08.28", got)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := buildServiceBlock(c.remote, c.installed, c.seen)
-			if got.LatestCount != c.wantLatest {
-				t.Errorf("LatestCount = %d, want %d", got.LatestCount, c.wantLatest)
-			}
-			if got.Unseen != c.wantUnseen {
-				t.Errorf("Unseen = %d, want %d", got.Unseen, c.wantUnseen)
-			}
-			if got.UpdateAvailable != c.wantAvailable {
-				t.Errorf("UpdateAvailable = %v, want %v", got.UpdateAvailable, c.wantAvailable)
-			}
-			if len(got.NewEntries) != c.wantEntries {
-				t.Fatalf("len(NewEntries) = %d, want %d", len(got.NewEntries), c.wantEntries)
-			}
-			if c.wantFirstSummry != "" && got.NewEntries[0].Summary != c.wantFirstSummry {
-				t.Errorf("NewEntries[0].Summary = %q, want %q (newest first)", got.NewEntries[0].Summary, c.wantFirstSummry)
-			}
-		})
+	if got := newestNaming(rs, "core"); got != "2026.08.20" {
+		t.Errorf("core = %q, want 2026.08.20 - the newer release never names core", got)
+	}
+	if got := newestNaming(rs, "log-shipper"); got != "" {
+		t.Errorf("log-shipper = %q, want empty: no release ever names it", got)
 	}
 }
 
-func TestBuildServiceBlockCapsEntries(t *testing.T) {
-	remote := make([]string, updatesEntryCap+10)
-	for i := range remote {
-		remote[i] = `{"summary":"x"}`
-	}
-	got := buildServiceBlock(remote, 0, 0)
-	if len(got.NewEntries) != updatesEntryCap {
-		t.Fatalf("len(NewEntries) = %d, want cap %d", len(got.NewEntries), updatesEntryCap)
-	}
-	if got.Unseen != len(remote) {
-		t.Errorf("Unseen = %d, want %d (unseen counts beyond the entry cap)", got.Unseen, len(remote))
-	}
-}
+func TestVersioned(t *testing.T) {
+	rs := mustParse(t, notesForTest)
 
-// TestGetUpdatesInstalledBaselineIsTheBakedFeed covers what
-// newUpdatesHandlerNoBaseline deliberately bypasses: the handler's "installed"
-// mark really is the line count of the embedded feed. Asserted against
-// updates.PlatformFeed() rather than a literal, so appending a changelog line
-// never breaks it.
-func TestGetUpdatesInstalledBaselineIsTheBakedFeed(t *testing.T) {
-	h := NewUpdatesHandler(&AppState{Store: &fakeUpdatesStore{}}, "", "")
-	want := updates.LineCount(updates.PlatformFeed())
-	if h.platformInstalled != want {
-		t.Errorf("platformInstalled = %d, want %d (the baked feed's line count)", h.platformInstalled, want)
-	}
-	if len(h.platformBaked) != want {
-		t.Errorf("len(platformBaked) = %d, want %d", len(h.platformBaked), want)
-	}
-}
-
-func TestGetUpdatesRequiresAdmin(t *testing.T) {
-	h := newUpdatesHandlerNoBaseline(&AppState{Store: &fakeUpdatesStore{}}, "", "")
-	req := httptest.NewRequest(http.MethodGet, "/api/updates", nil).WithContext(adminCtx("u1", false))
-	rec := httptest.NewRecorder()
-	h.GetUpdates(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("non-admin GetUpdates status = %d, want 403", rec.Code)
-	}
-}
-
-func TestGetUpdatesAdminPlatformOnly(t *testing.T) {
-	feed := `{"date":"2026-07-18","service":"platform","type":"feature","summary":"A"}
-{"date":"2026-07-18","service":"platform","type":"fix","summary":"B"}
-{"date":"2026-07-18","service":"platform","type":"change","summary":"C"}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(feed))
-	}))
-	defer srv.Close()
-
-	// routingMode empty -> gateway off, so the gateway block is absent even with
-	// a gateway URL set.
-	fake := &fakeUpdatesStore{}
-	h := newUpdatesHandlerNoBaseline(&AppState{Store: fake}, srv.URL, "")
-	req := httptest.NewRequest(http.MethodGet, "/api/updates", nil).WithContext(adminCtx("u1", true))
-	rec := httptest.NewRecorder()
-	h.GetUpdates(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var resp struct {
-		Success  bool                `json:"success"`
-		Unseen   int                 `json:"unseen"`
-		Platform updateServiceBlock  `json:"platform"`
-		Gateway  *updateServiceBlock `json:"gateway"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
-	}
-	if resp.Platform.LatestCount != 3 {
-		t.Errorf("platform LatestCount = %d, want 3", resp.Platform.LatestCount)
-	}
-	if resp.Unseen != 3 {
-		t.Errorf("unseen = %d, want 3", resp.Unseen)
-	}
-	if resp.Gateway != nil {
-		t.Errorf("gateway block should be absent when routing is not gateway, got %+v", resp.Gateway)
-	}
-	if len(resp.Platform.NewEntries) != 3 || resp.Platform.NewEntries[0].Summary != "C" {
-		t.Errorf("newEntries = %+v, want 3 newest-first (C,B,A)", resp.Platform.NewEntries)
-	}
-}
-
-func TestGetUpdatesAdminWithGatewayEnabled(t *testing.T) {
-	platformFeed := "{\"summary\":\"P1\"}\n{\"summary\":\"P2\"}\n"
-	gatewayFeed := "{\"summary\":\"G1\"}\n{\"summary\":\"G2\"}\n{\"summary\":\"G3\"}\n"
-	pSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(platformFeed)) }))
-	defer pSrv.Close()
-	gSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(gatewayFeed)) }))
-	defer gSrv.Close()
-
-	fake := &fakeUpdatesStore{routingMode: "gateway"}
-	h := newUpdatesHandlerNoBaseline(&AppState{Store: fake}, pSrv.URL, gSrv.URL)
-	req := httptest.NewRequest(http.MethodGet, "/api/updates", nil).WithContext(adminCtx("u1", true))
-	rec := httptest.NewRecorder()
-	h.GetUpdates(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var resp struct {
-		Unseen   int                 `json:"unseen"`
-		Platform updateServiceBlock  `json:"platform"`
-		Gateway  *updateServiceBlock `json:"gateway"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Gateway == nil {
-		t.Fatal("gateway block should be present when routing is gateway and a gateway URL is set")
-	}
-	if resp.Gateway.LatestCount != 3 {
-		t.Errorf("gateway LatestCount = %d, want 3", resp.Gateway.LatestCount)
-	}
-	if resp.Unseen != 5 { // platform 2 + gateway 3
-		t.Errorf("combined unseen = %d, want 5", resp.Unseen)
-	}
-}
-
-func TestGetUpdatesFailOpenOnUnreachableFeed(t *testing.T) {
-	// Empty platform URL -> no fetch -> falls back to the (empty) baked baseline.
-	h := newUpdatesHandlerNoBaseline(&AppState{Store: &fakeUpdatesStore{}}, "", "")
-	req := httptest.NewRequest(http.MethodGet, "/api/updates", nil).WithContext(adminCtx("u1", true))
-	rec := httptest.NewRecorder()
-	h.GetUpdates(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (fail-open)", rec.Code)
-	}
-	var resp struct {
-		Unseen   int                `json:"unseen"`
-		Platform updateServiceBlock `json:"platform"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp.Unseen != 0 || resp.Platform.LatestCount != 0 {
-		t.Errorf("fail-open should yield no updates, got unseen=%d latest=%d", resp.Unseen, resp.Platform.LatestCount)
-	}
-}
-
-func TestMarkUpdatesSeenServerComputed(t *testing.T) {
-	feed := "{\"summary\":\"A\"}\n{\"summary\":\"B\"}\n"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(feed))
-	}))
-	defer srv.Close()
-
-	fake := &fakeUpdatesStore{seenGateway: 7} // prior gateway marker must be preserved
-	h := newUpdatesHandlerNoBaseline(&AppState{Store: fake}, srv.URL, "")
-	req := httptest.NewRequest(http.MethodPut, "/api/me/updates-seen", nil).WithContext(adminCtx("u1", true))
-	rec := httptest.NewRecorder()
-	h.MarkUpdatesSeen(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if !fake.setCalled {
-		t.Fatal("SetUserUpdatesSeen was not called")
-	}
-	if fake.setPlatform != 2 {
-		t.Errorf("stored platform seen = %d, want 2 (feed line count)", fake.setPlatform)
-	}
-	if fake.setGateway != 7 {
-		t.Errorf("stored gateway seen = %d, want 7 (prior marker preserved while gateway off)", fake.setGateway)
-	}
-}
-
-func TestMarkUpdatesSeenRequiresAuth(t *testing.T) {
-	h := newUpdatesHandlerNoBaseline(&AppState{Store: &fakeUpdatesStore{}}, "", "")
-	req := httptest.NewRequest(http.MethodPut, "/api/me/updates-seen", nil).WithContext(adminCtx("", false))
-	rec := httptest.NewRecorder()
-	h.MarkUpdatesSeen(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
-	}
-}
-
-// TestBuildPerServiceBlocks_UnevenDeploy is the case the whole per-service split
-// exists for: Core is updated, the node is not, and the old whole-feed baseline
-// told the operator the node's changes were installed.
-func TestBuildPerServiceBlocks_UnevenDeploy(t *testing.T) {
-	feed := []string{
-		`{"date":"2026-08-01","service":"core","type":"fix","summary":"c1"}`,
-		`{"date":"2026-08-02","service":"node","type":"fix","summary":"n1"}`,
-		`{"date":"2026-08-03","service":"core","type":"fix","summary":"c2"}`,
-		`{"date":"2026-08-04","service":"node","type":"fix","summary":"n2"}`,
-		`{"date":"2026-08-05","service":"panel","type":"fix","summary":"p1"}`,
-	}
-
-	// Core built at the end of the feed; the node still at position 1, meaning it
-	// only contains the first line - so BOTH of its own entries (lines 1 and 3)
-	// are genuinely pending. A baseline is a length, not an index: at 1 the node
-	// holds line 0 and nothing more.
-	blocks := buildPerServiceBlocks(feed, 5, map[string]int{"core": 5, "node": 1})
-
-	byService := map[string]perServiceBlock{}
-	for _, b := range blocks {
-		byService[b.Service] = b
-	}
-
-	if got := byService["core"].Behind; got != 0 {
-		t.Errorf("core behind = %d, want 0 (it is the newest build)", got)
-	}
-	if got := byService["node"].Behind; got != 2 {
-		t.Errorf("node behind = %d, want 2 - the old whole-feed baseline reported 0 here", got)
-	}
-	if !byService["node"].BaselineKnown {
-		t.Error("node baseline came from the node, so baselineKnown must be true")
-	}
-
-	// panel reported nothing, so it falls back to Core's baseline and must be
-	// marked as ASSUMED rather than silently reading as up to date.
-	panel := byService["panel"]
-	if panel.BaselineKnown {
-		t.Error("panel reported no baseline, so baselineKnown must be false")
-	}
-	if panel.InstalledCount != 5 {
-		t.Errorf("panel fell back to %d, want Core's baseline 5", panel.InstalledCount)
-	}
-
-	// Only the node's own entries appear under the node, newest first.
-	if len(byService["node"].NewEntries) != 2 {
-		t.Fatalf("node entries = %d, want 2", len(byService["node"].NewEntries))
-	}
-	if byService["node"].NewEntries[0].Summary != "n2" {
-		t.Errorf("node entries are not newest-first: got %q", byService["node"].NewEntries[0].Summary)
-	}
-	for _, e := range byService["node"].NewEntries {
-		if e.Service != "node" {
-			t.Errorf("node block leaked a %q entry", e.Service)
+	t.Run("behind on a release that names it", func(t *testing.T) {
+		got := versioned("node-1", "2026.08.20", rs, "node")
+		if !got.Outdated || got.Version != "2026.08.20" {
+			t.Errorf("got %+v, want outdated", got)
 		}
-	}
-}
+	})
 
-// With every component at the same baseline the answer must be "nothing
-// pending" everywhere - the even-deploy case must not regress.
-func TestBuildPerServiceBlocks_EvenDeployHasNothingPending(t *testing.T) {
-	feed := []string{
-		`{"date":"2026-08-01","service":"core","type":"fix","summary":"c1"}`,
-		`{"date":"2026-08-02","service":"node","type":"fix","summary":"n1"}`,
-	}
-	for _, b := range buildPerServiceBlocks(feed, 2, map[string]int{"core": 2, "node": 2}) {
-		if b.Behind != 0 {
-			t.Errorf("%s behind = %d, want 0", b.Service, b.Behind)
+	// The false positive this whole design exists to avoid: core is older than
+	// the newest release, and that release does not name core.
+	t.Run("older than the newest release but not named by it", func(t *testing.T) {
+		got := versioned("core", "2026.08.20", rs, "core")
+		if got.Outdated {
+			t.Error("core was flagged by a release that never names it")
 		}
-	}
+	})
+
+	// An unstamped image reports nothing. It must show as "not reporting" and
+	// never as behind, or the day this ships flags every deployment.
+	t.Run("not reporting", func(t *testing.T) {
+		got := versioned("node-2", "", rs, "node")
+		if got.Version != "" || got.Outdated {
+			t.Errorf("got %+v, want an empty version and not outdated", got)
+		}
+		if got.Label != "node-2" {
+			t.Errorf("label = %q", got.Label)
+		}
+	})
+
+	t.Run("garbage is treated as not reporting", func(t *testing.T) {
+		got := versioned("node-3", "banana", rs, "node")
+		if got.Version != "" || got.Outdated {
+			t.Errorf("got %+v, want an empty version and not outdated", got)
+		}
+	})
 }

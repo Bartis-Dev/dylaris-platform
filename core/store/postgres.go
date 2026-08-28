@@ -528,28 +528,21 @@ func (s *PostgresStore) BulkSetCanCreateModpacks(can bool, includeManual bool) (
 	return n, nil
 }
 
-// GetUserUpdatesSeen returns the caller's acknowledged update-feed counts for
-// the platform and gateway feeds (the navbar bell badge marker). Missing/legacy
-// rows default to 0 via COALESCE.
-func (s *PostgresStore) GetUserUpdatesSeen(userID string) (int, int, error) {
-	var platform, gateway int
-	err := s.db.QueryRow(
-		`SELECT COALESCE(updates_seen_platform, 0), COALESCE(updates_seen_gateway, 0) FROM users WHERE id = $1`,
-		userID,
-	).Scan(&platform, &gateway)
+// GetUserUpdatesSeen returns the release this user has acknowledged in the
+// updates view, or "" when they have acknowledged nothing.
+func (s *PostgresStore) GetUserUpdatesSeen(userID string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT COALESCE(updates_seen_version, '') FROM users WHERE id = $1`, userID).Scan(&v)
 	if err != nil {
-		return 0, 0, err
+		return "", err
 	}
-	return platform, gateway, nil
+	return v, nil
 }
 
-// SetUserUpdatesSeen stores the caller's acknowledged update-feed counts.
+// SetUserUpdatesSeen records the release this user has acknowledged.
 // Returns "user not found" when no row was touched.
-func (s *PostgresStore) SetUserUpdatesSeen(userID string, platform, gateway int) error {
-	res, err := s.db.Exec(
-		`UPDATE users SET updates_seen_platform = $1, updates_seen_gateway = $2 WHERE id = $3`,
-		platform, gateway, userID,
-	)
+func (s *PostgresStore) SetUserUpdatesSeen(userID, version string) error {
+	res, err := s.db.Exec(`UPDATE users SET updates_seen_version = $1 WHERE id = $2`, version, userID)
 	if err != nil {
 		return err
 	}

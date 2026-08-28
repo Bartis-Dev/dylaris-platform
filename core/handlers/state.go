@@ -190,11 +190,10 @@ type AppState struct {
 	// are not available at all - there is nowhere safe to serve them.
 	TabProxyHostSuffix string
 
-	// UpdatesFeedURLPlatform / UpdatesFeedURLGateway mirror config: the public raw
-	// URLs the admin update-feed bell fetches (platform always; gateway only when
-	// gateway routing is enabled). An empty gateway URL keeps the gateway feed off.
-	UpdatesFeedURLPlatform string
-	UpdatesFeedURLGateway  string
+	// UpdatesURLPlatform / UpdatesURLHosted mirror config: the public raw URLs of
+	// the two release-notes files. Empty means "use the embedded copy only".
+	UpdatesURLPlatform string
+	UpdatesURLHosted   string
 
 	// modpackStorage caches "does modpack storage resolve to a provider", which
 	// GET /api/system/features reports to every user at boot. See

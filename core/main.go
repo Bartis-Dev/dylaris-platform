@@ -220,19 +220,19 @@ func main() {
 	grpcRegistry := nodegrpc.NewRegistry()
 
 	appState := &handlers.AppState{
-		Store:                  pgStore,
-		GRPCRegistry:           grpcRegistry,
-		FrontendURL:            cfg.FrontendURL,
-		ExternalTicketDBURL:    cfg.ExternalTicketDBURL,
-		FeatureFlags:           services.NewFeatureFlags(pgStore),
-		Authz:                  authz.NewResolver(pgStore),
-		DBType:                 cfg.DBType,
-		StoreEnabled:           cfg.StoreEnabled,
-		StoreURL:               cfg.StoreURL,
-		StoreSharedKey:         cfg.StoreSharedKey,
-		TabProxyHostSuffix:     cfg.TabProxyHostSuffix,
-		UpdatesFeedURLPlatform: cfg.UpdatesFeedURLPlatform,
-		UpdatesFeedURLGateway:  cfg.UpdatesFeedURLGateway,
+		Store:               pgStore,
+		GRPCRegistry:        grpcRegistry,
+		FrontendURL:         cfg.FrontendURL,
+		ExternalTicketDBURL: cfg.ExternalTicketDBURL,
+		FeatureFlags:        services.NewFeatureFlags(pgStore),
+		Authz:               authz.NewResolver(pgStore),
+		DBType:              cfg.DBType,
+		StoreEnabled:        cfg.StoreEnabled,
+		StoreURL:            cfg.StoreURL,
+		StoreSharedKey:      cfg.StoreSharedKey,
+		TabProxyHostSuffix:  cfg.TabProxyHostSuffix,
+		UpdatesURLPlatform:  cfg.UpdatesURLPlatform,
+		UpdatesURLHosted:    cfg.UpdatesURLHosted,
 	}
 
 	// Demo showcase read access flows through the resolver so the RequireCap

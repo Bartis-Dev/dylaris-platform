@@ -503,7 +503,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	memberHandler := handlers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
 	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret, cfg.ClusterSecret)
-	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesFeedURLPlatform, appState.UpdatesFeedURLGateway)
+	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
 	backupHandler := handlers.NewBackupHandler(appState)
 	storageConnectionsHandler := handlers.NewStorageConnectionsHandler(appState)
 	regionsHandler := handlers.NewRegionsHandler(appState)
