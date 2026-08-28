@@ -496,7 +496,7 @@ can still show what exists.
 | GET | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.GetMyQuestions` | auth required. |
 | PUT | `/api/me/security-questions` | session | _no capability_ | Limit, LimitBody | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
 | GET | `/api/me/servers/via-tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.ListMyServersViaTickets` | Drives the sidebar tab. |
-| PUT | `/api/me/updates-seen` | session | _no capability_ | - | `UpdatesHandler.MarkUpdatesSeen` | acknowledge the current feeds so the caller's navbar badge clears. |
+| PUT | `/api/me/updates-seen` | session | _no capability_ | - | `UpdatesHandler.MarkUpdatesSeen` | acknowledge everything published so far, clearing this user's badge. |
 | GET | `/api/me/usage` | session | _no capability_ | - | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
 | GET | `/api/me/username-history` | session | _no capability_ | - | `UsernameHistoryHandler.Me` | the calling user's own past usernames. |
 
@@ -847,7 +847,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/updates` | session | _no capability_ | - | `UpdatesHandler.GetUpdates` | ADMIN ONLY. |
+| GET | `/api/updates` | session | _no capability_ | - | `UpdatesHandler.GetUpdates` | Two audiences out of one mechanism. |
 
 ## /api/users
 

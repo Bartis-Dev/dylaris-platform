@@ -2222,7 +2222,7 @@
       "path": "/api/me/updates-seen",
       "auth": "session",
       "authorization": "no capability",
-      "description": "acknowledge the current feeds so the caller's navbar badge clears.",
+      "description": "acknowledge everything published so far, clearing this user's badge.",
       "handler": "UpdatesHandler.MarkUpdatesSeen",
       "group": "me",
       "external": false
@@ -4488,7 +4488,7 @@
       "path": "/api/updates",
       "auth": "session",
       "authorization": "no capability",
-      "description": "ADMIN ONLY.",
+      "description": "Two audiences out of one mechanism.",
       "handler": "UpdatesHandler.GetUpdates",
       "group": "updates",
       "external": false
