@@ -505,6 +505,24 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Account no longer has 2FA — aborting", http.StatusForbidden)
 		return
 	}
+	// Spend the token BEFORE the code is checked, so one token buys exactly one
+	// TOTP attempt.
+	//
+	// It used to be deleted only after a successful restore, which made a wrong
+	// code free: the token lived for five minutes, this route has no rate
+	// limiter, and totp.Validate keeps no attempt state - so a stolen admin
+	// session could stand here guessing six digits until it hit one. That is the
+	// whole point of the 2FA gate on a WIPE-EVERY-TICKET-TABLE action: it is the
+	// defence against exactly a stolen session, and unlimited guesses removed it.
+	//
+	// A wrong code now costs another initiate plus the 15s cooldown. A legitimate
+	// admin who mistypes has to start the flow again, which is what this
+	// function's own "one-shot token" comment already promised.
+	//
+	// Deliberately NOT here for the cooldown and phrase checks above: those are
+	// typos, not credential guesses, and burning the token on them would only
+	// train people to click through the confirmation faster.
+	h.consumeRestoreToken(req.Token)
 	if !totp.Validate(strings.TrimSpace(req.TOTPCode), user.TOTPSecret) {
 		sendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
 		return
@@ -546,11 +564,6 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// One-shot token — consume it whether the restore succeeded or not.
-	h.tokensMu.Lock()
-	delete(h.tokens, req.Token)
-	h.tokensMu.Unlock()
-
 	LogIdentityAudit(h.state, r, "ticket_restore_executed", userID, "", map[string]interface{}{
 		"backup": t.BackupName,
 	})
@@ -559,6 +572,14 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+// consumeRestoreToken spends a restore token. Idempotent, so calling it on a
+// path that later fails is safe.
+func (h *TicketMigrationHandler) consumeRestoreToken(token string) {
+	h.tokensMu.Lock()
+	delete(h.tokens, token)
+	h.tokensMu.Unlock()
+}
 
 // safeBackupName whitelists timestamped JSON names so DELETE/DOWNLOAD can't
 // path-traverse out of the backup root.
