@@ -48,8 +48,15 @@ func sharedFactory(root string) ProviderFactory {
 // running the rest of the matrix in parallel pushed a healthy two-participant
 // round past 300ms: core-b was reported no-response and the gate went red on
 // code that was fine. A deadline a passing test never reaches cannot do that.
+//
+// Raised again on 2026-08-28, same failure, same cause, one step further out:
+// with BOTH repos' pipelines on the one runner, a healthy 2/2 round missed the
+// 10s deadline and core-b was reported no-response. 60s is now past the
+// participant goroutine's own 30s bound on purpose, so a genuine hang is
+// reported by the participant, with a message that says so, instead of arriving
+// here as an ambiguous no-response.
 func settlingRound() RoundOptions {
-	return RoundOptions{Deadline: 10 * time.Second, PollEvery: 20 * time.Millisecond}
+	return RoundOptions{Deadline: 60 * time.Second, PollEvery: 20 * time.Millisecond}
 }
 
 // expiringRound is for the opposite case: a test where a participant never
