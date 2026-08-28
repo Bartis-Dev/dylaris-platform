@@ -107,18 +107,23 @@ services:
       # instead of being empty; keep them in sync with core/config/config.go.
       DYLARIS_GRPC_PORT: "${DYLARIS_GRPC_PORT:-25501}"
       REDIS_DB: "${REDIS_DB:-0}"
-      # These four default to "" in code, so an empty value is a no-op.
+      # These default to "" in code, so an empty value is a no-op.
       DYLARIS_CORE_ID: "${DYLARIS_CORE_ID:-}"
       CLAMAV_ADDR: "${CLAMAV_ADDR:-}"
-      UPDATES_FEED_URL_GATEWAY: "${UPDATES_FEED_URL_GATEWAY:-}"
       # Name Core answers to on this network. Only needed if the service is not
       # called "core"; it is what the BYON deploy snippet resolves for
       # CORE_GRPC_ADDR, so a wrong value shows up as an unfillable snippet.
       CORE_SERVICE_NAME: "${CORE_SERVICE_NAME:-}"
-      # UPDATES_FEED_URL_PLATFORM is deliberately NOT listed. Its code default is
-      # the public feed URL, and setting it to "" is the supported way to DISABLE
-      # the feed - which listing it here with any shell default would take away.
-      # Set it directly on the service if you need to point it elsewhere.
+      # UPDATES_URL_PLATFORM and UPDATES_URL_HOSTED are deliberately NOT listed.
+      # Their code defaults are the public raw release-notes URLs, and setting
+      # either to "" is the supported way to fall back to the copy EMBEDDED in
+      # the image - which is what an air-gapped install wants, and which listing
+      # them here with any shell default would take away.
+      # Set them directly on the service if you need to point them elsewhere.
+      #
+      # RELEASE_ENFORCE_MIN_VERSION is likewise unlisted. It defaults to on, and
+      # "false" is the break-glass that stops Core refusing nodes which missed a
+      # mandatory-update deadline. Set it on the service, deliberately.
     # Core's shutdown runs a sequence, and the whole of it has to fit inside
     # this window or the later steps simply never execute. Budget: the API
     # listener drains for up to 30s, the tab-proxy listener for up to another

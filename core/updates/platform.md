@@ -14,6 +14,12 @@ Newest release first. The format is fixed and checked in CI - see the
 - Updates now have a version. Core, the panel and every node report the release
   they were built from, and the updates view shows which of yours are behind
   rather than a running count of changelog lines. `core` `panel` `node`
+- The updates view is no longer admin-only. Anyone signed in sees the releases
+  that concern them and the versions their own machines report, which for a
+  BYON customer is the only place their node's build was ever visible. `core`
+  `panel`
+- Release announcements now go out on Discord, one message per audience, with
+  roles you pick yourself under Channels & Roles.
 - Limits read the same way everywhere: leave a limit empty for unlimited, or
   switch it off and type a number, where 0 means none. Route allowances used to
   spell unlimited as -1 on one screen and as 0 on another. `core` `panel`
@@ -38,6 +44,10 @@ Newest release first. The format is fixed and checked in CI - see the
   to 24 hours, including the one it was meant to close. `core`
 
 ### Fixes
+- A node whose owner has missed a mandatory update is now warned at connect and
+  refused once the deadline passes, with the reason stated instead of a
+  connection that simply stops working. Set RELEASE_ENFORCE_MIN_VERSION=false on
+  Core to warn without refusing. `core` `node`
 - A node cap now counts every pending node identity, not just its own kind.
   Enrolment tokens and warp keys are separate records, and each gate counted
   only one of them, so a cap of 2 could hand out 4. `core`
