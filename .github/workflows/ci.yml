@@ -213,6 +213,12 @@ jobs:
   # See .github/race.Dockerfile for what a green run here does and does not prove.
   race-tests:
     runs-on: self-hosted
+    # A ceiling, not a target: this normally finishes in well under ten
+    # minutes. It exists because the concurrency queue added on 2026-08-28
+    # makes a stuck run block every later one, and GitHub's own default is
+    # six HOURS. Set far above any legitimate run - the two repos share one
+    # machine, so a slow run under cross-repo contention must not go red.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
