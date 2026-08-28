@@ -187,6 +187,38 @@ describe('deployCli', () => {
         expect(deployCli('route-only')).not.toContain('logs -f node');
         expect(deployCli('route-only')).toContain('logs -f link');
     });
+
+    // The first step is the one people get stuck on, and it is the only one
+    // that differs: a Linux reader has a shell, a Windows reader has Explorer
+    // and a Notepad that appends .txt behind their back.
+    it('shows how to create the file on each platform', () => {
+        const linux = deployCli('route-only', 'linux');
+        expect(linux).toContain('nano route-only.yml');
+        expect(linux).not.toContain('notepad');
+
+        const win = deployCli('route-only', 'windows');
+        expect(win).toContain('notepad route-only.yml');
+        // A lone backslash is not an escape in a template literal, it is
+        // dropped - which would render the path as $HOMEdylaris.
+        expect(win).toContain('mkdir "$HOME\\dylaris"');
+        expect(win).toContain('.txt');
+        expect(win).not.toContain('nano ');
+    });
+
+    it('defaults to the Linux steps', () => {
+        expect(deployCli('node')).toBe(deployCli('node', 'linux'));
+    });
+
+    // Both platforms start the stack the same way, and both readers may be on
+    // Portainer instead of a shell.
+    it('starts the stack identically on both platforms', () => {
+        for (const p of ['linux', 'windows'] as const) {
+            const out = deployCli('route-only', p);
+            expect(out).toContain('docker compose -f route-only.yml pull');
+            expect(out).toContain('docker compose -f route-only.yml up -d');
+            expect(out).toContain('Portainer');
+        }
+    });
 });
 
 describe('EXTERNAL_NODE_PORTS', () => {

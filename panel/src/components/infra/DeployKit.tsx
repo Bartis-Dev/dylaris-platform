@@ -156,7 +156,7 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
                 </p>
             )}
             <Snippet title={kind === 'node' ? 'byon-node.yml' : 'route-only.yml'} body={compose} />
-            <Snippet title="Commands" body={deployCli(kind)} />
+            <Snippet title="Commands" body={deployCli(kind, platform)} />
         </div>
     );
 }

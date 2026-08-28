@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29
+
+### Features
+- The deploy snippets now say how to create the compose file, with separate
+  steps for Linux and for Windows, and a note for Portainer. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- BYON and route-only deploy snippets took Core's address from the panel's own
+  URL. An install that serves the API on a second host handed the customer a
+  file that could never enroll. `panel`
+
 ## 2026.08.28
 
 ### Features

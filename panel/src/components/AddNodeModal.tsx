@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { X, Server, Network, Copy, Check, ExternalLink, Info } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
-import { API_URL } from '@/lib/api/core';
+import { coreOrigin } from '@/lib/api/core';
 
 // ---------------------------------------------------------------------------
 // "How do I add a node?" — the admin answer.
@@ -21,7 +21,7 @@ import { API_URL } from '@/lib/api/core';
 //     that tab appears only then.
 // ---------------------------------------------------------------------------
 
-const enrollUrl = API_URL.replace(/\/api\/?$/, '');
+const enrollUrl = coreOrigin();
 
 const FLEET_COMPOSE = `# Add this service to the stack you deploy on the new host.
 # It joins the SAME overlay network as core and redis, so nothing is published.

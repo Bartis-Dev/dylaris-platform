@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { handleResponse, handleError } from './core';
+import { describe, it, expect, afterEach } from 'vitest';
+import { handleResponse, handleError, coreOrigin } from './core';
 
 const mockResponse = (body: object, ok: boolean) =>
     ({ ok, json: async () => body }) as unknown as Response;
@@ -70,5 +70,36 @@ describe('handleResponse with a non-JSON body', () => {
     it('still prefers a server-supplied message when the body does parse', async () => {
         const result = await handleResponse(mockResponse({ message: 'Not found' }, false));
         expect(result.message).toBe('Not found');
+    });
+});
+
+// coreOrigin feeds the BYON / route-only deploy snippets, where a wrong value
+// is not a broken screen but a compose file the customer runs on their own
+// machine and that then fails somewhere else entirely.
+describe('coreOrigin', () => {
+    const saved = process.env.NEXT_PUBLIC_API_URL;
+    afterEach(() => {
+        if (saved === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+        else process.env.NEXT_PUBLIC_API_URL = saved;
+    });
+
+    // warp appends /api/warp/enroll itself, so the suffix has to come off.
+    it('strips the /api suffix from the API base', () => {
+        process.env.NEXT_PUBLIC_API_URL = 'https://api.example.com/api';
+        expect(coreOrigin()).toBe('https://api.example.com');
+    });
+
+    // The regression: the snippet used to be filled from window.location.origin,
+    // which is the PANEL's host. On the split-host layout Core is a different
+    // machine and the panel host serves no /api/warp/enroll at all.
+    it('follows the API host, not the host serving the panel', () => {
+        process.env.NEXT_PUBLIC_API_URL = 'https://api.example.com/api';
+        expect(coreOrigin()).not.toContain('panel');
+    });
+
+    // Same-origin installs are the case that made the old code look correct.
+    it('stays on one host when the API is served beside the panel', () => {
+        process.env.NEXT_PUBLIC_API_URL = 'https://panel.example.com/api';
+        expect(coreOrigin()).toBe('https://panel.example.com');
     });
 });

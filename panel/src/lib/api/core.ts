@@ -35,6 +35,22 @@ function resolveApiUrl(): string {
 
 export const API_URL = resolveApiUrl();
 
+/**
+ * Core's public origin, WITHOUT the trailing /api.
+ *
+ * This is what warp's ENROLL_URL and the link's CORE_URL want: both append
+ * /api/warp/... themselves.
+ *
+ * Deliberately not window.location.origin. That is the PANEL's origin, and the
+ * production layout puts Core on a host of its own (panel.example.com next to
+ * api.example.com), so the panel origin produces a deploy kit that enrolls
+ * against a host with no /api/warp/enroll on it. It only looks right on the
+ * same-origin layout, which is exactly what a local test install uses.
+ */
+export function coreOrigin(): string {
+    return resolveApiUrl().replace(/\/api\/?$/, "");
+}
+
 // fetch has NO default timeout. A host that accepts the connection and then
 // never answers leaves the promise pending forever - not rejected, not
 // resolved - so a catch written for "hard transport failure" never runs.

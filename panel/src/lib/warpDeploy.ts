@@ -263,27 +263,53 @@ volumes:
 `;
 }
 
-/** CLI steps that go with either compose file. */
-export function deployCli(kind: 'route-only' | 'node'): string {
+/**
+ * The steps around the compose file: create it, start it, and check that the
+ * tunnel actually carries traffic.
+ *
+ * Platform-specific because the first step is, and it is the step people get
+ * stuck on. Saying "save the file" is enough for someone with a shell open on a
+ * Linux box; on Windows the reader is in Explorer, and Notepad's default "Text
+ * Documents" filter silently produces route-only.yml.txt, which Docker then
+ * reports as a missing file.
+ */
+export function deployCli(kind: 'route-only' | 'node', platform: DeployPlatform = 'linux'): string {
     const file = kind === 'route-only' ? 'route-only.yml' : 'byon-node.yml';
-    return `# 1. Save the compose file above, then start it. Pull first: the
-#    tunnel agent is what supplies the internal addresses, so a stale
-#    cached image would leave the rest of the stack with nothing to talk to.
+    const save = platform === 'windows'
+        ? `# 1. Save the compose file above as ${file}. Docker Desktop must be
+#    running. In PowerShell:
+mkdir "$HOME\\dylaris" -Force; cd "$HOME\\dylaris"
+notepad ${file}
+#    Notepad offers to create it - say yes, paste, save, close. If you use the
+#    Save As dialog, set "Save as type" to All files, or Windows appends .txt
+#    and Docker reports the file as missing.`
+        : `# 1. Save the compose file above as ${file} on the machine:
+mkdir -p ~/dylaris && cd ~/dylaris
+nano ${file}    # paste, then Ctrl+O, Enter, Ctrl+X`;
+
+    return `${save}
+
+# 2. Start it. Pull first: the tunnel agent is what supplies the internal
+#    addresses, so a stale cached image would leave the rest of the stack
+#    with nothing to talk to.
 docker compose -f ${file} pull
 docker compose -f ${file} up -d
 
-# 2. Watch the tunnel come up (peer + handshake within ~15s):
+# 3. Watch the tunnel come up (peer + handshake within ~15s):
 docker compose -f ${file} logs -f warp
 
-# 3. Verify the overlay actually carries traffic, not just that wg0 exists:
+# 4. Verify the overlay actually carries traffic, not just that wg0 exists:
 docker compose -f ${file} exec warp wg show
 ${kind === 'node'
             ? `
-# 4. The node registers itself; it appears in the panel under Nodes within ~30s.
+# 5. The node registers itself; it appears in the panel under Nodes within ~30s.
 docker compose -f ${file} logs -f node`
             : `
-# 4. The link registers its tunnel; then create the route(s) in the panel.
-docker compose -f ${file} logs -f link`}`;
+# 5. The link registers its tunnel; then create the route(s) in the panel.
+docker compose -f ${file} logs -f link`}
+
+# Portainer instead of a shell: Stacks -> Add stack -> Web editor, paste the
+# same file, Deploy. Nothing in it changes.`;
 }
 
 /**

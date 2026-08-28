@@ -11,6 +11,7 @@ import {
     getNodes,
     listNodeWarpKeys, mintNodeWarpKey, revokeNodeWarpKey, type NodeWarpKey,
 } from '@/lib/api';
+import { coreOrigin } from '@/lib/api/core';
 import { getStoreStatus } from '@/lib/api/store';
 import { getMyUsage } from '@/lib/api/usage';
 import { mintEnrollToken, listEnrollTokens, revokeEnrollToken } from '@/lib/api/nodeAdmission';
@@ -140,9 +141,10 @@ function MyNodesInner() {
     // render as "you are not connected", which would tell a linked customer to
     // fix a join that is fine.
     const [storeLinked, setStoreLinked] = useState<boolean | null>(null);
-    // Core's own public origin, used in the deploy snippets as ENROLL_URL. The
-    // browser is talking to it right now, so it is the one address known to be
-    // reachable from outside - guessing it would be worse.
+    // Core's own public origin, used in the deploy snippets as ENROLL_URL.
+    // Resolved from the API base rather than from the page's own origin: those
+    // two are the same host only on a same-origin install, and on any other the
+    // panel origin has no /api/warp/enroll for warp to reach.
     const [enrollUrl, setEnrollUrl] = useState('<core-url>');
 
     const suspended = entitlement?.source === 'suspended';
@@ -187,10 +189,11 @@ function MyNodesInner() {
         return () => { cancelled = true; };
     }, [isAdmin]);
 
+    // In an effect, not at render: the API base is resolved in the browser (a
+    // runtime /config.js may override the built-in one), so reading it during
+    // SSR would bake in a different value than the client computes.
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            setEnrollUrl(window.location.origin);
-        }
+        setEnrollUrl(coreOrigin() || '<core-url>');
     }, []);
 
     useEffect(() => {

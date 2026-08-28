@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29
+
+### Features
+- The deploy file for a BYON node or a route-only link now comes with the steps
+  to create and start it, for Linux and for Windows.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The deploy file could carry the wrong address for our API, so the tunnel never
+  came up. Copy it from the panel again if yours did not connect. Fixed on our
+  side.
+
 ## 2026.08.28
 
 ### Features

@@ -13,11 +13,11 @@ import {
 import { routeOnlyCompose, nodeCompose, deployCli, nodeIdFromLabel, EXTERNAL_NODE_PORTS } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
-import { API_URL } from '@/lib/api/core';
+import { coreOrigin } from '@/lib/api/core';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import HelpTip from '@/components/ui/HelpTip';
 
-const enrollUrl = API_URL.replace(/\/api\/?$/, '');
+const enrollUrl = coreOrigin();
 
 type WarpSubTab = 'settings' | 'nodes';
 
@@ -739,7 +739,7 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
         platform,
     };
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
-    const cli = deployCli(kind);
+    const cli = deployCli(kind, platform);
 
     const copy = (what: string, text: string) => {
         navigator.clipboard.writeText(text).then(() => {
