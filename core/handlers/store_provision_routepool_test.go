@@ -30,7 +30,7 @@ func TestProvision_RoutePool(t *testing.T) {
 		if len(fs.routeLimitSets) != 1 {
 			t.Fatalf("routeLimitSets = %+v, want exactly 1", fs.routeLimitSets)
 		}
-		if got := fs.routeLimitSets[0]; got.scope != "user:"+uid || got.max != 12 {
+		if got := fs.routeLimitSets[0]; got.scope != "user:"+uid || got.max == nil || *got.max != 12 {
 			t.Fatalf("wrote %+v, want {user:%s 12}", got, uid)
 		}
 	})
@@ -101,8 +101,9 @@ func TestProvision_RoutePool(t *testing.T) {
 		if len(fs.routeLimitDeletes) != 0 {
 			t.Fatalf("deleted %+v; the tenant then falls through to the platform default, which is unlimited when none is set", fs.routeLimitDeletes)
 		}
-		if len(fs.routeLimitSets) != 1 || fs.routeLimitSets[0].scope != "user:"+uid || fs.routeLimitSets[0].max != 0 {
-			t.Fatalf("sets = %+v, want [{user:%s 0}]", fs.routeLimitSets, uid)
+		got := fs.routeLimitSets
+		if len(got) != 1 || got[0].scope != "user:"+uid || got[0].max == nil || *got[0].max != 0 {
+			t.Fatalf("sets = %+v, want one write of a cap of 0 on user:%s", got, uid)
 		}
 	})
 

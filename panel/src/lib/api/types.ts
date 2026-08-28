@@ -772,11 +772,20 @@ export interface ServiceError {
     message: string;
 }
 
+/**
+ * Address caps per scope. Each follows the platform convention:
+ * null = no limit, 0 = none, n = the cap. See LimitField.
+ *
+ * These were plain numbers where -1 meant unlimited, which could not express
+ * "none" - while the help text under the very same inputs already promised
+ * "0 = zero routes allowed". The UI was right and the wire format could not
+ * carry it.
+ */
 export interface GatewayLimits {
-    global: number;
-    userDefault: number;
-    perServer: number;
-    portMc: number;
+    global: number | null;
+    userDefault: number | null;
+    perServer: number | null;
+    portMc: number | null;
     portMcEnabled: boolean;
 }
 

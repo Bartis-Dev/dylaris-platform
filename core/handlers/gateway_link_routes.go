@@ -40,19 +40,33 @@ func validateLocalTarget(host string) error {
 	return nil
 }
 
-// effectiveRouteLimit resolves the per-user route cap. user:{id} override wins
-// (0 = disabled); otherwise user_default, then global. hasLimit=false = unlimited.
-func (h *GatewayHandler) effectiveRouteLimit(userID string) (int, bool) {
-	if l, err := h.state.Store.GetGatewayRouteLimit("user:" + userID); err == nil && l != nil {
-		return l.MaxRoutes, true
+// effectiveRouteLimit resolves the cap on addresses ON OUR DOMAINS for one
+// tenant. Returns nil for "no cap".
+//
+// Three scopes, most specific first: "user:<id>", then "user_default", then
+// "global". A scope with NO ROW says nothing and the next one is asked. A scope
+// WITH a row answers, and its answer may be NULL - "I am set, and I set no cap" -
+// which is a decision and therefore stops the walk.
+//
+// That distinction is the whole point. This used to be one int where 0 meant
+// "disabled" at the user scope and "ignore me" at the other two, so the same
+// stored number meant two different things depending on which row it sat in, and
+// a computed zero from the store was silently rewritten into "no override" and
+// fell through to a scope nobody had set - which is unlimited. Now zero means
+// none wherever it is, and absence is spelled by the row not existing.
+func (h *GatewayHandler) effectiveRouteLimit(userID string) *int64 {
+	for _, scope := range []string{"user:" + userID, "user_default", "global"} {
+		l, err := h.state.Store.GetGatewayRouteLimit(scope)
+		if err != nil || l == nil {
+			continue // no row here: ask the next scope
+		}
+		if l.MaxRoutes == nil {
+			return nil // set, and explicitly no cap
+		}
+		n := int64(*l.MaxRoutes)
+		return &n
 	}
-	if l, err := h.state.Store.GetGatewayRouteLimit("user_default"); err == nil && l != nil && l.MaxRoutes > 0 {
-		return l.MaxRoutes, true
-	}
-	if l, err := h.state.Store.GetGatewayRouteLimit("global"); err == nil && l != nil && l.MaxRoutes > 0 {
-		return l.MaxRoutes, true
-	}
-	return 0, false
+	return nil
 }
 
 // countOwnerRoutes counts the tenant's addresses ON OUR DOMAINS. Routes on a
@@ -137,8 +151,8 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	// Route creation switched off for this account is an operator decision about
 	// the tenant, not about a domain, so it is answered before anything else -
 	// and before any input validation can turn it into a confusing 400.
-	limit, hasLimit := h.effectiveRouteLimit(userID)
-	if hasLimit && limit <= 0 {
+	limit := h.effectiveRouteLimit(userID)
+	if limit != nil && *limit == 0 {
 		http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
 		return
 	}
@@ -161,8 +175,8 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	// The allowance itself can only be spent once we know whose domain this is: a
 	// route the tenant points at us from their OWN domain costs the allowance
 	// nothing, so refusing it on a full one would deny something we do not ration.
-	if hasLimit && services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && h.countOwnerRoutes(userID) >= limit {
-		http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead - that is unlimited.", limit), http.StatusForbidden)
+	if services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(h.countOwnerRoutes(userID))) {
+		http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead - that is unlimited.", *limit), http.StatusForbidden)
 		return
 	}
 

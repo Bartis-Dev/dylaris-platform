@@ -137,14 +137,17 @@ func (a *aclHandshakeStore) NodeLimitReached(ownerID string) bool {
 		return false
 	}
 	lim, err := services.EffectiveLimits(a.store, ownerID)
-	if err != nil || lim.MaxNodes <= 0 {
+	if err != nil || lim.MaxNodes == nil {
 		return false
 	}
 	cnt, err := a.store.CountNodesByOwner(ownerID)
 	if err != nil {
 		return false
 	}
-	return int64(cnt) >= lim.MaxNodes
+	// Live nodes only, deliberately: the identity being redeemed right now is
+	// still pending, so counting pending ones here would have it count against
+	// itself and the last slot could never be claimed. See services.NodeSlotsUsed.
+	return services.AtOrOver(lim.MaxNodes, int64(cnt))
 }
 
 // CreatePlatformNode is CreateBYONNode without the owner binding: the row stays

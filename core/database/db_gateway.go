@@ -23,10 +23,14 @@ import (
 func createGatewayTables(db *sql.DB) error {
 	tables := []string{
 		// Route limits (managed by Core raw SQL; the Hub has no such table)
+		// max_routes is NULLABLE on purpose: NULL is "no cap", 0 is a real
+		// "none". It was NOT NULL DEFAULT 0 while 0 meant "disabled", which made
+		// this the one limit in the platform where zero did not mean unlimited.
+		// See models.GatewayRouteLimit.
 		`CREATE TABLE IF NOT EXISTS gateway_route_limits (
 			id SERIAL PRIMARY KEY,
 			scope TEXT NOT NULL UNIQUE,
-			max_routes INTEGER NOT NULL DEFAULT 0
+			max_routes INTEGER
 		)`,
 	}
 	for _, q := range tables {

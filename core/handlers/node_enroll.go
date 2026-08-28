@@ -84,11 +84,11 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// identity. This gate used to count only its own enroll tokens and the warp
 	// sibling only its own keys, so neither could see what the other had handed
 	// out - see NodeSlotsUsed for what that cost the tenant.
-	if lim, lerr := services.EffectiveLimits(h.state.Store, userID); lerr == nil && lim.MaxNodes > 0 {
+	if lim, lerr := services.EffectiveLimits(h.state.Store, userID); lerr == nil && lim.MaxNodes != nil {
 		used, uerr := services.NodeSlotsUsed(h.state.Store, userID)
-		if uerr == nil && used >= lim.MaxNodes {
+		if uerr == nil && services.AtOrOver(lim.MaxNodes, used) {
 			sendJSONError(w, fmt.Sprintf(
-				"Node limit reached (%d). Revoke an unused enroll token or node key, or remove a machine first.", lim.MaxNodes),
+				"Node limit reached (%d). Revoke an unused enroll token or node key, or remove a machine first.", *lim.MaxNodes),
 				http.StatusForbidden)
 			return
 		}

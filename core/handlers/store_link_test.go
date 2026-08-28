@@ -89,12 +89,15 @@ func (f *storeLinkFakeStore) SetUserBillingStatus(userID, status string, graceUn
 	return f.setUserBillingStatusErr
 }
 
+// max is a POINTER, so a recorded call distinguishes "wrote a cap of 0" from
+// "wrote no cap at all" - the two the old int collapsed, and the reason a zero
+// address allowance used to end up meaning unlimited.
 type storeLinkRouteLimitCall struct {
 	scope string
-	max   int
+	max   *int
 }
 
-func (f *storeLinkFakeStore) SetGatewayRouteLimit(scope string, max int) error {
+func (f *storeLinkFakeStore) SetGatewayRouteLimit(scope string, max *int) error {
 	f.routeLimitSets = append(f.routeLimitSets, storeLinkRouteLimitCall{scope, max})
 	return f.routeLimitErr
 }

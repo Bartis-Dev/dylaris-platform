@@ -295,18 +295,24 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	scope := fmt.Sprintf("user:%s", id)
 
 	limit, err := h.state.Store.GetGatewayRouteLimit(scope)
-	if err != nil {
-		// No override → default mode
+	if err != nil || limit == nil {
+		// No row at all: this user defers to the platform default.
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":   true,
 			"mode":      "default",
-			"maxRoutes": 0,
+			"maxRoutes": nil,
 		})
 		return
 	}
 
+	// Four states, and every one of them is now expressible. A NULL cap is
+	// "unlimited, decided for this user" - different from "default", which is
+	// deciding nothing and letting the platform answer.
 	mode := "custom"
-	if limit.MaxRoutes == 0 {
+	switch {
+	case limit.MaxRoutes == nil:
+		mode = "unlimited"
+	case *limit.MaxRoutes == 0:
 		mode = "disabled"
 	}
 
@@ -333,20 +339,26 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	zero := 0
 	switch req.Mode {
 	case "default":
-		// Remove user-specific override → falls back to user_default
+		// No row: defer to user_default, then global.
 		h.state.Store.DeleteGatewayRouteLimit(scope)
+	case "unlimited":
+		// A row with a NULL cap. Deliberately NOT the same as "default": this
+		// says "no cap, for this user", and keeps saying it if an operator later
+		// tightens the platform default.
+		h.state.Store.SetGatewayRouteLimit(scope, nil)
 	case "custom":
 		if req.MaxRoutes < 1 {
-			sendJSONError(w, "Custom limit must be at least 1", 400)
+			sendJSONError(w, "Custom limit must be at least 1 (use mode \"disabled\" for none)", 400)
 			return
 		}
-		h.state.Store.SetGatewayRouteLimit(scope, req.MaxRoutes)
+		h.state.Store.SetGatewayRouteLimit(scope, &req.MaxRoutes)
 	case "disabled":
-		h.state.Store.SetGatewayRouteLimit(scope, 0)
+		h.state.Store.SetGatewayRouteLimit(scope, &zero)
 	default:
-		sendJSONError(w, "Invalid mode (use: default, custom, disabled)", 400)
+		sendJSONError(w, "Invalid mode (use: default, unlimited, custom, disabled)", 400)
 		return
 	}
 

@@ -21,7 +21,11 @@ type overLimitStore struct {
 
 	nodes, keys, kits int
 	enrollTokens      int
-	routeLimit        int
+	// A POINTER so the zero value still means "this fake has no route-limit row",
+	// which is what every test that does not mention routes relies on. With a
+	// plain int that default would now read as a real cap of 0 and route-cap
+	// every one of them.
+	routeLimit *int
 
 	stamps   []overLimitStamp
 	stampErr error
@@ -55,7 +59,7 @@ func (f *overLimitStore) CountNodesByOwner(string) (int, error)        { return 
 func (f *overLimitStore) CountNodeWarpKeysByOwner(string) (int, error) { return f.keys, nil }
 func (f *overLimitStore) CountLinkKitsByOwner(string) (int, error)     { return f.kits, nil }
 func (f *overLimitStore) GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error) {
-	if f.routeLimit == 0 {
+	if f.routeLimit == nil {
 		return nil, nil
 	}
 	return &models.GatewayRouteLimit{Scope: scope, MaxRoutes: f.routeLimit}, nil
@@ -159,18 +163,31 @@ func TestEnforceEntitlementLimits_Stamping(t *testing.T) {
 // that means "no cap". Every case below that is about a CAP therefore sets
 // entitled, and the ones about the entitlement set the caps to zero.
 func TestTenantUsage_Over(t *testing.T) {
+	n := func(v int64) *int64 { return &v }
 	tests := []struct {
 		name string
 		u    tenantUsage
 		want bool
 	}{
-		{"within every limit", tenantUsage{entitled: true, nodes: 2, nodeLimit: 2, links: 1, linkLimit: 1}, false},
-		{"one node too many", tenantUsage{entitled: true, nodes: 3, nodeLimit: 2}, true},
-		{"one location too many", tenantUsage{entitled: true, links: 2, linkLimit: 1}, true},
-		{"one address too many", tenantUsage{entitled: true, routes: 7, routeLimit: 6}, true},
-		{"a zero node limit is unlimited", tenantUsage{entitled: true, nodes: 99, nodeLimit: 0}, false},
-		{"a zero link limit is unlimited", tenantUsage{entitled: true, links: 99, linkLimit: 0}, false},
-		{"a zero route limit is unlimited", tenantUsage{entitled: true, routes: 99, routeLimit: 0}, false},
+		{"within every limit", tenantUsage{entitled: true, nodes: 2, nodeLimit: n(2), links: 1, linkLimit: n(1)}, false},
+		{"one node too many", tenantUsage{entitled: true, nodes: 3, nodeLimit: n(2)}, true},
+		{"one location too many", tenantUsage{entitled: true, links: 2, linkLimit: n(1)}, true},
+		{"one address too many", tenantUsage{entitled: true, routes: 7, routeLimit: n(6)}, true},
+
+		// These three used to read "a zero X limit is unlimited", and that was
+		// the defect, not the design: a zero is what arithmetic produces for a
+		// tenant who bought none of something, so the one number meaning "none"
+		// was the one number that switched the check off. Unlimited is now the
+		// ABSENCE of a cap, which a nil pointer says and no number can.
+		{"a zero node limit means none, so holding any is over", tenantUsage{entitled: true, nodes: 99, nodeLimit: n(0)}, true},
+		{"a zero link limit means none", tenantUsage{entitled: true, links: 99, linkLimit: n(0)}, true},
+		{"a zero route limit means none", tenantUsage{entitled: true, routes: 99, routeLimit: n(0)}, true},
+
+		// ...and holding nothing against a zero cap is still fine. A cap of none
+		// is met by holding none; it is not a permanent fault.
+		{"a zero limit with nothing held is not over", tenantUsage{entitled: true, nodeLimit: n(0), linkLimit: n(0), routeLimit: n(0)}, false},
+
+		{"no cap anywhere is unlimited", tenantUsage{entitled: true, nodes: 99, links: 99, routes: 99}, false},
 		{"nothing held anywhere", tenantUsage{entitled: true}, false},
 
 		// The hole this closes. A cancellation pushes maxNodes 0, and 0 is
@@ -200,11 +217,12 @@ func TestTenantUsage_Over(t *testing.T) {
 // TestTenantUsage_Describe proves the warning names only what is actually wrong.
 // A tenant one node over should not read a message implying everything is.
 func TestTenantUsage_Describe(t *testing.T) {
-	one := tenantUsage{entitled: true, nodes: 3, nodeLimit: 2}
+	n := func(v int64) *int64 { return &v }
+	one := tenantUsage{entitled: true, nodes: 3, nodeLimit: n(2)}
 	if got := one.describe(); got != "3 nodes (allowed 2)" {
 		t.Fatalf("describe() = %q", got)
 	}
-	both := tenantUsage{entitled: true, nodes: 3, nodeLimit: 2, routes: 7, routeLimit: 6}
+	both := tenantUsage{entitled: true, nodes: 3, nodeLimit: n(2), routes: 7, routeLimit: n(6)}
 	if got := both.describe(); got != "3 nodes (allowed 2) and 7 protected addresses (allowed 6)" {
 		t.Fatalf("describe() = %q", got)
 	}

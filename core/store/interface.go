@@ -359,7 +359,7 @@ type Store interface {
 
 	// --- Gateway Route Limits (still managed by Core, not Hub) ---
 	GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error)
-	SetGatewayRouteLimit(scope string, max int) error
+	SetGatewayRouteLimit(scope string, max *int) error
 	ListGatewayRouteLimits() ([]models.GatewayRouteLimit, error)
 	DeleteGatewayRouteLimit(scope string) error
 

@@ -413,15 +413,14 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// the over-limit sweep. A tenant who points their own domain at us is not
 	// spending anything we ration.
 	if !IsAdmin(r) {
-		if limit, has := h.effectiveRouteLimit(userID); has {
-			if limit <= 0 {
-				http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
-				return
-			}
-			if services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && h.countOwnerRoutes(userID) >= limit {
-				http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead - that is unlimited.", limit), http.StatusForbidden)
-				return
-			}
+		limit := h.effectiveRouteLimit(userID)
+		if limit != nil && *limit == 0 {
+			http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
+			return
+		}
+		if services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(h.countOwnerRoutes(userID))) {
+			http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead - that is unlimited.", *limit), http.StatusForbidden)
+			return
 		}
 	}
 

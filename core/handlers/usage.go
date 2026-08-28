@@ -21,7 +21,10 @@ type usageView struct {
 
 func (h *UsageHandler) viewFor(u *store.TrafficUsage) usageView {
 	lim, _ := services.EffectiveLimits(h.state.Store, u.UserID)
-	over := func(limGB, bytes int64) bool { return limGB > 0 && bytes > limGB*usageGiB }
+	// nil is no cap; a 0 cap is a real one and is exceeded by the first byte.
+	over := func(limGB *int64, bytes int64) bool {
+		return limGB != nil && bytes > *limGB*usageGiB
+	}
 	return usageView{
 		TrafficUsage: u,
 		Limits:       lim,

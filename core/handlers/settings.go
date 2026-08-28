@@ -233,11 +233,18 @@ var defaultBlockedRoutePrefixes = []string{
 	"login", "auth", "cdn", "docs", "help",
 }
 
+// GatewayLimits are the platform-wide address caps, one per scope.
+//
+// Each is a POINTER so the wire can carry the platform convention intact:
+// null is no cap, 0 is none, n is the cap (see services.Limits). The panel used
+// to spell "unlimited" as -1 here while the user scope spelled "disabled" as 0,
+// so the same field meant different things in different rows and neither could
+// express the third state at all.
 type GatewayLimits struct {
-	Global        int  `json:"global"`
-	UserDefault   int  `json:"userDefault"`
-	PerServer     int  `json:"perServer"`
-	PortMc        int  `json:"portMc"`
+	Global        *int `json:"global"`
+	UserDefault   *int `json:"userDefault"`
+	PerServer     *int `json:"perServer"`
+	PortMc        *int `json:"portMc"`
 	PortMcEnabled bool `json:"portMcEnabled"`
 }
 
@@ -262,10 +269,14 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 		return val
 	}
 
-	getLimit := func(scope string) int {
+	// No row and a NULL row both read as "no cap" to the panel. They differ only
+	// for the scope WALK (a missing row defers to the next scope, a NULL one
+	// answers), and these four are the scopes being walked TO - there is nothing
+	// below them to defer to, so the distinction has no meaning here.
+	getLimit := func(scope string) *int {
 		l, err := h.state.Store.GetGatewayRouteLimit(scope)
-		if err != nil {
-			return 0
+		if err != nil || l == nil {
+			return nil
 		}
 		return l.MaxRoutes
 	}
@@ -417,7 +428,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	// Save limits
 	limits := []struct {
 		scope string
-		max   int
+		max   *int
 	}{
 		{"global", req.Limits.Global},
 		{"user_default", req.Limits.UserDefault},

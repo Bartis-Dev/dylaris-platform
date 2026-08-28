@@ -278,10 +278,14 @@ func TestCreateLinkRoute_EmptyLinkIDRejected(t *testing.T) {
 
 // --- Per-user route cap ---
 
+// routeCap builds the pointer the model now carries. nil is no cap, 0 is a real
+// "none": see models.GatewayRouteLimit.
+func routeCap(v int) *int { return &v }
+
 func TestCreateLinkRoute_RouteCap(t *testing.T) {
 	t.Run("explicit zero override disables route creation entirely", func(t *testing.T) {
 		fs := baseLinkRouteStore()
-		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 0}}
+		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(0)}}
 		gw := &linkRouteFakeGateway{}
 		h := newLinkRouteHandler(fs, gw, newLinkRouteRedis(t))
 		rec := httptest.NewRecorder()
@@ -293,7 +297,7 @@ func TestCreateLinkRoute_RouteCap(t *testing.T) {
 
 	t.Run("at the limit is rejected", func(t *testing.T) {
 		fs := baseLinkRouteStore()
-		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 1}}
+		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(1)}}
 		rdb := newLinkRouteRedis(t)
 		seedLinkRoute(t, rdb, "existing.example.com", services.GatewayRoute{CoreOwned: true, OwnerID: linkRouteUserID})
 		gw := &linkRouteFakeGateway{}
@@ -310,7 +314,7 @@ func TestCreateLinkRoute_RouteCap(t *testing.T) {
 
 	t.Run("under the limit proceeds", func(t *testing.T) {
 		fs := baseLinkRouteStore()
-		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 5}}
+		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(5)}}
 		rdb := newLinkRouteRedis(t)
 		seedLinkRoute(t, rdb, "existing.example.com", services.GatewayRoute{CoreOwned: true, OwnerID: linkRouteUserID})
 		gw := &linkRouteFakeGateway{}
@@ -324,7 +328,7 @@ func TestCreateLinkRoute_RouteCap(t *testing.T) {
 
 	t.Run("another owner's routes do not count against this caller's cap", func(t *testing.T) {
 		fs := baseLinkRouteStore()
-		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 1}}
+		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(1)}}
 		rdb := newLinkRouteRedis(t)
 		seedLinkRoute(t, rdb, "someone-elses.example.com", services.GatewayRoute{CoreOwned: true, OwnerID: "other-user"})
 		gw := &linkRouteFakeGateway{}
@@ -347,7 +351,7 @@ func TestCreateLinkRoute_RouteCap(t *testing.T) {
 	// directly in services.
 	t.Run("routes on their own domain do not fill the allowance", func(t *testing.T) {
 		fs := baseLinkRouteStore()
-		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 1}}
+		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(1)}}
 		rdb := newLinkRouteRedis(t)
 		seedLinkRoute(t, rdb, "survival.theirown.net", services.GatewayRoute{CoreOwned: true, OwnerID: linkRouteUserID})
 		gw := &linkRouteFakeGateway{}

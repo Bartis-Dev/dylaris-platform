@@ -11,6 +11,7 @@ import {
 import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skeleton';
 import Spinner from '@/components/Spinner';
+import { LimitField } from '@/components/settings/LimitField';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import GuardedTabs from '@/components/settings/GuardedTabs';
 import { useTabParam } from '@/lib/useTabParam';
@@ -428,10 +429,9 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         if (snapshotRef.current) setSettings(snapshotRef.current);
     };
 
-    const setLimit = (key: LimitKey, value: number) =>
+    const setLimit = (key: LimitKey, value: number | null) =>
         setSettings(prev => ({ ...prev, limits: { ...prev.limits, [key]: value } }));
-    const isUnlimited = (key: LimitKey) => settings.limits[key] === -1;
-    const toggleUnlimited = (key: LimitKey) => setLimit(key, isUnlimited(key) ? 0 : -1);
+
     const routingChanged = routingMode !== origRoutingMode || fileMode !== origFileMode;
 
     // Gate the operational route-management UI on the *applied* routing mode
@@ -821,24 +821,11 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                     <p className="text-sm text-(--base-09)">{label}</p>
                                     <p className="text-xs text-(--base-06)">{desc}</p>
                                 </div>
-                                <div className="flex items-center gap-3 shrink-0">
-                                    {!isUnlimited(key) && (
-                                        <input type="number" min={0} value={settings.limits[key]}
-                                            onChange={e => setLimit(key, Number(e.target.value))}
-                                            className="input-mono w-20 text-center" />
-                                    )}
-                                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                        <button type="button" role="switch" aria-checked={isUnlimited(key)} onClick={() => toggleUnlimited(key)}
-                                            className={`toggle-track ${isUnlimited(key) ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                            <span className={`toggle-knob ${isUnlimited(key) ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                        </button>
-                                        <span className="text-[10px] font-mono uppercase text-(--base-06)">Unlimited</span>
-                                    </label>
-                                </div>
+                                <LimitField value={settings.limits[key]} onChange={v => setLimit(key, v)} />
                             </div>
                         ))}
                     </div>
-                    <p className="text-xs text-(--base-05) mt-2">0 = zero routes allowed. Per-user overrides can be set in user settings.</p>
+                    <p className="text-xs text-(--base-05) mt-2"><span className="font-mono">0</span> = no routes allowed; switch off <span className="font-mono">No limit</span> to type a number. Per-user overrides can be set in user settings.</p>
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
@@ -860,20 +847,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             {settings.limits.portMcEnabled && (
                                 <div className="flex items-center justify-between mt-2 pt-2 border-t border-(--base-03)">
                                     <span className="text-xs text-(--base-06)">Max routes on this port</span>
-                                    <div className="flex items-center gap-3">
-                                        {!isUnlimited('portMc') && (
-                                            <input type="number" min={0} value={settings.limits.portMc}
-                                                onChange={e => setLimit('portMc', Number(e.target.value))}
-                                                className="input-mono w-20 text-center" />
-                                        )}
-                                        <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                            <button type="button" role="switch" aria-checked={isUnlimited('portMc')} onClick={() => toggleUnlimited('portMc')}
-                                                className={`toggle-track ${isUnlimited('portMc') ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                                <span className={`toggle-knob ${isUnlimited('portMc') ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                            </button>
-                                            <span className="text-[10px] font-mono uppercase text-(--base-06)">Unlimited</span>
-                                        </label>
-                                    </div>
+                                    <LimitField value={settings.limits.portMc} onChange={v => setLimit('portMc', v)} />
                                 </div>
                             )}
                         </div>

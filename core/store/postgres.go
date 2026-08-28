@@ -1622,7 +1622,10 @@ func (s *PostgresStore) GetGatewayRouteLimit(scope string) (*models.GatewayRoute
 	return &l, nil
 }
 
-func (s *PostgresStore) SetGatewayRouteLimit(scope string, max int) error {
+// SetGatewayRouteLimit writes one scope's cap. A nil max stores NULL, which is
+// "this scope is set, and it sets no cap" - distinct from deleting the row,
+// which hands the question to the next scope down.
+func (s *PostgresStore) SetGatewayRouteLimit(scope string, max *int) error {
 	_, err := s.db.Exec(`
 		INSERT INTO gateway_route_limits (scope, max_routes) VALUES ($1, $2)
 		ON CONFLICT (scope) DO UPDATE SET max_routes = EXCLUDED.max_routes

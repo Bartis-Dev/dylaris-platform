@@ -442,20 +442,21 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	if !h.state.requireEntitlement(r, w, userID, services.EntitlementRouteOnly) {
 		return
 	}
-	// Enforce the tenant's link cap (0 = unlimited, mirrors max_nodes).
+	// Enforce the tenant's link cap. nil is no cap; 0 is a real cap that nothing
+	// gets past, which is what an account holding no route-only product has.
 	lim, lerr := services.EffectiveLimits(h.state.Store, userID)
 	if lerr != nil {
 		sendJSONError(w, "Failed to resolve limits", http.StatusInternalServerError)
 		return
 	}
-	if lim.MaxLinks > 0 {
+	if lim.MaxLinks != nil {
 		used, cerr := h.state.Store.CountLinkKitsByOwner(userID)
 		if cerr != nil {
 			sendJSONError(w, "Failed to count links", http.StatusInternalServerError)
 			return
 		}
-		if int64(used) >= lim.MaxLinks {
-			sendJSONError(w, fmt.Sprintf("Link limit reached (%d)", lim.MaxLinks), http.StatusForbidden)
+		if services.AtOrOver(lim.MaxLinks, int64(used)) {
+			sendJSONError(w, fmt.Sprintf("Link limit reached (%d)", *lim.MaxLinks), http.StatusForbidden)
 			return
 		}
 	}
@@ -840,7 +841,7 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to resolve limits", http.StatusInternalServerError)
 		return
 	}
-	if lim.MaxNodes > 0 {
+	if lim.MaxNodes != nil {
 		// Both kinds of pending identity, not just this endpoint's own keys: an
 		// enroll token is a machine mid-setup exactly as an unredeemed key is,
 		// and counting one but not the other let the two mint gates hand out
@@ -850,8 +851,8 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Failed to count nodes", http.StatusInternalServerError)
 			return
 		}
-		if used >= lim.MaxNodes {
-			sendJSONError(w, fmt.Sprintf("Node limit reached (%d). Revoke an unused key or enroll token, or remove a machine first.", lim.MaxNodes), http.StatusForbidden)
+		if services.AtOrOver(lim.MaxNodes, used) {
+			sendJSONError(w, fmt.Sprintf("Node limit reached (%d). Revoke an unused key or enroll token, or remove a machine first.", *lim.MaxNodes), http.StatusForbidden)
 			return
 		}
 	}

@@ -28,7 +28,11 @@ interface UsersTabProps {
     currentUser?: User;
 }
 
-type RouteMode = 'default' | 'custom' | 'disabled';
+// Four states, and they are genuinely four. "default" decides nothing and lets
+// the platform answer; "unlimited" decides "no cap, for this user" and keeps
+// saying so if the platform default is later tightened. The backend stores the
+// first as no row and the second as a row with a NULL cap.
+type RouteMode = 'default' | 'unlimited' | 'custom' | 'disabled';
 
 type UserSort = 'role' | 'name' | 'created';
 
@@ -266,7 +270,10 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             const res = await getUserRouteLimit(user.id);
             if (res.success) {
                 setRouteMode(res.mode as RouteMode);
-                setRouteMax(res.maxRoutes > 0 ? res.maxRoutes : 5);
+                // Only a positive cap is a "custom" number worth restoring into
+                // the input. null (no cap) and 0 (none) are their own modes and
+                // must not seed the field with a value they do not mean.
+                setRouteMax(typeof res.maxRoutes === 'number' && res.maxRoutes > 0 ? res.maxRoutes : 5);
             }
         } catch {
             setRouteMode('default');
@@ -331,6 +338,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         setRouteSaving(true);
         const res = await setUserRouteLimit(settingsUser.id, {
             mode: routeMode,
+            // Only "custom" carries a number; the other three modes ARE the
+            // answer and the backend ignores this field for them.
             maxRoutes: routeMode === 'custom' ? routeMax : 0,
         });
         if (res.success) {
@@ -788,6 +797,21 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                 <div>
                                                     <p className="text-sm text-(--base-09)">Use global default</p>
                                                     <p className="text-xs text-(--base-06)">Uses the per-user default limit from gateway settings</p>
+                                                </div>
+                                            </label>
+
+                                            {/* Unlimited */}
+                                            <label className={`flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors ${routeMode === 'unlimited' ? 'bg-(--accent)/10 border border-(--accent)/30' : 'bg-(--base-02) border border-transparent'}`}>
+                                                <input
+                                                    type="radio"
+                                                    name="routeMode"
+                                                    checked={routeMode === 'unlimited'}
+                                                    onChange={() => setRouteMode('unlimited')}
+                                                    className="accent-(--accent)"
+                                                />
+                                                <div>
+                                                    <p className="text-sm text-(--base-09)">No limit</p>
+                                                    <p className="text-xs text-(--base-06)">This user is uncapped, whatever the global default becomes later</p>
                                                 </div>
                                             </label>
 

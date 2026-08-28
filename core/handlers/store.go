@@ -378,9 +378,12 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 					sendJSONError(w, "Activated but failed to clear the route pool", http.StatusInternalServerError)
 					return
 				}
-			} else if err := h.state.Store.SetGatewayRouteLimit(userRouteScope(req.UUID), int(*routes)); err != nil {
-				sendJSONError(w, "Activated but failed to apply the route pool", http.StatusInternalServerError)
-				return
+			} else {
+				n := int(*routes)
+				if err := h.state.Store.SetGatewayRouteLimit(userRouteScope(req.UUID), &n); err != nil {
+					sendJSONError(w, "Activated but failed to apply the route pool", http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 	case "past_due":

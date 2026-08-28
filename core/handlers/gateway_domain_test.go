@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -213,77 +214,99 @@ func TestLoadBlockedRoutePrefixes(t *testing.T) {
 	})
 }
 
-// TestEffectiveRouteLimit pins the override -> user_default -> global
-// precedence (gateway_link_routes.go:44). The user-specific override wins
-// even when it is explicitly 0 (disabled); user_default/global only take
-// effect when their MaxRoutes is > 0, so a 0 at those tiers means "unset,
-// check the next tier" rather than "disabled" - an intentional asymmetry
-// worth pinning explicitly.
+// TestEffectiveRouteLimit pins the scope walk: "user:<id>" -> "user_default" ->
+// "global", most specific first.
+//
+// The rule is now the same at every tier, which it was not before. A scope with
+// NO ROW says nothing and the walk continues. A scope WITH a row has answered,
+// and its answer stands - including a NULL ("no cap, decided") and a 0 ("none").
+//
+// The old version of this file pinned the opposite as "an intentional
+// asymmetry": a 0 meant "disabled" at the user tier and "unset, try the next
+// tier" at the other two. One stored number, two meanings depending on which row
+// it sat in - and it left the tiers unable to express "no cap" at all, so a
+// computed zero from the store was rewritten into "no override", fell through to
+// a tier nobody had configured, and came out unlimited. Absence is spelled by the
+// row not existing now, which is a thing the database can represent and a number
+// cannot.
 func TestEffectiveRouteLimit(t *testing.T) {
 	const uid = "user-1"
+	n := func(v int) *int { return &v }
+	got := func(h *GatewayHandler) string {
+		l := h.effectiveRouteLimit(uid)
+		if l == nil {
+			return "no cap"
+		}
+		return fmt.Sprintf("%d", *l)
+	}
 
-	t.Run("user override wins even when zero (explicitly disabled)", func(t *testing.T) {
-		h := newGatewayDomainHandlerWithLimits(map[string]*models.GatewayRouteLimit{
-			"user:" + uid:  {MaxRoutes: 0},
-			"user_default": {MaxRoutes: 5},
-			"global":       {MaxRoutes: 10},
+	cases := []struct {
+		name   string
+		limits map[string]*models.GatewayRouteLimit
+		want   string
+	}{
+		{
+			name: "a user row of zero means none, and beats the tiers below it",
+			limits: map[string]*models.GatewayRouteLimit{
+				"user:" + uid:  {MaxRoutes: n(0)},
+				"user_default": {MaxRoutes: n(5)},
+				"global":       {MaxRoutes: n(10)},
+			},
+			want: "0",
+		},
+		{
+			name: "a user row with a number wins",
+			limits: map[string]*models.GatewayRouteLimit{
+				"user:" + uid: {MaxRoutes: n(7)},
+				"global":      {MaxRoutes: n(10)},
+			},
+			want: "7",
+		},
+		{
+			// The state the old int could not hold: this user is decided, and the
+			// decision is "no cap". It keeps saying so if the platform default is
+			// later tightened, which is what makes it different from having no row.
+			name: "a user row with NULL is an explicit no-cap",
+			limits: map[string]*models.GatewayRouteLimit{
+				"user:" + uid:  {MaxRoutes: nil},
+				"user_default": {MaxRoutes: n(5)},
+			},
+			want: "no cap",
+		},
+		{
+			name: "no user row defers to user_default",
+			limits: map[string]*models.GatewayRouteLimit{
+				"user_default": {MaxRoutes: n(5)},
+				"global":       {MaxRoutes: n(10)},
+			},
+			want: "5",
+		},
+		{
+			// Changed deliberately. This used to fall through to global, because a
+			// zero at this tier was read as "unset". A platform default of zero is
+			// now a decision an operator can actually make and have honoured.
+			name: "a user_default of zero is a real default of none",
+			limits: map[string]*models.GatewayRouteLimit{
+				"user_default": {MaxRoutes: n(0)},
+				"global":       {MaxRoutes: n(3)},
+			},
+			want: "0",
+		},
+		{
+			name:   "nothing configured anywhere is no cap",
+			limits: map[string]*models.GatewayRouteLimit{},
+			want:   "no cap",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newGatewayDomainHandlerWithLimits(c.limits)
+			if g := got(h); g != c.want {
+				t.Fatalf("effectiveRouteLimit() = %s, want %s", g, c.want)
+			}
 		})
-		limit, has := h.effectiveRouteLimit(uid)
-		if !has || limit != 0 {
-			t.Fatalf("effectiveRouteLimit() = (%d, %v), want (0, true)", limit, has)
-		}
-	})
-
-	t.Run("user override wins with a positive value", func(t *testing.T) {
-		h := newGatewayDomainHandlerWithLimits(map[string]*models.GatewayRouteLimit{
-			"user:" + uid: {MaxRoutes: 7},
-			"global":      {MaxRoutes: 10},
-		})
-		limit, has := h.effectiveRouteLimit(uid)
-		if !has || limit != 7 {
-			t.Fatalf("effectiveRouteLimit() = (%d, %v), want (7, true)", limit, has)
-		}
-	})
-
-	t.Run("no override falls to user_default when positive", func(t *testing.T) {
-		h := newGatewayDomainHandlerWithLimits(map[string]*models.GatewayRouteLimit{
-			"user_default": {MaxRoutes: 5},
-			"global":       {MaxRoutes: 10},
-		})
-		limit, has := h.effectiveRouteLimit(uid)
-		if !has || limit != 5 {
-			t.Fatalf("effectiveRouteLimit() = (%d, %v), want (5, true)", limit, has)
-		}
-	})
-
-	t.Run("user_default present but zero is treated as unset, falls to global", func(t *testing.T) {
-		h := newGatewayDomainHandlerWithLimits(map[string]*models.GatewayRouteLimit{
-			"user_default": {MaxRoutes: 0},
-			"global":       {MaxRoutes: 3},
-		})
-		limit, has := h.effectiveRouteLimit(uid)
-		if !has || limit != 3 {
-			t.Fatalf("effectiveRouteLimit() = (%d, %v), want (3, true) - a zero user_default should not win", limit, has)
-		}
-	})
-
-	t.Run("nothing configured anywhere is unlimited", func(t *testing.T) {
-		h := newGatewayDomainHandlerWithLimits(map[string]*models.GatewayRouteLimit{})
-		limit, has := h.effectiveRouteLimit(uid)
-		if has || limit != 0 {
-			t.Fatalf("effectiveRouteLimit() = (%d, %v), want (0, false)", limit, has)
-		}
-	})
-
-	t.Run("global present but zero is also treated as unset -> unlimited", func(t *testing.T) {
-		h := newGatewayDomainHandlerWithLimits(map[string]*models.GatewayRouteLimit{
-			"global": {MaxRoutes: 0},
-		})
-		limit, has := h.effectiveRouteLimit(uid)
-		if has || limit != 0 {
-			t.Fatalf("effectiveRouteLimit() = (%d, %v), want (0, false)", limit, has)
-		}
-	})
+	}
 }
 
 func newGatewayDomainHandlerWithLimits(limits map[string]*models.GatewayRouteLimit) *GatewayHandler {

@@ -500,8 +500,21 @@ type Module struct {
 
 // --- Gateway Route Limits (managed by Core, not Hub) ---
 
+// GatewayRouteLimit caps how many protected addresses ON OUR DOMAINS one scope
+// may hold. Scopes resolve most-specific-first: "user:<id>", then "user_default",
+// then "global".
+//
+// MaxRoutes follows the platform convention (services.Limits): NULL is no cap at
+// all, 0 is a real "none", n is the cap. A missing ROW is different again - it
+// means this scope says nothing, so the next one down is asked.
+//
+// The column used to be NOT NULL DEFAULT 0 with 0 meaning "disabled", which was
+// the one place in the platform where 0 did not mean unlimited. A store that
+// granted zero addresses had that zero rewritten into "no override", which fell
+// through to a scope nobody had set - and that is unlimited. Making the absence
+// its own value is what stops a computed zero from being mistaken for one.
 type GatewayRouteLimit struct {
 	ID        int    `json:"id"`
 	Scope     string `json:"scope"`
-	MaxRoutes int    `json:"maxRoutes"`
+	MaxRoutes *int   `json:"maxRoutes"`
 }

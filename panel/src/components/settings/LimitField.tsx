@@ -1,0 +1,88 @@
+'use client';
+
+/**
+ * LimitField is the ONE control for every "how many may they have" number in the
+ * panel.
+ *
+ * The platform convention it renders (see services.Limits in core):
+ *
+ *   null  - no limit at all
+ *   0     - none; they may hold zero of this
+ *   n     - the cap
+ *
+ * Before this there were three different widgets for the same idea: a checkbox
+ * that emptied the field (Backups), a toggle that wrote -1 (Gateway), and a bare
+ * number input with "0 = unlimited" in the help text (Beam, Nodes). An operator
+ * had to remember which screen meant what, and two of the three could not say
+ * "none" at all.
+ *
+ * The number input is hidden rather than disabled while unlimited is on: a
+ * greyed-out field still showing "5" invites the reading that 5 is somehow still
+ * in force.
+ */
+export function LimitField({
+    value,
+    onChange,
+    unit,
+    min = 0,
+    id,
+    describedBy,
+}: {
+    value: number | null;
+    onChange: (v: number | null) => void;
+    /** Shown after the input, e.g. "GB", "Mbit/s". Omit for a bare count. */
+    unit?: string;
+    /** Lowest acceptable cap. 0 by default, because "none" is a valid cap. */
+    min?: number;
+    id?: string;
+    describedBy?: string;
+}) {
+    const unlimited = value === null;
+
+    return (
+        <div className="flex items-center gap-3 shrink-0">
+            {!unlimited && (
+                <div className="flex items-center gap-1.5">
+                    <input
+                        id={id}
+                        type="number"
+                        min={min}
+                        value={value}
+                        aria-describedby={describedBy}
+                        onChange={e => {
+                            // An emptied field is not zero. Holding it at the
+                            // current value until a number arrives keeps a
+                            // half-typed edit from briefly meaning "none".
+                            const raw = e.target.value;
+                            if (raw === '') return;
+                            const n = Number(raw);
+                            onChange(Number.isFinite(n) ? Math.max(min, Math.trunc(n)) : value);
+                        }}
+                        className="input-mono w-20 text-center"
+                    />
+                    {unit && <span className="text-[10px] font-mono uppercase text-(--base-06)">{unit}</span>}
+                </div>
+            )}
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={unlimited}
+                    aria-label="No limit"
+                    onClick={() => onChange(unlimited ? 0 : null)}
+                    className={`toggle-track ${unlimited ? 'toggle-track-on' : 'toggle-track-off'}`}
+                >
+                    <span className={`toggle-knob ${unlimited ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                </button>
+                <span className="text-[10px] font-mono uppercase text-(--base-06)">No limit</span>
+            </label>
+        </div>
+    );
+}
+
+/** How a limit reads in prose, for summaries and list rows. */
+export function limitLabel(value: number | null, unit?: string): string {
+    if (value === null) return 'No limit';
+    if (value === 0) return 'None';
+    return unit ? `${value} ${unit}` : String(value);
+}

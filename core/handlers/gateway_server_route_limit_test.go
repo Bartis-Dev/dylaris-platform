@@ -56,27 +56,27 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 		},
 		{
 			name:       "under the user override",
-			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 3}},
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(3)}},
 			existing:   2,
 			wantStatus: http.StatusCreated,
 			wantCreate: true,
 		},
 		{
 			name:       "at the user override",
-			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 3}},
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(3)}},
 			existing:   3,
 			wantStatus: http.StatusForbidden,
 		},
 		{
 			// The mode an operator picks to stop an abusive tenant outright.
 			name:       "route creation explicitly disabled for this user",
-			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 0}},
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(0)}},
 			existing:   0,
 			wantStatus: http.StatusForbidden,
 		},
 		{
 			name:       "the platform-wide user_default applies too",
-			limits:     map[string]*models.GatewayRouteLimit{"user_default": {MaxRoutes: 1}},
+			limits:     map[string]*models.GatewayRouteLimit{"user_default": {MaxRoutes: routeCap(1)}},
 			existing:   1,
 			wantStatus: http.StatusForbidden,
 		},
@@ -85,7 +85,7 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 			// own routes must not be blocked by user_default. Same asymmetry
 			// resolveRouteDomain already applies to the reserved-name list.
 			name:       "an admin is not capped",
-			limits:     map[string]*models.GatewayRouteLimit{"user_default": {MaxRoutes: 1}},
+			limits:     map[string]*models.GatewayRouteLimit{"user_default": {MaxRoutes: routeCap(1)}},
 			existing:   9,
 			isAdmin:    true,
 			wantStatus: http.StatusCreated,
@@ -96,7 +96,7 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 			// cap of one is as over as it gets, and it still must not stop a
 			// domain the customer owns - that one costs the allowance nothing.
 			name:       "a full allowance does not block the customer's own domain",
-			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 1}},
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(1)}},
 			existing:   9,
 			domain:     "survival.theirown.net",
 			wantStatus: http.StatusCreated,
@@ -106,7 +106,7 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 			// "Disabled" is an operator stopping this tenant, not a full
 			// allowance, so it holds on every domain including their own.
 			name:       "a disabled tenant is stopped on their own domain too",
-			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: 0}},
+			limits:     map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(0)}},
 			domain:     "survival.theirown.net",
 			wantStatus: http.StatusForbidden,
 		},

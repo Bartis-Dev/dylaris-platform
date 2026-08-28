@@ -21,9 +21,14 @@ const OverLimitGrace = 72 * time.Hour
 // Counted fresh each pass rather than tracked, because every one of these can
 // change without going through billing (a node is deleted, a kit is revoked).
 type tenantUsage struct {
-	nodes, nodeLimit   int64
-	links, linkLimit   int64
-	routes, routeLimit int64
+	// The *Limit fields follow the platform convention: nil is no cap at all,
+	// 0 is a real "none", n is the cap. See services.Limits.
+	nodes      int64
+	nodeLimit  *int64
+	links      int64
+	linkLimit  *int64
+	routes     int64
+	routeLimit *int64
 	// entitled is whether the tenant may hold ANY of this. Separate from the
 	// three caps because a cap cannot express it: see over().
 	entitled bool
@@ -50,9 +55,9 @@ func (u tenantUsage) over() bool {
 	if !u.entitled && u.holdsAnything() {
 		return true
 	}
-	return (u.nodeLimit > 0 && u.nodes > u.nodeLimit) ||
-		(u.linkLimit > 0 && u.links > u.linkLimit) ||
-		(u.routeLimit > 0 && u.routes > u.routeLimit)
+	return Exceeds(u.nodeLimit, u.nodes) ||
+		Exceeds(u.linkLimit, u.links) ||
+		Exceeds(u.routeLimit, u.routes)
 }
 
 // describe renders the dimensions that are actually over, for the email and the
@@ -67,14 +72,14 @@ func (u tenantUsage) describe() string {
 			u.nodes, u.links, u.routes)
 	}
 	var parts []string
-	if u.nodeLimit > 0 && u.nodes > u.nodeLimit {
-		parts = append(parts, fmt.Sprintf("%d nodes (allowed %d)", u.nodes, u.nodeLimit))
+	if Exceeds(u.nodeLimit, u.nodes) {
+		parts = append(parts, fmt.Sprintf("%d nodes (allowed %d)", u.nodes, *u.nodeLimit))
 	}
-	if u.linkLimit > 0 && u.links > u.linkLimit {
-		parts = append(parts, fmt.Sprintf("%d route-only locations (allowed %d)", u.links, u.linkLimit))
+	if Exceeds(u.linkLimit, u.links) {
+		parts = append(parts, fmt.Sprintf("%d route-only locations (allowed %d)", u.links, *u.linkLimit))
 	}
-	if u.routeLimit > 0 && u.routes > u.routeLimit {
-		parts = append(parts, fmt.Sprintf("%d protected addresses (allowed %d)", u.routes, u.routeLimit))
+	if Exceeds(u.routeLimit, u.routes) {
+		parts = append(parts, fmt.Sprintf("%d protected addresses (allowed %d)", u.routes, *u.routeLimit))
 	}
 	out := ""
 	for i, p := range parts {
@@ -143,8 +148,9 @@ func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID str
 	// which is what a purchase writes. Only that scope is read here: the
 	// user_default and global fallbacks are the PLATFORM's baseline, and cutting
 	// a tenant off for exceeding a number nobody sold them would be wrong.
-	if l, lerr := s.store.GetGatewayRouteLimit("user:" + userID); lerr == nil && l != nil {
-		u.routeLimit = int64(l.MaxRoutes)
+	if l, lerr := s.store.GetGatewayRouteLimit("user:" + userID); lerr == nil && l != nil && l.MaxRoutes != nil {
+		n := int64(*l.MaxRoutes)
+		u.routeLimit = &n
 	}
 	// Routes live in Redis, not the database - they are gateway data plane state.
 	// With no Redis there is no route plane, so there is nothing to be over.
