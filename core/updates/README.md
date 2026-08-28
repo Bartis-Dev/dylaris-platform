@@ -64,7 +64,7 @@ file as "no updates", which is correct for them.
 ## Announcements
 
 A CI job posts one Discord message per audience whose top block is the release
-being cut, after the builds and after an environment wait timer. Idempotency is a
+being cut, as soon as the builds are green. Idempotency is a
 git tag (`platform-<version>`, `hosted-<version>`) pushed BEFORE the message: that
 push fails if the tag exists, which is the whole lock. No webhook secret
 configured means a green no-op.

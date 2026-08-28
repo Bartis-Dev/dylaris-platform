@@ -679,9 +679,17 @@ jobs:
   # goes to people who RUN the platform, hosted.md to customers who run a node or
   # nothing. Each is announced only when ITS top block is the release being cut.
   #
-  # The environment carries a WAIT TIMER, configured in repo settings rather than
-  # here so the delay can be changed without a commit. It doubles as a cancel
-  # window: the run is still stoppable while it waits.
+  # No wait timer and no environment gate: the message goes out as soon as the
+  # builds are green. That is a deliberate choice, not an omission - an
+  # `environment:` with a timer was tried first and removed, because the delay it
+  # buys is only useful to someone watching the run, and the thing it would
+  # protect against (announcing a release you did not mean to cut) is already
+  # prevented earlier: the announcement only fires when the notes file changed in
+  # THIS push and its top block is this version.
+  #
+  # What stays load-bearing is the git tag below. It is claimed BEFORE the post,
+  # so a re-run, a revert or a second push cannot announce the same release
+  # twice - and that guarantee never depended on the timer.
   announce:
     needs: [detect-changes, build-core, build-node, build-panel, build-log-shipper]
     # always() so a SKIPPED build (nothing changed for that service) does not
@@ -695,7 +703,6 @@ jobs:
       && !contains(needs.*.result, 'failure')
       && !contains(needs.*.result, 'cancelled')
     runs-on: self-hosted
-    environment: announce
     permissions:
       contents: write
     steps:
