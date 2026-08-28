@@ -157,6 +157,10 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Say why an install is not moving, rather than leaving a spinner that
+	// never resolves. Costs nothing when no server is installing.
+	annotateStalledInstallsFor(r.Context(), h.state, servers)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"servers": servers,

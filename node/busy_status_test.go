@@ -102,3 +102,14 @@ func TestHoldBusyOutlivesItsTTL(t *testing.T) {
 		t.Fatal("a set-once marker survived past its TTL; this test cannot prove the refresh works")
 	}
 }
+
+// The key format is a cross-component contract: Core reads this key to tell an
+// install nobody is working on apart from one still running
+// (handlers.annotateStalledInstalls). There is a copy of the format on each
+// side, so each side pins it - renaming it here alone would silently disable
+// Core's detection with nothing failing anywhere.
+func TestNodeBusyKeyFormatIsAContract(t *testing.T) {
+	if got := nodeBusyKey("abc"); got != "dylaris:server:abc:node_busy" {
+		t.Errorf("nodeBusyKey = %q; Core reads this exact format", got)
+	}
+}

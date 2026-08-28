@@ -57,6 +57,12 @@ Newest release first. The format is fixed and checked in CI - see the
 - The sub-server limit could express neither extreme. A saved 0 was discarded by
   the same kind of guard and fell back to the built-in default, so asking for
   none and asking for unlimited both produced a cap of three. `core` `panel`
+- A server whose node dies mid-install now says so. It used to keep showing
+  "installing" with nothing anywhere explaining why, which on a node somebody
+  runs at home is an ordinary support ticket. The status is unchanged because it
+  is still true - the install resumes on its own when the node reconnects - and
+  the server page now says that instead of showing a spinner forever. `core`
+  `panel`
 - A node whose owner has missed a mandatory update is now warned at connect and
   refused once the deadline passes, with the reason stated instead of a
   connection that simply stops working. Set RELEASE_ENFORCE_MIN_VERSION=false on

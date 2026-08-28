@@ -426,6 +426,13 @@ type Server struct {
 	// admin's demo list. Non-owner viewers get read-only access; the panel uses
 	// this to render a read-only badge and suppress write affordances.
 	IsDemo bool `json:"isDemo,omitempty"`
+	// InstallStalled is set at response time (not a DB column) when this server
+	// reads "installing" but nothing is working on it, because the node holding
+	// the job is offline. The status stays "installing" because it is still true;
+	// this is the missing explanation, not a state change. See
+	// handlers.annotateStalledInstalls.
+	InstallStalled     bool   `json:"installStalled,omitempty"`
+	InstallStallReason string `json:"installStallReason,omitempty"`
 }
 
 // TabPermissions defines per-tab access rights for invited users

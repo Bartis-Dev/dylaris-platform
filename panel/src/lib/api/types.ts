@@ -174,6 +174,12 @@ export interface Server {
     // Read-only showcase server (admin-flagged). Non-owner viewers may only read;
     // the panel suppresses write affordances when this is set.
     isDemo?: boolean;
+    // Set by Core when the server reads "installing" but nothing is working on
+    // it, because the node holding the job is offline. The status stays
+    // "installing" - it is still true, and the install resumes on its own when
+    // the node returns. This is the explanation, not a different state.
+    installStalled?: boolean;
+    installStallReason?: string;
 }
 
 export interface SftpCredentials {

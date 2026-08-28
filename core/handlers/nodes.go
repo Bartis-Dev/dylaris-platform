@@ -397,6 +397,9 @@ func (h *NodeHandler) GetNodeServers(w http.ResponseWriter, r *http.Request) {
 	if servers == nil {
 		servers = []models.Server{}
 	}
+	// This is the view an operator opens when a node looks wrong, so it is the
+	// one place a stalled install most needs to be visible.
+	annotateStalledInstallsFor(r.Context(), h.state, servers)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"servers": servers,

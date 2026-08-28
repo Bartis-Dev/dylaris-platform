@@ -34,6 +34,10 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 		servers = filtered
 	}
 
+	// Same as the tenant list: an install nobody is working on says so here too,
+	// or the admin overview is the one screen that still shows a bare spinner.
+	annotateStalledInstallsFor(r.Context(), h.state, servers)
+
 	memberCounts, _ := h.state.Store.CountInvitesPerServer()
 	type adminServerRow struct {
 		models.Server

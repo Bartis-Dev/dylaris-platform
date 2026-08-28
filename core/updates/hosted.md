@@ -26,6 +26,9 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Fixes
+- If your node goes offline while a server is installing, the panel now tells you
+  that instead of showing a spinner that never finishes. Nothing is lost: the
+  install picks up again on its own once the node reconnects. `node`
 - Node allowances now count correctly. Enrolment tokens and warp keys were
   counted by separate gates, so an account could end up holding more pending
   node identities than its plan allows and then be warned for it. Fixed on our

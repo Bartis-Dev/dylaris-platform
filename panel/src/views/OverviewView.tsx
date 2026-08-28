@@ -176,6 +176,24 @@ export default function OverviewView({ server }: OverviewViewProps) {
 
   return (
     <div className="h-full flex flex-col gap-4 overflow-y-auto">
+      {/* An install that cannot progress. Without this the page shows an
+          "installing" badge and a spinner that never resolves, which on BYON -
+          where the node is somebody's home PC - is an ordinary support ticket.
+          The state is not wrong, it was just never explained. */}
+      {server.installStalled && (
+        <div className="rounded-md border border-(--warning)/40 bg-(--warning-ghost) px-4 py-3">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle size={16} className="shrink-0 mt-0.5 text-(--warning-light)" />
+            <div className="min-w-0 text-sm leading-relaxed">
+              <div className="font-medium text-(--warning-light)">Installation paused</div>
+              <div className="text-(--base-08) mt-0.5">
+                {server.installStallReason || 'The node running this install is offline.'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header Controls */}
       <div className="flex items-center gap-3">
         <div className="flex bg-(--base-03) rounded-md p-0.5">

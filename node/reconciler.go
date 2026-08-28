@@ -47,6 +47,12 @@ type reconcileInfo struct {
 
 // nodeBusyKey marks a server this node is deliberately holding down while it
 // works on the server's files (reinstall, storage migration). See isNodeBusy.
+// CORE READS THIS TOO. handlers.annotateStalledInstalls asks whether the key
+// exists to tell "an install nobody is working on" apart from "an install still
+// running", which is how a node that died mid-install stops looking like a
+// server stuck forever with no explanation. The format is therefore a
+// cross-component contract with a copy on each side, pinned by a test in both -
+// renaming it here alone silently disables that detection, with nothing failing.
 func nodeBusyKey(uuid string) string {
 	return fmt.Sprintf("dylaris:server:%s:node_busy", uuid)
 }
