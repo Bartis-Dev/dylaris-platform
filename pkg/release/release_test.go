@@ -282,6 +282,53 @@ func TestOutdatedIsPerServiceNotPerVersion(t *testing.T) {
 	}
 }
 
+// The colour rule the panel renders, stated as the case that is easy to get
+// wrong: a component named by an OLDER release, current at that release, with a
+// NEWER release that names somebody else. It must stay green.
+//
+// The existing per-service test uses log-shipper, which no release ever names.
+// That is the easy half. This is the half where the component does appear in
+// the file, so a check written against "is there a newer release" rather than
+// "is there a newer release NAMING me" would go orange here and nowhere else.
+func TestOutdatedIgnoresAReleaseThatNamesSomebodyElse(t *testing.T) {
+	const file = "# Platform updates\n" +
+		"\n" +
+		"## 2026.09.01\n" +
+		"\n" +
+		"### Features\n" +
+		"- Only the node changed. `node`\n" +
+		"### Breaking\n" +
+		"- Nothing.\n" +
+		"### Security\n" +
+		"- Nothing.\n" +
+		"### Fixes\n" +
+		"- Nothing.\n" +
+		"\n" +
+		"## 2026.08.28\n" +
+		"\n" +
+		"### Features\n" +
+		"- The panel changed here, and not since. `panel`\n" +
+		"### Breaking\n" +
+		"- Nothing.\n" +
+		"### Security\n" +
+		"- Nothing.\n" +
+		"### Fixes\n" +
+		"- Nothing.\n"
+
+	rs, err := Parse([]byte(file))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	panelAt := mustVersion(t, "2026.08.28")
+
+	if Outdated(rs, "panel", panelAt) {
+		t.Error("the panel is on the newest release that names it and still reads as outdated")
+	}
+	if !Outdated(rs, "node", panelAt) {
+		t.Error("the node is behind a release that does name it and reads as current")
+	}
+}
+
 func TestRequirement(t *testing.T) {
 	rs, err := Parse([]byte(goodFile))
 	if err != nil {

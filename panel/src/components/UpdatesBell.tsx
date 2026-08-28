@@ -60,7 +60,7 @@ function VersionRow({ group, countable }: { group: VersionGroup; countable: bool
             )}
             <span
                 className={`font-mono ${
-                    group.outdated ? 'text-(--warning-light)' : unknown ? 'text-(--base-05)' : 'text-(--base-08)'
+                    group.outdated ? 'text-(--warning-light)' : unknown ? 'text-(--base-05)' : 'text-(--success-light)'
                 }`}
                 title={group.labels.join(', ')}
             >
@@ -82,7 +82,15 @@ function ComponentRow({ component }: { component: UpdateComponent }) {
         <div className="flex items-start gap-4 px-4 py-2.5 border-b border-(--base-03)/60 last:border-b-0">
             <div className="w-28 shrink-0">
                 <div className="text-sm text-(--base-09)">{serviceLabel(component.service)}</div>
-                <div className="text-[10px] font-mono text-(--base-05)">
+                <div
+                    className={`text-[10px] font-mono ${
+                        !component.latest
+                            ? 'text-(--base-05)'
+                            : component.outdated
+                              ? 'text-(--warning-light)'
+                              : 'text-(--success-light)'
+                    }`}
+                >
                     {component.latest ? `latest ${component.latest}` : 'no releases'}
                 </div>
             </div>
@@ -142,24 +150,33 @@ function ReleaseBlock({ release }: { release: Release }) {
                 const style = CATEGORY_STYLES[cat.key];
                 return (
                     <div key={cat.key} className="mt-2">
-                        <div className={`font-mono text-[9px] uppercase tracking-[0.08em] ${style.color}`}>
+                        <div className={`font-mono text-[11px] font-semibold uppercase tracking-[0.06em] ${style.color}`}>
                             {cat.label}
                         </div>
                         {cat.entries.length === 0 ? (
                             // Written out rather than omitted: an absent heading
                             // reads as "nobody filled this in", and for a Security
                             // section those are very different statements.
-                            <div className="text-[12px] text-(--base-05) mt-0.5">Nothing this time.</div>
+                            <div className="text-[13px] text-(--base-05) mt-0.5">Nothing this time.</div>
                         ) : (
                             <ul className="mt-0.5 space-y-1">
                                 {cat.entries.map((e, i) => (
                                     <li key={i} className="flex items-start gap-2.5">
                                         <span className={`shrink-0 mt-[7px] w-1.5 h-1.5 rounded-full ${style.dot}`} aria-hidden="true" />
-                                        <div className="min-w-0 text-[12px] text-(--base-08) leading-relaxed">
+                                        <div className="min-w-0 text-[13px] text-(--base-08) leading-relaxed">
                                             {e.text}
                                             {(e.services?.length ?? 0) > 0 && (
-                                                <span className="ml-1.5 font-mono text-[10px] text-(--base-05)">
-                                                    {e.services!.map(serviceLabel).join(', ')}
+                                                // The services an entry names mean "update THIS to get
+                                                // it", which is the actionable half of the line. They
+                                                // were grey text at 10px and read as a footnote; the
+                                                // shared badge is the same thing the rest of the panel
+                                                // uses to say "this is a thing, not prose".
+                                                <span className="inline-flex flex-wrap gap-1 align-middle ml-1.5">
+                                                    {e.services!.map(svc => (
+                                                        <span key={svc} className="badge badge-neutral">
+                                                            {serviceLabel(svc)}
+                                                        </span>
+                                                    ))}
                                                 </span>
                                             )}
                                         </div>
@@ -272,7 +289,7 @@ export default function UpdatesBell() {
                                 <Sparkles size={15} className="text-(--accent-light)" />
                                 <span className="text-sm font-display font-semibold text-(--base-09)">Updates</span>
                                 {latest && (
-                                    <span className="font-mono text-[10px] text-(--base-05)">latest {latest}</span>
+                                    <span className="font-mono text-[10px] text-(--success-light)">latest {latest}</span>
                                 )}
                             </div>
                             <div className="flex items-center gap-1">
@@ -302,9 +319,18 @@ export default function UpdatesBell() {
                             {required.map(req => <RequirementBanner key={req.service} req={req} />)}
 
                             {components.length > 0 && (
-                                <div className="mt-4 mx-4 rounded-md border border-(--base-03) bg-(--base-02)">
-                                    {components.map(c => <ComponentRow key={c.service} component={c} />)}
-                                </div>
+                                <>
+                                    <p className="mt-4 mx-4 text-[11px] leading-relaxed text-(--base-06)">
+                                        <span className="text-(--success-light)">Green</span> means nothing is
+                                        waiting for that component.{' '}
+                                        <span className="text-(--warning-light)">Orange</span> means a release
+                                        after the build you run named it. A release that only changed another
+                                        component leaves this one green.
+                                    </p>
+                                    <div className="mt-2 mx-4 rounded-md border border-(--base-03) bg-(--base-02)">
+                                        {components.map(c => <ComponentRow key={c.service} component={c} />)}
+                                    </div>
+                                </>
                             )}
 
                             {releases.length === 0 ? (
