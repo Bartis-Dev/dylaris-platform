@@ -52,9 +52,14 @@ services:
       # container on an origin that is not the panel's, where its scripts cannot
       # reach the session token.
       #
-      # Needs a wildcard DNS record for *.<suffix> pointing at Core, and a
-      # certificate covering BOTH <suffix> and *.<suffix> (a wildcard does not
-      # cover its own parent). Wildcards are DNS-01 only.
+      # Three prerequisites, all outside this file - see .env.example and the
+      # worked Traefik labels in /docs/reverse-proxy:
+      #   - the suffix must be on the SAME registrable domain as FRONTEND_URL,
+      #     because the tab ticket cookie is only readable same-site
+      #   - DNS for BOTH <suffix> and *.<suffix>, grey-clouded behind Cloudflare
+      #     (Universal SSL stops one level up and will not cover *.share.x)
+      #   - a certificate covering BOTH names, which is DNS-01 only, and which
+      #     the router has to ASK for by name rather than get per hostname
       TAB_PROXY_HOST_SUFFIX: "${TAB_PROXY_HOST_SUFFIX:-}"
       # Everything below is forwarded ONLY so that setting it in .env actually
       # works. Compose uses a .env file for ${...} substitution, it does NOT
