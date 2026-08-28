@@ -50,21 +50,19 @@ jobs:
       # the same machine, so the restore was overwriting files that were already
       # there.
       #
-      # The step below MEASURES that rather than trusting it. If a run shows an
-      # empty cache, the modules are simply re-downloaded - bounded, parallel
-      # network I/O against one module's go.sum, against seven minutes of serial
-      # disk extraction - and this comment is the place to reconsider.
+      # MEASURED, not assumed: run 33174274653 printed
+      # "GOMODCACHE /root/go/pkg/mod: 614M" on a job with cache: false, so the
+      # modules were already on the machine and the restore had been overwriting
+      # correct files. The probe that proved it was then removed - `du -sh` over
+      # 614 MB costs 55s on this disk, five times per run. To re-check after a
+      # runner change: `du -sh $(go env GOMODCACHE)`.
+      #
+      # Result across the whole workflow: 20 minutes to 5.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.7'
           cache: false
-
-      - name: Report Go cache warmth
-        run: |
-          mod=$(go env GOMODCACHE); build=$(go env GOCACHE)
-          echo "GOMODCACHE $mod: $(du -sh "$mod" 2>/dev/null | cut -f1 || echo empty)"
-          echo "GOCACHE    $build: $(du -sh "$build" 2>/dev/null | cut -f1 || echo empty)"
 
       # beam/app embeds frontend/dist (a Wails build artifact that a fresh
       # checkout does not have, so `go build` fails on the //go:embed). The Go
