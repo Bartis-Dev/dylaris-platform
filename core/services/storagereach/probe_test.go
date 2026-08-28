@@ -92,13 +92,21 @@ func newProbeProvider(root string) *probeFakeProvider {
 	return &probeFakeProvider{inner: &storage.LocalProvider{BasePath: root}}
 }
 
+// probeOpts is the SETTLING class of deadline, in settlingRound()'s sense
+// (round_test.go): the peer's beacon is already there, so Probe returns the
+// moment it reads it and the deadline is only ever reached when the test is
+// already failing. A generous one therefore costs a passing run nothing.
+//
+// The 60ms deadlines further down are the opposite class and must STAY small:
+// those tests expect the clock to run out, so raising them would only make the
+// suite slower.
 func probeOpts(coreID, roundID string, peers []string) ProbeOptions {
 	return ProbeOptions{
 		CoreID:       coreID,
 		RoundID:      roundID,
 		Fingerprint:  "fp-1",
 		Participants: peers,
-		Deadline:     2 * time.Second,
+		Deadline:     30 * time.Second,
 		RetryEvery:   10 * time.Millisecond,
 	}
 }
@@ -167,9 +175,18 @@ func TestProbe_SucceedsOnRetryAfterAPropagationDelay(t *testing.T) {
 		})
 	}()
 
+	// 30s, not 3s. This bounds how long core-a waits for the GOROUTINE ABOVE to
+	// be scheduled, which on a runner executing the whole job matrix at once has
+	// little to do with how long the work takes - the same latent bug a181094c
+	// fixed in six copies of the round-test loop, still here in this one. It ran
+	// out on CI while core-a was fine, on a commit that touched neither this
+	// package nor anything near it.
+	//
+	// It only runs out on the FAILING path: Probe returns the moment it sees
+	// core-b's beacon, so a passing run never waits on this number at all.
 	rep := Probe(context.Background(), newProbeProvider(root), ProbeOptions{
 		CoreID: "core-a", RoundID: "r1", Fingerprint: "fp-1", Participants: peers,
-		Deadline: 3 * time.Second, RetryEvery: 10 * time.Millisecond,
+		Deadline: 30 * time.Second, RetryEvery: 10 * time.Millisecond,
 	})
 	if len(rep.SeenPeers) != 1 || rep.SeenPeers[0] != "core-b" {
 		t.Fatalf("SeenPeers = %v, want [core-b] after the retry window", rep.SeenPeers)
