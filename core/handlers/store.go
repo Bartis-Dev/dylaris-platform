@@ -228,6 +228,47 @@ func parseEntitlement(raw json.RawMessage) (*int64, bool, error) {
 	return v, true, nil
 }
 
+// parseRoutePool decodes the purchased ADDRESS POOL, which cannot go through
+// parseEntitlement even though it looks identical on the wire.
+//
+// The two land in tables with OPPOSITE conventions for zero. parseEntitlement
+// reasons from user_billing, where 0 means UNLIMITED, so it converts any
+// non-positive number into "clear the override" - correct there, because writing
+// a store's "0 nodes granted" straight through would hand the tenant an uncapped
+// account.
+//
+// max_routes lives in gateway_route_limits, where the user scope already has a
+// perfectly good representation for zero: GetUserRouteLimit reports mode
+// "disabled" for it and effectiveRouteLimit answers "Route creation is disabled
+// for your account". A store that grants zero addresses is saying exactly that.
+//
+// Running it through the other table's convention threw that meaning away: the
+// row was DELETED, the resolver fell through to user_default and then to global,
+// and with neither set that is unlimited. The one number meaning "no addresses"
+// produced no limit at all - the same trap as a zero node count, inverted.
+//
+// So: absent leaves the column alone, an explicit null clears the override (fall
+// back to the platform default), and a number is written literally. A negative is
+// clamped to 0 rather than cleared, because it is nonsense from the store and
+// "none" is the safe reading of it - RoutePool already clamps the same way.
+func parseRoutePool(raw json.RawMessage) (*int64, bool, error) {
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	var v *int64
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, false, err
+	}
+	if v == nil {
+		return nil, true, nil
+	}
+	n := *v
+	if n < 0 {
+		n = 0
+	}
+	return &n, true, nil
+}
+
 // Provision POST /api/store/provision — store-key. The store (source of truth
 // for payment) drives the Core billing lifecycle for a linked tenant:
 //
@@ -322,15 +363,16 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		routes, setRoutes, rerr := parseEntitlement(req.MaxRoutes)
+		routes, setRoutes, rerr := parseRoutePool(req.MaxRoutes)
 		if rerr != nil {
 			sendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
 			return
 		}
 		if setRoutes {
-			// A cleared pool means "fall back to the user_default/global scope",
-			// which is what deleting the per-user row does. Writing 0 instead would
-			// read as a hard zero and strand the tenant with no addresses at all.
+			// Only an explicit NULL means "fall back to the user_default/global
+			// scope", which is what deleting the per-user row does. A zero is a
+			// number the store meant: this tenant gets no addresses on our
+			// domains, which is what a 0 in this table already says.
 			if routes == nil {
 				if err := h.state.Store.DeleteGatewayRouteLimit(userRouteScope(req.UUID)); err != nil {
 					sendJSONError(w, "Activated but failed to clear the route pool", http.StatusInternalServerError)
