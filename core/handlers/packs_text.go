@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"unicode/utf8"
 
@@ -121,11 +122,27 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to wrap content", http.StatusInternalServerError)
 		return
 	}
-	if err := prov.Put(r.Context(), mv.StorageKey, zipBytes); err != nil {
+	md5hex, _, _ := modpack.Hashes(zipBytes)
+	// A FRESH key, not an overwrite of mv.StorageKey.
+	//
+	// The object can have more than one modversion row pointing at it:
+	// MigrateBuild's copyUploadedContent creates a new row for the same key on
+	// purpose, so that updating one build cannot rewrite the other's row. This
+	// handler wrote the edited bytes straight back to the shared key, which
+	// rewrote the source build's file anyway - the exact thing the copy was
+	// built to prevent, reached through the storage layer instead of the DB.
+	//
+	// Derived from the existing key, so it stays inside the same
+	// packs/<owner>/mods/<slug>/ directory and cannot be steered anywhere by
+	// the request. Keyed by the content md5, so re-saving the same text is
+	// idempotent instead of growing a chain of keys.
+	oldKey := mv.StorageKey
+	newKey := editedContentKey(oldKey, md5hex)
+	if err := prov.Put(r.Context(), newKey, zipBytes); err != nil {
 		sendJSONError(w, "Storage put failed", http.StatusInternalServerError)
 		return
 	}
-	md5hex, _, _ := modpack.Hashes(zipBytes)
+	mv.StorageKey = newKey
 	_, innerSha1, innerSha512 := modpack.Hashes(newBytes)
 	mv.Filesize = int64(len(zipBytes))
 	mv.MD5 = md5hex
@@ -145,6 +162,23 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to save content", http.StatusInternalServerError)
 		return
 	}
+	// Safe-cutover ordering, exactly like swapModversionToModrinth: the row is
+	// already off the old key before anything is removed, and the removal only
+	// happens once no row points at it.
+	if oldKey != newKey {
+		h.deleteIfUnreferenced(r.Context(), prov, oldKey)
+	}
 	h.state.Events.Publish(r.Context(), "pack_content.changed", map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// editedContentKey is where an edited content zip is stored.
+//
+// Derived from the existing key so it stays inside the same
+// packs/<owner>/mods/<slug>/ directory: nothing in the request steers it, and
+// an edit cannot land in another owner's prefix. Named by the content md5, so
+// saving the same text twice is idempotent rather than growing a chain of keys,
+// and two different edits never collide on one object.
+func editedContentKey(oldKey, md5hex string) string {
+	return path.Dir(oldKey) + "/edit-" + md5hex + ".zip"
 }

@@ -100,6 +100,23 @@ func (s *PostgresStore) GetModversion(id int) (*models.Modversion, error) {
 	return v, err
 }
 
+// CountModversionsByStorageKey returns how many modversion rows point at one
+// storage object.
+//
+// The object is NOT owned by a single row. MigrateBuild's copyUploadedContent
+// deliberately creates a NEW modversion pointing at the SAME storage key, so
+// that updating one build's row cannot rewrite the other's - which leaves two
+// rows on one object. Anything about to DELETE that object has to ask this
+// first, or it takes the file out from under the other build.
+func (s *PostgresStore) CountModversionsByStorageKey(key string) (int, error) {
+	if key == "" {
+		return 0, nil
+	}
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM modversions WHERE storage_key=$1`, key).Scan(&n)
+	return n, err
+}
+
 // FindModversionBySHA1 finds an existing artifact by the owner's catalog hash,
 // used to auto-link/dedupe an uploaded jar. Joins through mods for owner scope.
 func (s *PostgresStore) FindModversionBySHA1(ownerID, sha1 string) (*models.Modversion, error) {

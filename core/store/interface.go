@@ -684,6 +684,9 @@ type Store interface {
 	UpdateModversion(mv *models.Modversion) error
 	GetModversion(id int) (*models.Modversion, error)
 	FindModversionBySHA1(ownerID, sha1 string) (*models.Modversion, error)
+	// CountModversionsByStorageKey guards a storage delete: an object can have
+	// more than one modversion row pointing at it (see copyUploadedContent).
+	CountModversionsByStorageKey(key string) (int, error)
 	AttachModversionToBuild(buildID, modversionID int, side string) (int, error)
 	DetachFromBuild(buildID, modversionID int) error
 	IsModversionInBuild(buildID, modversionID int) (bool, error)

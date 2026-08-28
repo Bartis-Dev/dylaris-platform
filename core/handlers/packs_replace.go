@@ -149,7 +149,31 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 		return fmt.Errorf("failed to update content: %w", err)
 	}
 	if oldKey != "" && oldKey != newKey {
-		_ = prov.Delete(ctx, oldKey) // best-effort; the DB no longer references it
+		h.deleteIfUnreferenced(ctx, prov, oldKey)
 	}
 	return nil
+}
+
+// deleteIfUnreferenced removes a content object only once no modversion row
+// points at it any more.
+//
+// The delete used to be unconditional, on the reasoning that "the DB no longer
+// references it" - true of the row just rewritten, not of the object.
+// MigrateBuild's copyUploadedContent deliberately creates a NEW modversion for
+// the SAME storage key (so that updating one build cannot rewrite the other's
+// row), which leaves two rows on one object. Updating either copy then deleted
+// the file the other build still points at, and that build's render fails on a
+// key that is simply gone.
+//
+// On a count error the object is LEFT in place: an orphan costs storage, a
+// wrong delete costs someone's build.
+func (h *PacksHandler) deleteIfUnreferenced(ctx context.Context, prov modpack.ModpackStorageProvider, key string) {
+	if key == "" {
+		return
+	}
+	n, err := h.state.Store.CountModversionsByStorageKey(key)
+	if err != nil || n > 0 {
+		return
+	}
+	_ = prov.Delete(ctx, key)
 }
