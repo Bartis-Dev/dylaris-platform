@@ -70,28 +70,41 @@ func (s *stalledChunkStream) Recv() (*pb.BeamChunk, error) {
 //     trips the watchdog and the test fails for reasons that have nothing to do
 //     with the code.
 //
-// The original numbers (20ms chunks, 100ms window) satisfied the first with a
-// margin of only 5x on the second, and CI failed on it twice in one day -
-// including on a commit that changed nothing but a line of JSON. Widening the
-// window alone would have destroyed the first property, so the chunk count grew
-// with it: 100 chunks at 5ms is ~500ms of transfer against a 300ms window, which
-// keeps "total > window" while needing a 60x single-chunk stall to trip.
+// The knob that buys robustness is the RATIO window/chunkGap, and it is not free:
+// the transfer must outlast the window, so the test cannot run for less than
+// ratio*chunkGap. A wider window alone therefore costs wall-clock and buys
+// nothing; a SMALLER gap buys ratio at the same duration. That is the lever.
 //
-// It stays robust when the runner is slow, which is when it used to break: drift
-// inflates every gap AND the total, but only the total is multiplied by the
+// This has now been widened twice. 20ms/100ms was a ratio of 5 and failed twice
+// in one day. 5ms/300ms was a ratio of 60, was verified over 40 runs pinned to
+// one CPU, and still lost to a single ~300ms scheduler stall on a loaded runner.
+// 2ms/1s is a ratio of 500: tripping it needs a full second of no progress on a
+// stream delivering every 2ms.
+//
+// It degrades the right way when the runner is slow, which is when it breaks:
+// drift inflates every gap AND the total, but only the total is multiplied by the
 // chunk count, so "total > window" becomes MORE true as the machine gets slower.
+// A slow runner makes this test take longer; it must not make it fail.
+//
+// BOTH properties are asserted below. The previous round asserted only the first
+// and left the ratio in prose - and the ratio is the half that failed.
 func TestWriteChunksToFile_SlowButProgressingDownloadCompletes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	const (
-		chunkGap   = 5 * time.Millisecond
-		chunks     = 100
-		idleWindow = 300 * time.Millisecond
+		chunkGap   = 2 * time.Millisecond
+		chunks     = 600
+		idleWindow = 1 * time.Second
+		minRatio   = 200
 	)
 	if chunks*chunkGap <= idleWindow {
 		t.Fatalf("the transfer (%v) must outlast the idle window (%v), or a total-elapsed watchdog would pass this test",
 			chunks*chunkGap, idleWindow)
+	}
+	if idleWindow/chunkGap < minRatio {
+		t.Fatalf("a single chunk gap only has to stretch %dx to trip the watchdog; below %dx a loaded runner decides this test",
+			idleWindow/chunkGap, minRatio)
 	}
 
 	stream := &slowChunkStream{ctx: ctx, chunks: chunks, interval: chunkGap}
