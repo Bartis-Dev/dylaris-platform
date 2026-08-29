@@ -36,6 +36,22 @@ type warpStore interface {
 // ErrNoWarpRegion is returned by Enroll when no enabled region exists to assign.
 var ErrNoWarpRegion = errors.New("no enabled warp region available")
 
+// ErrNoWarpLeader is returned when the peer's region holds no enabled leader,
+// so there is no endpoint to hand out.
+//
+// This has to be an ERROR rather than an empty endpoint list. Enrollment
+// otherwise answers 200 with everything a client needs except the one address
+// it dials: the client refuses its own config with "enroll response carried no
+// leader endpoint" and retries every five seconds, forever, while Core's log
+// says nothing at all. The region exists and the peer got an overlay address,
+// so every screen reads healthy.
+//
+// Deliberately narrower than liveness. assignRegion degrades to a region whose
+// leaders are all DOWN on purpose, because an endpoint that is not answering
+// right now still works when the leader comes back. Zero enabled leader rows is
+// the other thing: there is no address, and no amount of waiting produces one.
+var ErrNoWarpLeader = errors.New("region has no enabled warp leader, so there is no tunnel endpoint to connect to")
+
 // WarpService owns the warp registry side of Core. In the multi-hub model the
 // REGION is the identity: a region owns a subnet and a WG key derived from
 // CLUSTER_SECRET+region; its leaders are interchangeable endpoints. The service
@@ -378,6 +394,9 @@ func (s *WarpService) buildResult(ctx context.Context, region, wgIP, homeLeaderI
 	endpoints := make([]string, 0, len(cands))
 	for _, c := range cands {
 		endpoints = append(endpoints, c.endpoint)
+	}
+	if len(endpoints) == 0 {
+		return EnrollResult{}, fmt.Errorf("region %q: %w", region, ErrNoWarpLeader)
 	}
 	return EnrollResult{
 		WGIP:            wgIP,

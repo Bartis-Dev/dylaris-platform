@@ -150,6 +150,14 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, err.Error(), http.StatusConflict)
 			return
 		}
+		// Named rather than folded into the generic 500, because the fix is a
+		// setting and the peer would otherwise retry a config that cannot work
+		// every five seconds with nothing on either side saying why.
+		if errors.Is(err, services.ErrNoWarpLeader) {
+			log.Printf("warp enroll refused (key=%d): %v - add a leader for this region under Settings -> Warp", key.ID, err)
+			sendJSONError(w, "No tunnel endpoint is available for your region yet.", http.StatusConflict)
+			return
+		}
 		log.Printf("warp enroll failed (key=%d): %v", key.ID, err)
 		sendJSONError(w, "Enrollment failed", http.StatusInternalServerError)
 		return

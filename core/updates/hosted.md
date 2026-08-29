@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A tunnel that cannot be set up now says so instead of retrying quietly. If
+  your warp log repeated "no leader endpoint", that was this. Fixed on our side.
+
 ## 2026.08.29.2
 
 ### Features

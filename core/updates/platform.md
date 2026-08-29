@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Enrolling into a region with no leader endpoint is now refused with a reason.
+  It used to succeed and hand out an address with nothing to dial, so the
+  machine retried a config that could not work, every five seconds, silently.
+  `core` `panel`
+
 ## 2026.08.29.2
 
 ### Features

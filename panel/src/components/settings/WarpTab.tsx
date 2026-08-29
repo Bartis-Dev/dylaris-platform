@@ -645,7 +645,7 @@ function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDele
 
             <div className="space-y-2">
                 <label className="input-label flex items-center gap-1.5"><Server size={12} /> Leaders</label>
-                {leaders.length === 0 && <p className="text-xs text-(--base-06)">No leader endpoints yet — clients can enroll but have nothing to dial.</p>}
+                {leaders.length === 0 && <p className="text-xs text-(--warning-light)">No leader endpoints yet, so enrolling into this region is refused. Clients retry until one exists.</p>}
                 {leaders.map(l => (
                     <div key={l.leaderId} className="flex flex-wrap items-center gap-2 rounded-md border border-(--base-03) px-3 py-2">
                         <Circle size={9} className={l.alive ? 'text-(--success-light) fill-current' : 'text-(--base-05) fill-current'} aria-label={l.alive ? 'live' : 'no heartbeat'} />
