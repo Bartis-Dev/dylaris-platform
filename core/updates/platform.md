@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.4
+
+### Features
+- Warp leaders register themselves. A leader announces its region, subnet and
+  public endpoint, so adding an edge host no longer means typing a row into
+  Settings -> Warp. Existing rows are kept, and a leader you disable stays
+  disabled. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.29.3
 
 ### Features

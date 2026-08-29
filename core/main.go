@@ -420,6 +420,15 @@ func main() {
 	ticketAuditRetention.SetLeader(coreLeader)
 	ticketAuditRetention.Start(bgCtx)
 
+	// Warp leaders register themselves — leader-gated, every minute. A leader
+	// runs as a global Swarm service keyed on the node hostname, so every host
+	// added to the edge tier starts one with an id nobody typed, and the public
+	// endpoint it needs is a value only that host knows for certain. Both ride
+	// in the liveness key the leader already refreshes.
+	warpSelfReg := services.NewWarpSelfRegistrar(pgStore, redisClient)
+	warpSelfReg.SetLeader(coreLeader)
+	warpSelfReg.Start(bgCtx)
+
 	// Modpack auto-update checker — hourly, leader-gated. Pauses when the
 	// modpacks feature is off; per-row staleness governed by the admin cadence
 	// setting (modpack_update_check_interval_hours, default 24h).
