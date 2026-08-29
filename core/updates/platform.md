@@ -22,6 +22,9 @@ Newest release first. The format is fixed and checked in CI - see the
 - A tenant can no longer route their players through our overlay. Everything a
   customer machine could claim about itself is environment on that machine, so
   the warp allowlist is now what decides it. `core`
+- A bring-your-own node now sends its link to the public edge address whatever
+  `NODE_EXTERNAL` and `NODE_TAGS` say. Holding no `CLUSTER_SECRET` is what makes
+  a node external, and that is not a claim the machine can clear. `node`
 
 ### Fixes
 - Nothing.

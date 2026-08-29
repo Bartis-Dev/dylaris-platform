@@ -396,6 +396,24 @@ func buildRedisEnv(uuid, subServer, sidecarAddr string) []string {
 
 const linkContainerName = "dylaris_link"
 
+// linkPrefersPublicEdge decides which of an edge's two addresses the
+// node-managed link tries first.
+//
+// NODE_EXTERNAL and NODE_TAGS are node-local env on the customer's own machine,
+// so a BYON owner who clears them gets the private address preferred - and warp
+// masquerades, so that address ANSWERS and every player's bytes ride the
+// WireGuard tunnel. Holding no CLUSTER_SECRET is what makes a node BYON, and
+// that is not something a machine can claim its way out of: an in-cluster node
+// needs the secret for the cluster proof and the gRPC TLS pin, so clearing it
+// to look in-cluster only stops the node from starting.
+//
+// This is a preference, not the control. The warp leader's spoke allowlist is
+// what ENFORCES that player traffic stays off the overlay; deciding it here
+// only saves the link a dial timeout on the address it must not use anyway.
+func linkPrefersPublicEdge() bool {
+	return nodeExternal || clusterSecret == ""
+}
+
 // buildLinkEnv builds the env for a node-managed Link sidecar. Link authenticates
 // to Redis with its own per-node ACL user (derived from nodeSecret, provisioned by
 // Core), and presents the Core-delivered tunnel token + discovery proof. Redis addr
@@ -417,9 +435,8 @@ func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, sidecarAddr string) []
 		// machine the private one is reachable too - warp routes the overlay -
 		// so preferring it succeeds and puts every player's bytes through the
 		// WireGuard tunnel, sharing one leader with this node's own Redis
-		// traffic and Beam uploads. The link falls back either way, so this is
-		// a preference and not a requirement.
-		fmt.Sprintf("LINK_EXTERNAL=%t", nodeExternal),
+		// traffic and Beam uploads.
+		fmt.Sprintf("LINK_EXTERNAL=%t", linkPrefersPublicEdge()),
 	}
 }
 

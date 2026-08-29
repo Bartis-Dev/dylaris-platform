@@ -93,15 +93,23 @@ func TestBuildLinkEnv(t *testing.T) {
 	origMCRedisAddr := mcRedisAddr
 	origMCRedisDB := mcRedisDB
 	origNodeSecret := nodeSecret
+	origClusterSecret := clusterSecret
+	origNodeExternal := nodeExternal
 	t.Cleanup(func() {
 		mcRedisAddr = origMCRedisAddr
 		mcRedisDB = origMCRedisDB
 		nodeSecret = origNodeSecret
+		clusterSecret = origClusterSecret
+		nodeExternal = origNodeExternal
 	})
 
 	mcRedisAddr = "10.9.9.9:6379"
 	mcRedisDB = "5"
 	nodeSecret = []byte("unit-test-secret-value-buildlinkenv")
+	// What makes this node in-cluster, and the only thing that does. Without it
+	// the node is BYON and the link belongs on the public address.
+	clusterSecret = "unit-test-cluster-secret"
+	nodeExternal = false
 
 	// buildLinkEnv takes nodeID as a PARAMETER (it shadows the package
 	// global inside the function body), so the package-global nodeID is
@@ -152,16 +160,42 @@ func TestBuildLinkEnv(t *testing.T) {
 func TestBuildLinkEnv_ExternalNodeTellsTheLink(t *testing.T) {
 	origExternal := nodeExternal
 	origSecret := nodeSecret
+	origCluster := clusterSecret
 	t.Cleanup(func() {
 		nodeExternal = origExternal
 		nodeSecret = origSecret
+		clusterSecret = origCluster
 	})
 	nodeSecret = []byte("unit-test-secret-value-buildlinkenv")
 	nodeExternal = true
+	// Set, so this asserts the FLAG rather than the no-cluster-secret fallback.
+	clusterSecret = "unit-test-cluster-secret"
 
 	m := envMap(t, buildLinkEnv("nodeXYZ", "s", "p", "10.9.9.9:6379"))
 	if m["LINK_EXTERNAL"] != "true" {
 		t.Errorf("LINK_EXTERNAL = %q, want true for an external node", m["LINK_EXTERNAL"])
+	}
+}
+
+// A BYON owner controls NODE_EXTERNAL and NODE_TAGS on their own machine, so
+// clearing both used to hand the link the private address - which warp answers.
+// Holding no CLUSTER_SECRET is the part they cannot clear their way out of.
+func TestBuildLinkEnv_ByonNodeIsExternalEvenWithEveryFlagCleared(t *testing.T) {
+	origExternal := nodeExternal
+	origSecret := nodeSecret
+	origCluster := clusterSecret
+	t.Cleanup(func() {
+		nodeExternal = origExternal
+		nodeSecret = origSecret
+		clusterSecret = origCluster
+	})
+	nodeSecret = []byte("unit-test-secret-value-buildlinkenv")
+	nodeExternal = false
+	clusterSecret = ""
+
+	m := envMap(t, buildLinkEnv("nodeXYZ", "s", "p", "10.9.9.9:6379"))
+	if m["LINK_EXTERNAL"] != "true" {
+		t.Errorf("LINK_EXTERNAL = %q, want true: a node holding no CLUSTER_SECRET is BYON, whatever it says about itself", m["LINK_EXTERNAL"])
 	}
 }
 

@@ -21,6 +21,9 @@ Newest release first. The format is fixed and checked in CI - see the
   uses for everything else. It was doing both, and the tunnel route made your
   players share one connection with your own uploads and drop whenever that
   connection restarted.
+- If you run your own node, this now holds no matter how it is configured. The
+  setting that used to decide it is on your machine, so it no longer gets a
+  vote. `node`
 
 ### Security
 - Nothing.
