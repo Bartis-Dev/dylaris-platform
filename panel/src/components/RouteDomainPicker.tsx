@@ -272,6 +272,20 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                 </div>
             )}
 
+            {/* What the choice above actually decides. Both halves were already
+                here and neither said what it was FOR: the region select reads as
+                a list of domains, and the custom-domain tab is invisible to
+                anyone who never presses it. */}
+            {!noDomainConfigured && (
+                <p className="text-xs text-(--base-06)">
+                    {showHosterMode && (hosters.length > 1
+                        ? 'The region is where your players enter our network, so it is what decides their ping — pick the one closest to them.'
+                        : 'Players enter our network through the region this address belongs to; we route the traffic from there.')}
+                    {showHosterMode && showCustomMode && ' '}
+                    {showCustomMode && 'You can also use a domain you own: choose Custom domain and point a CNAME at us.'}
+                </p>
+            )}
+
             {/* Hoster mode */}
             {!noDomainConfigured && mode === 'hoster' && showHosterMode && (
                 <div className="flex gap-2 items-stretch">
@@ -286,6 +300,8 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                     <select
                         value={hosterDomain}
                         onChange={e => setHosterDomain(e.target.value)}
+                        aria-label="Region"
+                        title="Region — where your players enter our network"
                         className="input-field text-sm w-44"
                     >
                         {hosters.map(h => (

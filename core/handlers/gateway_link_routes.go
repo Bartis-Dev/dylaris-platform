@@ -242,6 +242,29 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		"domain": finalDomain, "ownershipNotice": ownershipNotice})
 }
 
+// ownsCoreRoute reports whether this tenant may remove that route.
+//
+// The stored row is asked first and the live Redis entry second, because either
+// one proves ownership and they can disagree: a route whose Redis entry is gone
+// is exactly the route a tenant most wants to delete, and asking only the cache
+// meant the delete answered "Route not found" for something the panel had just
+// listed. The reverse gap is the create path's rollback window.
+func (h *GatewayHandler) ownsCoreRoute(userID, domain string) bool {
+	if rows, err := h.state.Store.ListCoreLinkRoutes(); err == nil {
+		for _, rt := range rows {
+			if rt.Domain == domain && rt.OwnerID == userID {
+				return true
+			}
+		}
+	}
+	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
+		if rt.Domain == domain && rt.CoreOwned && rt.OwnerID == userID {
+			return true
+		}
+	}
+	return false
+}
+
 // ListLinkRoutes GET /api/gateway/link-routes — the caller's route-only entries.
 func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
@@ -285,18 +308,9 @@ func (h *GatewayHandler) DeleteLinkRoute(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "domain required", http.StatusBadRequest)
 		return
 	}
-	if !isAdmin {
-		owned := false
-		for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
-			if rt.Domain == domain && rt.CoreOwned && rt.OwnerID == userID {
-				owned = true
-				break
-			}
-		}
-		if !owned {
-			http.Error(w, "Route not found", http.StatusNotFound)
-			return
-		}
+	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
+		http.Error(w, "Route not found", http.StatusNotFound)
+		return
 	}
 	if err := h.state.Gateway.DeleteCoreOwnedRoute(domain); err != nil {
 		http.Error(w, "Failed to delete route", http.StatusInternalServerError)

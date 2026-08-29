@@ -429,6 +429,14 @@ func main() {
 	warpSelfReg.SetLeader(coreLeader)
 	warpSelfReg.Start(bgCtx)
 
+	// Route-only routes are published straight into Redis, which used to be the
+	// only place they existed. This writes the stored ones back, so a Redis that
+	// lost its keys costs a minute rather than every route-only route the
+	// platform had.
+	routeRepublisher := services.NewRouteRepublisher(pgStore, redisClient)
+	routeRepublisher.SetLeader(coreLeader)
+	routeRepublisher.Start(bgCtx)
+
 	// Modpack auto-update checker — hourly, leader-gated. Pauses when the
 	// modpacks feature is off; per-row staleness governed by the admin cadence
 	// setting (modpack_update_check_interval_hours, default 24h).

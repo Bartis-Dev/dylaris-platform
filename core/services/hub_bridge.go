@@ -284,6 +284,10 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 // tunnel path: it opens a stream on that tunnel and the customer's Link dials the
 // LOCAL target. The hub does not own this route (Core direct-published it), it
 // only learns to skip it in the zombie sweep via the core_owned flag.
+//
+// It also records the route durably (core_link_routes). Redis stays the live
+// routing table and the atomic claim, but it is no longer the only copy: see
+// RepublishCoreOwnedRoutes.
 func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkToken string, targetHost string, port int) error {
 	if port == 25565 {
 		if val, _ := g.store.GetSetting("gateway_port_mc_enabled"); val == "false" {
@@ -292,6 +296,17 @@ func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkTok
 	}
 	if linkToken == "" {
 		return fmt.Errorf("link token is required")
+	}
+	// Durable ownership is asked FIRST, and it outranks the Redis claim.
+	// SETNX alone was a sufficient arbiter only while Redis held the only copy:
+	// with a stored row behind it, an emptied Redis would let a second tenant
+	// claim a domain the first one still owns on paper, and the republisher
+	// would then fight the live entry every tick. The row answers even when the
+	// cache is gone, which is precisely when the question gets asked.
+	if stored, err := g.storedRoute(domain); err != nil {
+		return err
+	} else if stored != nil && stored.OwnerID != ownerID {
+		return ErrRouteDomainTaken
 	}
 	data, err := json.Marshal(map[string]interface{}{
 		"domain":      domain,
@@ -328,14 +343,53 @@ func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkTok
 			return err
 		}
 	}
+	if err := g.store.UpsertCoreLinkRoute(store.CoreLinkRoute{
+		Domain: domain, OwnerID: ownerID, LinkToken: linkToken,
+		TargetHost: targetHost, TargetPort: port,
+	}); err != nil {
+		// Give the claim back. A live Redis entry with no row behind it is
+		// worse than no route at all: the panel would list it, the tenant was
+		// told the create failed, and every path that removes a route now works
+		// from the rows - so nothing could ever take it away again.
+		if claimed {
+			g.redis.Del(ctx, "route:"+domain)
+		}
+		return err
+	}
 	return g.redis.SAdd(ctx, "sys:index:routes", domain).Err()
 }
 
-// DeleteCoreOwnedRoute removes a route-only entry directly from Redis (Core owns
-// its lifecycle).
+// storedRoute reads the durable record for one domain, or nil when there is
+// none. A read FAILURE is an error rather than a nil: "no row" and "could not
+// ask" lead to opposite decisions at every call site here.
+func (g *RedisGateway) storedRoute(domain string) (*store.CoreLinkRoute, error) {
+	rows, err := g.store.ListCoreLinkRoutes()
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		if rows[i].Domain == domain {
+			return &rows[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// DeleteCoreOwnedRoute removes a route-only entry: the durable row first, then
+// the Redis entry.
+//
+// That order is deliberate. The row is what RepublishCoreOwnedRoutes writes
+// back, so dropping the cache entry first would leave a window in which the
+// republisher restores the route the caller is deleting - and if the process
+// dies between the two steps, the route comes back. Deleting the row first
+// makes the worst case a stale cache entry that the next delete, or the tenant,
+// can still clear.
 func (g *RedisGateway) DeleteCoreOwnedRoute(domain string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if err := g.store.DeleteCoreLinkRoute(domain); err != nil {
+		return err
+	}
 	if err := g.redis.Del(ctx, "route:"+domain).Err(); err != nil {
 		return err
 	}

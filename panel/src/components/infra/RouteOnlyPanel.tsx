@@ -213,22 +213,20 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                 only — nothing is exposed.
             </p>
 
+            {/* The deploy kit gets a column of its own rather than a fold-out.
+                It is not a detail of creating a link: it is the thing the reader
+                came to run, they need it again on every rebuild, and while it
+                was behind "Show the deploy steps again" the commonest question
+                was where the compose file had gone. */}
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] items-start">
+            <div className="space-y-6 min-w-0">
+
             {/* Links */}
             <div className="card p-5 space-y-4">
                 <div className="flex items-center gap-2">
                     <Link2 size={16} className="text-(--accent-light)" />
                     <h2 className="font-medium text-(--base-09)">Your links</h2>
                 </div>
-
-                {minted && (
-                    <div className="space-y-3">
-                        <MintReveal kit={minted} onCopy={flashToast} onClose={() => setMinted(null)} />
-                        {/* Right here, not on another page. The key is shown once
-                            and the compose file is what it goes into; splitting
-                            those across two pages is what made this confusing. */}
-                        <DeployKit kind="route-only" warpKey={minted.warp_key} enrollUrl={enrollUrl} config={config} />
-                    </div>
-                )}
 
                 {kits.length > 0 && (
                     <div className="space-y-2">
@@ -272,25 +270,6 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                     </div>
                 </div>
                 <p className="text-xs text-(--base-06)">A link is the kit you run on your machine (warp + link). It opens an outbound tunnel — nothing is exposed.</p>
-
-                {/* Everything except the secret is reproducible, and someone who
-                    saved their key still needs the compose file the next time
-                    they rebuild the machine. */}
-                {kits.length > 0 && !minted && (
-                    <details className="group">
-                        <summary className="cursor-pointer text-xs text-(--base-06) hover:text-(--base-08) transition-colors select-none">
-                            Show the deploy steps again
-                        </summary>
-                        <div className="pt-3">
-                            <p className="text-xs text-(--base-06) mb-2">
-                                The key itself cannot be shown again — only its hash is stored. Paste the one you
-                                saved where the snippet says <code className="font-mono">&lt;your-warp-key&gt;</code>,
-                                or revoke the link and create a new one.
-                            </p>
-                            <DeployKit kind="route-only" warpKey={null} enrollUrl={enrollUrl} config={config} />
-                        </div>
-                    </details>
-                )}
             </div>
 
             {/* Create or edit route */}
@@ -416,6 +395,28 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                         </div>
                     ))
                 )}
+            </div>
+
+            </div>
+
+            {/* Sticky, because the reader works through the compose file while
+                scrolling the form and the route list beside it. */}
+            <aside className="space-y-3 min-w-0 lg:sticky lg:top-6">
+                {minted && <MintReveal kit={minted} onCopy={flashToast} onClose={() => setMinted(null)} />}
+                {!minted && (
+                    <p className="text-xs text-(--base-06)">
+                        {kits.length > 0
+                            ? <>The key itself cannot be shown again — only its hash is stored. Paste the one you saved where the file says <code className="font-mono">&lt;your-warp-key&gt;</code>, or revoke the link and create a new one.</>
+                            : <>This is what you will run. Create a link on the left and its key is filled in for you.</>}
+                    </p>
+                )}
+                <DeployKit
+                    kind="route-only"
+                    warpKey={minted?.warp_key ?? null}
+                    enrollUrl={enrollUrl}
+                    config={config}
+                />
+            </aside>
             </div>
 
             {toast && (

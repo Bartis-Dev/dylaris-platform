@@ -32,6 +32,35 @@ func createGatewayTables(db *sql.DB) error {
 			scope TEXT NOT NULL UNIQUE,
 			max_routes INTEGER
 		)`,
+		// The durable record of a route-only ("core-owned") route.
+		//
+		// These used to exist ONLY as a route:<domain> key in Redis, written
+		// once by the create handler with no writer that ever wrote it again.
+		// The hub rebuilds ITS routes from its own rows on every sync tick and
+		// deliberately skips these, so a Redis that lost a key - a restart
+		// without persistence, a recreated volume, eviction - lost every
+		// route-only route permanently while every managed route came back
+		// within the minute. This table is what makes Redis a cache here
+		// rather than the only copy; RepublishCoreOwnedRoutes writes it back.
+		//
+		// NOT named gateway_routes: that name belongs to the hub's own model,
+		// and Core declaring it is exactly the collision described above.
+		//
+		// link_token is the derived tunnel token rather than the link id it
+		// derives from. It is already at rest in the Redis value this row
+		// restores, so keeping it here adds no exposure - and re-deriving it
+		// would silently rewrite every route to a different tunnel after a
+		// CLUSTER_SECRET rotation, which is the one moment the stored value is
+		// the only remaining truth.
+		`CREATE TABLE IF NOT EXISTS core_link_routes (
+			domain TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			link_token TEXT NOT NULL,
+			target_host TEXT NOT NULL,
+			target_port INTEGER NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_core_link_routes_owner ON core_link_routes (owner_id)`,
 	}
 	for _, q := range tables {
 		if _, err := db.Exec(q); err != nil {

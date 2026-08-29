@@ -11,6 +11,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.10
+
+### Features
+- The file you run on your machine is now shown permanently next to the form,
+  for both your own node and your protected addresses. You no longer have to
+  open a fold-out to get it back when you rebuild the machine.
+- When you pick an address, the panel now says what the region choice decides
+  for your players, and that you can point a domain you own at us instead.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A protected address could disappear after maintenance on our side and never
+  come back. Addresses are now stored durably and restored on their own; you do
+  not need to create them again.
+- Revoking a link kit now reliably removes the addresses that ran through it.
+
 ## 2026.08.29.6
 
 ### Features

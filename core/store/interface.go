@@ -339,6 +339,12 @@ type Store interface {
 	UpsertWarpRegion(region, subnet string, enabled bool) error
 	DeleteWarpRegion(region string) error
 	ListWarpLeaders() ([]WarpLeader, error)
+
+	// Route-only routes. The durable side of route:<domain> in Redis - see
+	// CoreLinkRoute.
+	UpsertCoreLinkRoute(r CoreLinkRoute) error
+	ListCoreLinkRoutes() ([]CoreLinkRoute, error)
+	DeleteCoreLinkRoute(domain string) error
 	ListWarpLeadersByRegion(region string) ([]WarpLeader, error)
 	UpsertWarpLeader(leaderID, region, endpoint string, enabled bool) error
 	DeleteWarpLeader(leaderID string) error

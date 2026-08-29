@@ -8,6 +8,33 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.10
+
+### Features
+- The file you deploy on your own machine now sits permanently beside the form
+  for both bring-your-own-node and protected addresses, instead of behind a
+  fold-out. `panel`
+- The address picker says what the region choice decides, and that a domain you
+  own can be pointed at us with a CNAME. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Protected addresses now survive Redis losing its data. They are recorded in
+  the database and written back within a minute; before, each one existed only
+  as a Redis key that nothing ever rewrote, so a restart without persistence
+  lost every one of them for good while managed routes came back on their own.
+  `core`
+- Revoking a link kit now removes its addresses even when Redis no longer lists
+  them. The teardown read the live routing table, so an emptied cache made it
+  report nothing to remove and leave the addresses behind. `core`
+- Deleting a protected address whose Redis entry had gone answered "not found".
+  Ownership is read from the stored record as well as the cache. `core`
+
 ## 2026.08.29.9
 
 ### Features

@@ -403,10 +403,11 @@ function MyNodesInner() {
                     <CustomDomainsPanel />
                 </div>
             ) : (
-            /* The keys move into a column of their own once there are any, rather
-               than pushing the form and the machine list down the page. There is
-               room to the side, and the compose snippet is the widest thing here. */
-            <div className={revealedNode ? 'grid gap-6 lg:grid-cols-2 items-start' : ''}>
+            /* The compose file lives in a column of its own, permanently. It is
+               not a detail of adding a machine: it is the thing the reader came
+               to run, and they need it again on every rebuild. The keys join it
+               there for the one moment they exist. */
+            <div className={byonAllowed && entitlementKnown ? 'grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] items-start' : ''}>
             <section className="card p-5 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -550,9 +551,19 @@ function MyNodesInner() {
                 )}
             </section>
 
-            {/* Shown once. The keys are stored as hashes, so this is the only
-                moment they exist anywhere the reader can see them - the copy has
-                to say so before they close it. */}
+            {/* The keys are shown once. They are stored as hashes, so this is
+                the only moment they exist anywhere the reader can see them - the
+                copy has to say so before they close it. */}
+            {byonAllowed && entitlementKnown && !revealedNode && (
+                <aside className="space-y-3 min-w-0 lg:sticky lg:top-6">
+                    <p className="text-xs text-(--base-06)">
+                        {nodeKeys.length > 0 || tokens.length > 0
+                            ? <>The keys cannot be shown again — only their hashes are stored. Paste the ones you saved where the file says <code className="font-mono">&lt;...&gt;</code>, or revoke the key and create a new one.</>
+                            : <>This is what you will run. Add a machine on the left and both its keys are filled in for you.</>}
+                    </p>
+                    <DeployKit kind="node" warpKey={null} enrollUrl={enrollUrl} config={deployConfig} />
+                </aside>
+            )}
             {revealedNode && (
                 <aside className="card p-5 space-y-3 border-(--accent-border) bg-(--accent-ghost) lg:sticky lg:top-6">
                     <div className="text-sm font-medium text-(--base-09)">

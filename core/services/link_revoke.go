@@ -35,8 +35,18 @@ func RevokeLinkKitTeardown(ctx context.Context, st store.Store, gw GatewayProvid
 	if derr := rdb.Del(ctx, "link:"+tunnelToken).Err(); derr != nil {
 		log.Printf("revoke link %s: delete tunnel key: %v", linkID, derr)
 	}
-	for _, rt := range GetRoutesFromRedis(ctx, rdb) {
-		if rt.CoreOwned && rt.OwnerID == ownerID && rt.TunnelID == tunnelToken {
+	// The ROWS, not Redis. This used to enumerate the live routing table, which
+	// made the completeness of a revocation depend on the completeness of a
+	// cache: a Redis that had lost the entries reported "0 routes removed" and
+	// left them stored, and now that the republisher exists they would have come
+	// back a minute later, pointing at a link that was just torn down.
+	rows, lerr := st.ListCoreLinkRoutes()
+	if lerr != nil {
+		log.Printf("revoke link %s: list routes: %v", linkID, lerr)
+		return 0, nil
+	}
+	for _, rt := range rows {
+		if rt.OwnerID == ownerID && rt.LinkToken == tunnelToken {
 			if derr := gw.DeleteCoreOwnedRoute(rt.Domain); derr != nil {
 				log.Printf("revoke link %s: delete route %s: %v", linkID, rt.Domain, derr)
 				continue

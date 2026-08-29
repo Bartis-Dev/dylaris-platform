@@ -38,6 +38,13 @@ type revokeFakeStore struct {
 	deletedRegions []string
 }
 
+// The revoke teardown enumerates the stored route-only rows rather than the
+// live routing table, so a cache that lost them still gets a complete
+// revocation. This fixture has none.
+func (f *revokeFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
+	return nil, nil
+}
+
 func (f *revokeFakeStore) GetWarpAPIKeyByNodeID(nodeID string) (*store.WarpAPIKey, error) {
 	k, ok := f.keysByNodeID[nodeID]
 	if !ok {

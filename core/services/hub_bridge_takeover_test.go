@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"dylaris-core/models"
@@ -135,7 +136,7 @@ func TestCreateServerRoute_StillQueuesOverAManagedRoutesKey(t *testing.T) {
 // Re-creating your OWN route has to keep working: it is how a tenant changes the
 // target host or port of a route they already hold.
 func TestCreateRouteViaLink_OwnerMayRewriteTheirOwnRoute(t *testing.T) {
-	g, _, _ := newHubBridgeTestGateway(t)
+	g, _, fs := newHubBridgeTestGateway(t)
 
 	if err := g.CreateRouteViaLink("owner-2", "play.example.com", "tok", "192.168.1.50", 25565); err != nil {
 		t.Fatalf("first create: %v", err)
@@ -147,5 +148,93 @@ func TestCreateRouteViaLink_OwnerMayRewriteTheirOwnRoute(t *testing.T) {
 	got := readRoute(t, g, "play.example.com")
 	if got.TargetIP != "192.168.1.77" || got.TargetPort != 25566 {
 		t.Errorf("route = %+v, want the owner's new target", got)
+	}
+	// And the stored row follows the edit. Leaving it on the old target would
+	// have the republisher undo the change on its next pass.
+	if row := fs.routes["play.example.com"]; row.TargetHost != "192.168.1.77" || row.TargetPort != 25566 {
+		t.Errorf("stored row = %+v, want the owner's new target", row)
+	}
+}
+
+// The route has to survive Redis. Creating one records it, so the republisher
+// has something to put back after a restart that emptied the cache.
+func TestCreateRouteViaLink_RecordsTheRouteDurably(t *testing.T) {
+	g, _, fs := newHubBridgeTestGateway(t)
+
+	if err := g.CreateRouteViaLink("owner-1", "play.example.com", "tok-1", "192.168.1.50", 25566); err != nil {
+		t.Fatalf("CreateRouteViaLink: %v", err)
+	}
+
+	row, ok := fs.routes["play.example.com"]
+	if !ok {
+		t.Fatal("no stored row: the route exists only in Redis, which is the defect this replaced")
+	}
+	if row.OwnerID != "owner-1" || row.LinkToken != "tok-1" || row.TargetHost != "192.168.1.50" || row.TargetPort != 25566 {
+		t.Errorf("stored row = %+v, does not match what was published", row)
+	}
+}
+
+// SETNX was a sufficient arbiter of "who owns this domain" only while Redis
+// held the only copy. With a row behind it, an emptied cache would let a second
+// tenant claim a domain the first still owns - and the republisher would then
+// fight the live entry every minute. The row answers when the cache cannot,
+// which is exactly the moment the question matters.
+func TestCreateRouteViaLink_StoredOwnerOutranksAnEmptyCache(t *testing.T) {
+	g, rdb, fs := newHubBridgeTestGateway(t)
+
+	if err := g.CreateRouteViaLink("victim", "play.example.com", "victim-tok", "127.0.0.1", 25565); err != nil {
+		t.Fatalf("victim create: %v", err)
+	}
+	// Redis loses it, exactly as a restart without persistence would.
+	if err := rdb.Del(context.Background(), "route:play.example.com").Err(); err != nil {
+		t.Fatalf("del: %v", err)
+	}
+
+	err := g.CreateRouteViaLink("attacker", "play.example.com", "attacker-tok", "10.0.0.9", 25565)
+	if !errors.Is(err, ErrRouteDomainTaken) {
+		t.Fatalf("second tenant's create = %v, want ErrRouteDomainTaken", err)
+	}
+	if row := fs.routes["play.example.com"]; row.OwnerID != "victim" {
+		t.Errorf("stored owner = %q, want victim", row.OwnerID)
+	}
+	if n, _ := rdb.Exists(context.Background(), "route:play.example.com").Result(); n != 0 {
+		t.Error("the refused create published a route anyway")
+	}
+}
+
+// If the row cannot be written, the claim is given back. A live entry with no
+// row behind it would be listed by the panel, was reported to the tenant as a
+// failure, and - now that every removal path works from the rows - could never
+// be taken away again.
+func TestCreateRouteViaLink_RollsBackTheClaimWhenTheRowFails(t *testing.T) {
+	g, rdb, fs := newHubBridgeTestGateway(t)
+	fs.upsertErr = errors.New("db down")
+
+	if err := g.CreateRouteViaLink("owner-1", "play.example.com", "tok-1", "127.0.0.1", 25565); err == nil {
+		t.Fatal("expected an error when the durable write fails")
+	}
+	if n, _ := rdb.Exists(context.Background(), "route:play.example.com").Result(); n != 0 {
+		t.Error("the claim was kept after the durable write failed")
+	}
+}
+
+// Deleting drops the row FIRST. The other order leaves a window in which the
+// republisher restores the route being deleted, and a crash inside that window
+// brings it back for good.
+func TestDeleteCoreOwnedRoute_RemovesTheRowToo(t *testing.T) {
+	g, rdb, fs := newHubBridgeTestGateway(t)
+	if err := g.CreateRouteViaLink("owner-1", "play.example.com", "tok-1", "127.0.0.1", 25565); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := g.DeleteCoreOwnedRoute("play.example.com"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	if _, ok := fs.routes["play.example.com"]; ok {
+		t.Error("the row survived the delete, so the republisher would bring the route back")
+	}
+	if n, _ := rdb.Exists(context.Background(), "route:play.example.com").Result(); n != 0 {
+		t.Error("the live entry survived the delete")
 	}
 }

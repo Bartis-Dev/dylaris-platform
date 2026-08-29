@@ -22,6 +22,41 @@ type hubBridgeFakeStore struct {
 	servers  map[int]models.Server
 	nodes    map[int]models.Node
 	settings map[string]string
+	// The durable side of a route-only entry, keyed by domain, behaving like
+	// the table: the create path writes it and reads it back to decide who owns
+	// a domain when Redis cannot say.
+	routes     map[string]store.CoreLinkRoute
+	routeErr   error
+	upsertErr  error
+	upsertCall int
+}
+
+func (f *hubBridgeFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
+	if f.routeErr != nil {
+		return nil, f.routeErr
+	}
+	out := make([]store.CoreLinkRoute, 0, len(f.routes))
+	for _, r := range f.routes {
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (f *hubBridgeFakeStore) UpsertCoreLinkRoute(r store.CoreLinkRoute) error {
+	f.upsertCall++
+	if f.upsertErr != nil {
+		return f.upsertErr
+	}
+	if f.routes == nil {
+		f.routes = map[string]store.CoreLinkRoute{}
+	}
+	f.routes[r.Domain] = r
+	return nil
+}
+
+func (f *hubBridgeFakeStore) DeleteCoreLinkRoute(domain string) error {
+	delete(f.routes, domain)
+	return nil
 }
 
 func (f *hubBridgeFakeStore) GetServerByID(id int) (*models.Server, error) {
@@ -58,6 +93,7 @@ func newHubBridgeTestGateway(t *testing.T) (*RedisGateway, *redis.Client, *hubBr
 		servers:  map[int]models.Server{},
 		nodes:    map[int]models.Node{},
 		settings: map[string]string{},
+		routes:   map[string]store.CoreLinkRoute{},
 	}
 	g := NewRedisGateway(rdb, fs, "test-cluster-secret")
 	return g, rdb, fs
