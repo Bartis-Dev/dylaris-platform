@@ -37,6 +37,17 @@ const (
 	// under the edge prefix rather than beside it so the edge's existing Redis
 	// ACL grant covers it - see subjectOwners.
 	trafficOwnerSubjectPrefix = "owner:"
+
+	// Region seen keys hang off the subject's own seen key. '#' separates them
+	// because a SUBJECT may contain ':' ("owner:<id>") and a region may not -
+	// see meterRegion on the edge, which strips everything outside [a-z0-9-].
+	trafficRegionSeenSep = "#"
+
+	// Where bytes go when the edge that wrote them did not say. It is a named
+	// region rather than a dropped one: they are real bytes, they are in the
+	// billing total, and a breakdown that quietly omitted them would not add up
+	// to the number the tenant is charged on.
+	regionUnknown = "unknown"
 )
 
 // TrafficAggregator turns the per-server byte counters edges + relays publish to
@@ -84,6 +95,19 @@ func (a *TrafficAggregator) Start(ctx context.Context) {
 type trafficAcc struct {
 	edge  int64
 	relay int64
+	// byRegion splits the same bytes by (region, kind). Per kind it sums to the
+	// matching total above, so the breakdown always adds up to the bill; a
+	// producer that did not tag contributes to regionUnknown rather than
+	// vanishing from the split.
+	byRegion map[regionKind]int64
+}
+
+// regionKind is one cell of the breakdown: where the bytes moved, and which
+// component moved them. Player traffic and data traffic are priced and capped
+// separately, so they cannot share a cell.
+type regionKind struct {
+	region string
+	kind   string
 }
 
 // seenUpdate is a `seen` key write deferred until the tenant's DB row is written.
@@ -108,8 +132,8 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 	perTenant := map[string]*trafficAcc{}
 	tenantSeen := map[string][]seenUpdate{}
 
-	a.collect(ctx, trafficEdgePrefix, owners, perTenant, tenantSeen, true)
-	a.collect(ctx, trafficRelayPrefix, owners, perTenant, tenantSeen, false)
+	a.collect(ctx, trafficEdgePrefix, owners, perTenant, tenantSeen, store.TrafficKindEdge)
+	a.collect(ctx, trafficRelayPrefix, owners, perTenant, tenantSeen, store.TrafficKindRelay)
 
 	period := monthStartUTC(time.Now())
 	for tenant, acc := range perTenant {
@@ -117,6 +141,19 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 			// Leave `seen` untouched so the delta is retried next tick.
 			log.Printf("traffic aggregator: add usage for %s: %v", tenant, err)
 			continue
+		}
+		// The breakdown is written AFTER the total and its failure does not
+		// abort the tick: traffic_usage is what a tenant is charged on, and a
+		// region row that cannot be written must never hold that back. The
+		// markers still advance, so a lost region delta is lost rather than
+		// re-billed - under-counting the split, never the bill.
+		for rk, bytes := range acc.byRegion {
+			if bytes <= 0 {
+				continue
+			}
+			if err := a.store.AddTrafficUsageRegion(tenant, period, rk.region, rk.kind, bytes); err != nil {
+				log.Printf("traffic aggregator: add region usage for %s/%s/%s: %v", tenant, rk.region, rk.kind, err)
+			}
 		}
 		for _, su := range tenantSeen[tenant] {
 			a.redis.Set(ctx, su.key, su.val, trafficSeenTTL)
@@ -201,11 +238,8 @@ func (a *TrafficAggregator) subjectOwners() (map[string]string, error) {
 // collect scans one counter family, attributes each subject's new bytes to its
 // tenant, and records the matching `seen` advance (applied later, after the DB
 // write succeeds).
-func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners map[string]string, perTenant map[string]*trafficAcc, tenantSeen map[string][]seenUpdate, isEdge bool) {
-	kind := "edge"
-	if !isEdge {
-		kind = "relay"
-	}
+func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners map[string]string, perTenant map[string]*trafficAcc, tenantSeen map[string][]seenUpdate, kind string) {
+	isEdge := kind == store.TrafficKindEdge
 	var cursor uint64
 	for {
 		keys, next, err := a.redis.Scan(ctx, cursor, prefix+"*", trafficScanCount).Result()
@@ -235,7 +269,7 @@ func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners m
 			}
 			acc := perTenant[tenant]
 			if acc == nil {
-				acc = &trafficAcc{}
+				acc = &trafficAcc{byRegion: map[regionKind]int64{}}
 				perTenant[tenant] = acc
 			}
 			if isEdge {
@@ -243,12 +277,87 @@ func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners m
 			} else {
 				acc.relay += delta
 			}
+			// Both kinds are split. The beam relay carries a customer's file
+			// transfers and is region-aware in its own right, so leaving it out
+			// would put a US customer's data traffic nowhere - which is the
+			// cross-region case the split exists for.
+			a.collectRegions(ctx, subject, kind, fields, last > 0, acc, tenantSeen, tenant)
 			tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
 		}
 		cursor = next
 		if cursor == 0 {
 			break
 		}
+	}
+}
+
+// regionBytes splits a counter hash into per-region totals.
+//
+// An edge new enough to tag writes "rx:<region>" / "tx:<region>"; one that is
+// not writes bare "rx" / "tx", and those land in regionUnknown. Both shapes can
+// be present in the same hash at once - that is what a rolling edge upgrade
+// looks like - and the sum across regions equals sumByteFields either way,
+// which is the property the whole breakdown rests on.
+func regionBytes(fields map[string]string) map[string]int64 {
+	out := map[string]int64{}
+	for name, v := range fields {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			continue
+		}
+		_, region, tagged := strings.Cut(name, ":")
+		if !tagged || region == "" {
+			region = regionUnknown
+		}
+		out[region] += n
+	}
+	return out
+}
+
+// collectRegions computes the per-region deltas for one edge counter.
+//
+// hadTotalSeen says the subject was ALREADY being counted before this Core knew
+// about regions. Its region seen keys are therefore missing not because the
+// bytes are new but because nobody was tracking them yet, and treating that as
+// a delta would post the whole historical counter into the breakdown in one
+// tick - a split that would not match the total it is supposed to break down.
+// Those subjects are seeded silently instead: the marker is set, nothing is
+// billed, and the region rows start accumulating from the next tick.
+//
+// A genuinely new subject has no total seen either, so it takes the normal path
+// and its first region delta is its full counter - which is correct, because
+// the total is doing exactly the same thing on the same tick.
+func (a *TrafficAggregator) collectRegions(
+	ctx context.Context,
+	subject, kind string,
+	fields map[string]string,
+	hadTotalSeen bool,
+	acc *trafficAcc,
+	tenantSeen map[string][]seenUpdate,
+	tenant string,
+) {
+	for region, current := range regionBytes(fields) {
+		seenKey := trafficSeenPrefix + kind + ":" + subject + trafficRegionSeenSep + region
+		last, err := a.redis.Get(ctx, seenKey).Int64()
+		missing := err != nil
+		if missing && hadTotalSeen {
+			// Seed, do not bill. Deferred like every other marker so a failed
+			// DB write leaves it unset and the seeding is retried.
+			tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
+			continue
+		}
+		delta := current - last
+		if delta < 0 {
+			delta = current
+		}
+		if delta <= 0 {
+			continue
+		}
+		if acc.byRegion == nil {
+			acc.byRegion = map[regionKind]int64{}
+		}
+		acc.byRegion[regionKind{region: region, kind: kind}] += delta
+		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
 	}
 }
 

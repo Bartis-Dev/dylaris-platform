@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.15
+
+### Features
+- Traffic is now recorded per region and per kind, not just as one monthly
+  total. Player traffic is attributed to the edge that served it and file
+  transfers to the relay that carried them, which are not always the same
+  region for the same account. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.29.14
 
 ### Features

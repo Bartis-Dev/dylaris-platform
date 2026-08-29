@@ -94,6 +94,66 @@ func (s *PostgresStore) AddTrafficUsage(userID string, period time.Time, edgeByt
 	return err
 }
 
+// RegionUsage is one (region, kind) share of a tenant's traffic in a period.
+//
+// Kind separates PLAYER traffic from DATA traffic, which is not a cosmetic
+// split: a customer whose players connect through a US edge still moves their
+// file transfers through an EU relay, so the two land in different regions with
+// different costs and need different allowances.
+type RegionUsage struct {
+	Region string `json:"region"`
+	Kind   string `json:"kind"`
+	Bytes  int64  `json:"bytes"`
+}
+
+// Traffic kinds. Open set on purpose - see the traffic_usage_region comment in
+// database/db_traffic.go for why this is a row value and not a column.
+const (
+	TrafficKindEdge  = "edge"  // player traffic, at the edge that served it
+	TrafficKindRelay = "relay" // beam file transfers, at the relay that carried them
+)
+
+// AddTrafficUsageRegion adds a delta onto one (tenant, period, region, kind) row.
+//
+// Separate from AddTrafficUsage on purpose: traffic_usage stays THE billing
+// total, and this is a breakdown of it. A breakdown write that fails leaves the
+// total correct and only the split incomplete, which is the right way round -
+// the reverse would let a broken breakdown change what a tenant is charged.
+func (s *PostgresStore) AddTrafficUsageRegion(userID string, period time.Time, region, kind string, bytes int64) error {
+	_, err := s.db.Exec(`
+		INSERT INTO traffic_usage_region (user_id, period, region, kind, bytes, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (user_id, period, region, kind) DO UPDATE SET
+			bytes      = traffic_usage_region.bytes + EXCLUDED.bytes,
+			updated_at = NOW()`,
+		userID, period, region, kind, bytes)
+	return err
+}
+
+// GetTrafficUsageRegions returns the per-region, per-kind split for one tenant
+// and period, largest first. An empty result is not an error: a tenant can have
+// a total and no breakdown yet, which is exactly what a producer that predates
+// region tagging leaves behind.
+func (s *PostgresStore) GetTrafficUsageRegions(userID string, period time.Time) ([]RegionUsage, error) {
+	rows, err := s.db.Query(`
+		SELECT region, kind, bytes FROM traffic_usage_region
+		WHERE user_id = $1 AND period = $2
+		ORDER BY bytes DESC, region, kind`, userID, period)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RegionUsage
+	for rows.Next() {
+		var r RegionUsage
+		if err := rows.Scan(&r.Region, &r.Kind, &r.Bytes); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // SetTrafficBackupBytes overwrites (not adds) the R2 backup-storage snapshot for
 // a tenant's period. Storage is a gauge (current total), not a cumulative flow,
 // so each aggregation tick replaces the value.

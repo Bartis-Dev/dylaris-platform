@@ -77,6 +77,10 @@ type Store interface {
 	TenantServerOwners() (map[string]string, error)
 	TenantBackupBytes() (map[string]int64, error)
 	AddTrafficUsage(userID string, period time.Time, edgeBytes, relayBytes int64) error
+	// Per-region breakdown of the same edge bytes. A breakdown, never a second
+	// source of truth - see AddTrafficUsageRegion.
+	AddTrafficUsageRegion(userID string, period time.Time, region, kind string, bytes int64) error
+	GetTrafficUsageRegions(userID string, period time.Time) ([]RegionUsage, error)
 	SetTrafficBackupBytes(userID string, period time.Time, backupBytes int64) error
 	GetTrafficUsage(userID string, period time.Time) (*TrafficUsage, error)
 	ListTrafficUsage(period time.Time) ([]TrafficUsage, error)

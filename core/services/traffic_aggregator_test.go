@@ -31,6 +31,8 @@ type trafficFakeStore struct {
 
 	addUsageCalls   []trafficUsageCall
 	addUsageErrFor  map[string]error
+	addRegionCalls  []trafficRegionCall
+	addRegionErrFor map[string]error
 	setBackupCalls  []trafficBackupCall
 	setBackupErrFor map[string]error
 }
@@ -39,6 +41,13 @@ type trafficUsageCall struct {
 	tenant           string
 	period           time.Time
 	edge, relayBytes int64
+}
+type trafficRegionCall struct {
+	tenant string
+	period time.Time
+	region string
+	kind   string
+	bytes  int64
 }
 type trafficBackupCall struct {
 	tenant string
@@ -59,6 +68,14 @@ func (f *trafficFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
 
 func (f *trafficFakeStore) TenantBackupBytes() (map[string]int64, error) {
 	return f.backupBytes, f.backupBytesErr
+}
+
+func (f *trafficFakeStore) AddTrafficUsageRegion(userID string, period time.Time, region, kind string, bytes int64) error {
+	f.addRegionCalls = append(f.addRegionCalls, trafficRegionCall{userID, period, region, kind, bytes})
+	if f.addRegionErrFor != nil {
+		return f.addRegionErrFor[region]
+	}
+	return nil
 }
 
 func (f *trafficFakeStore) AddTrafficUsage(userID string, period time.Time, edgeBytes, relayBytes int64) error {
@@ -413,5 +430,278 @@ func TestTrafficAggregator_ServerAndRouteOnlySumIntoOneRow(t *testing.T) {
 	}
 	if got := fs.addUsageCalls[0].edge; got != 300 {
 		t.Errorf("edge bytes = %d, want 300 (200 server + 100 route-only)", got)
+	}
+}
+
+// regionBytes is the whole breakdown in one function: whatever it returns must
+// sum to what sumByteFields returns, or the split does not add up to the bill.
+func TestRegionBytes(t *testing.T) {
+	tests := []struct {
+		name   string
+		fields map[string]string
+		want   map[string]int64
+	}{
+		{
+			name:   "tagged fields split by region",
+			fields: map[string]string{"rx:eu-central": "100", "tx:eu-central": "200", "rx:ap-southeast": "5"},
+			want:   map[string]int64{"eu-central": 300, "ap-southeast": 5},
+		},
+		{
+			// An edge that predates region tagging. Its bytes are real and are
+			// in the total, so they must appear in the breakdown too.
+			name:   "untagged fields land in unknown",
+			fields: map[string]string{"rx": "10", "tx": "20"},
+			want:   map[string]int64{"unknown": 30},
+		},
+		{
+			// What a rolling edge upgrade looks like: one edge tagged, one not,
+			// writing into the same subject's hash.
+			name:   "mixed shapes coexist",
+			fields: map[string]string{"rx": "10", "rx:eu-central": "40", "tx:eu-central": "60"},
+			want:   map[string]int64{"unknown": 10, "eu-central": 100},
+		},
+		{
+			name:   "unparseable fields are ignored, not counted as zero regions",
+			fields: map[string]string{"rx:eu-central": "7", "note": "hello"},
+			want:   map[string]int64{"eu-central": 7},
+		},
+		{
+			name:   "empty region falls back to unknown",
+			fields: map[string]string{"rx:": "9"},
+			want:   map[string]int64{"unknown": 9},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := regionBytes(tt.fields)
+			if len(got) != len(tt.want) {
+				t.Fatalf("regionBytes = %v, want %v", got, tt.want)
+			}
+			var sum int64
+			for r, v := range tt.want {
+				if got[r] != v {
+					t.Errorf("region %q = %d, want %d", r, got[r], v)
+				}
+				sum += v
+			}
+			// The invariant the breakdown rests on.
+			if total := sumByteFields(tt.fields); total != sum {
+				t.Errorf("breakdown sums to %d but sumByteFields says %d - the split would not match the bill", sum, total)
+			}
+		})
+	}
+}
+
+func TestTrafficAggregator_SplitsEdgeBytesByRegion(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{
+		"rx:eu-central": 100, "tx:eu-central": 300, "rx:ap-southeast": 600,
+	})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 1000 {
+		t.Fatalf("total row wrong: %+v", fs.addUsageCalls)
+	}
+	got := map[string]int64{}
+	for _, c := range fs.addRegionCalls {
+		got[c.region] += c.bytes
+	}
+	if got["eu-central"] != 400 || got["ap-southeast"] != 600 {
+		t.Fatalf("region rows = %v, want eu-central 400 / ap-southeast 600", got)
+	}
+	var sum int64
+	for _, v := range got {
+		sum += v
+	}
+	if sum != fs.addUsageCalls[0].edge {
+		t.Errorf("region rows sum to %d but the billed total is %d", sum, fs.addUsageCalls[0].edge)
+	}
+}
+
+// The upgrade case, and the one that would have been a real defect: a subject
+// already being counted has a total seen marker but no region markers yet.
+// Treating the missing markers as deltas would post its entire historical
+// counter into the breakdown on the first tick, so the split would claim
+// hundreds of GB in a month whose bill moved by a few MB.
+func TestTrafficAggregator_ExistingSubjectSeedsRegionsWithoutBilling(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 900, "tx:eu-central": 100})
+	// This Core has billed this subject before, up to 950 bytes.
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1", "950")
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 50 {
+		t.Fatalf("total should have moved by 50, got %+v", fs.addUsageCalls)
+	}
+	if len(fs.addRegionCalls) != 0 {
+		t.Fatalf("first tick must seed the region marker, not bill it: %+v", fs.addRegionCalls)
+	}
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1#eu-central", "1000")
+
+	// Second tick: now it accumulates normally from the seeded point.
+	fs.addRegionCalls = nil
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 1200})
+	agg.runOnce(context.Background())
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].bytes != 300 {
+		t.Fatalf("second tick should bill the 300 new bytes to the region, got %+v", fs.addRegionCalls)
+	}
+}
+
+// A brand-new subject has no total marker either, so it must NOT be seeded -
+// its first region delta is its full counter, exactly as the total does.
+func TestTrafficAggregator_NewSubjectBillsRegionsImmediately(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-new": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-new", map[string]interface{}{"rx:eu-central": 40, "tx:eu-central": 60})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].region != "eu-central" || fs.addRegionCalls[0].bytes != 100 {
+		t.Fatalf("new subject should bill its regions at once, got %+v", fs.addRegionCalls)
+	}
+}
+
+// A failing region write must not take the bill with it: the total is what the
+// tenant is charged on, and it has already been written at that point.
+func TestTrafficAggregator_RegionWriteFailureKeepsTheTotal(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners:          map[string]string{"srv-1": "tenant-a"},
+		addRegionErrFor: map[string]error{"eu-central": errors.New("boom")},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 500})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 500 {
+		t.Fatalf("the billing total must still be written: %+v", fs.addUsageCalls)
+	}
+
+	// And the markers must still advance. If a failing region write skipped
+	// them, the next tick would re-read the same counter as new bytes and bill
+	// the tenant a second time for traffic they used once - a broken breakdown
+	// turning into a wrong invoice, which is the one thing the write order
+	// exists to prevent.
+	agg.runOnce(context.Background())
+	if len(fs.addUsageCalls) != 1 {
+		t.Fatalf("the same bytes were billed again after a region write failed: %+v", fs.addUsageCalls)
+	}
+}
+
+// The case that made the kind column necessary. A customer whose players
+// connect through a US edge still has their file transfers carried by a relay
+// near the node, and every relay is in eu-central today. One account, two
+// regions, two costs - and before the split the second one had nowhere to land.
+func TestTrafficAggregator_PlayerAndDataTrafficLandInDifferentRegions(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:us-east": 200, "tx:us-east": 800})
+	mustHSet(t, rdb, "dylaris:traffic:relay:srv-1", map[string]interface{}{"up:eu-central": 30, "down:eu-central": 70})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 {
+		t.Fatalf("want one total row, got %+v", fs.addUsageCalls)
+	}
+	if got := fs.addUsageCalls[0]; got.edge != 1000 || got.relayBytes != 100 {
+		t.Fatalf("total row = edge %d / relay %d, want 1000 / 100", got.edge, got.relayBytes)
+	}
+
+	type cell struct{ region, kind string }
+	got := map[cell]int64{}
+	for _, c := range fs.addRegionCalls {
+		got[cell{c.region, c.kind}] += c.bytes
+	}
+	if got[cell{"us-east", "edge"}] != 1000 {
+		t.Errorf("player traffic did not land in us-east: %v", got)
+	}
+	if got[cell{"eu-central", "relay"}] != 100 {
+		t.Errorf("data traffic did not land in eu-central: %v", got)
+	}
+	if len(got) != 2 {
+		t.Errorf("want exactly two cells, got %v", got)
+	}
+}
+
+// Per kind, the breakdown must sum to the number that kind is billed on.
+// Anything else means an allowance checked against the split would disagree
+// with the invoice built from the total.
+func TestTrafficAggregator_BreakdownSumsToTheTotalPerKind(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a", "srv-2": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 10, "tx:ap-southeast": 90})
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-2", map[string]interface{}{"rx": 400}) // untagged producer
+	mustHSet(t, rdb, "dylaris:traffic:relay:srv-1", map[string]interface{}{"up:eu-central": 25})
+
+	agg.runOnce(context.Background())
+
+	perKind := map[string]int64{}
+	for _, c := range fs.addRegionCalls {
+		perKind[c.kind] += c.bytes
+	}
+	total := fs.addUsageCalls[0]
+	if perKind["edge"] != total.edge {
+		t.Errorf("edge breakdown sums to %d, billed total is %d", perKind["edge"], total.edge)
+	}
+	if perKind["relay"] != total.relayBytes {
+		t.Errorf("relay breakdown sums to %d, billed total is %d", perKind["relay"], total.relayBytes)
+	}
+	// The untagged producer's bytes must be present, under "unknown".
+	var unknown int64
+	for _, c := range fs.addRegionCalls {
+		if c.region == "unknown" {
+			unknown += c.bytes
+		}
+	}
+	if unknown != 400 {
+		t.Errorf("untagged bytes = %d, want 400 under region \"unknown\"", unknown)
+	}
+}
+
+// Same server, same region, both kinds. The seen marker has to carry the KIND
+// as well as the subject and the region, or the relay's marker overwrites the
+// edge's and the next tick recomputes both deltas against the wrong number -
+// silently re-billing traffic that was already counted, or losing it.
+func TestTrafficAggregator_SeenMarkersDoNotCollideAcrossKinds(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 1000})
+	mustHSet(t, rdb, "dylaris:traffic:relay:srv-1", map[string]interface{}{"up:eu-central": 7})
+
+	agg.runOnce(context.Background())
+
+	first := map[string]int64{}
+	for _, c := range fs.addRegionCalls {
+		first[c.kind] += c.bytes
+	}
+	if first["edge"] != 1000 || first["relay"] != 7 {
+		t.Fatalf("first tick = %v, want edge 1000 / relay 7", first)
+	}
+
+	// Second tick WITH movement. A collided marker only shows up here: with the
+	// counters unchanged the total delta is zero and the regions are never
+	// re-examined, so the collision hides behind the short-circuit.
+	fs.addRegionCalls = nil
+	fs.addUsageCalls = nil
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 1500})
+	mustHSet(t, rdb, "dylaris:traffic:relay:srv-1", map[string]interface{}{"up:eu-central": 9})
+
+	agg.runOnce(context.Background())
+
+	second := map[string]int64{}
+	for _, c := range fs.addRegionCalls {
+		second[c.kind] += c.bytes
+	}
+	total := fs.addUsageCalls[0]
+	if second["edge"] != total.edge || second["relay"] != total.relayBytes {
+		t.Fatalf("breakdown %v disagrees with the billed totals edge=%d relay=%d - the markers collided",
+			second, total.edge, total.relayBytes)
+	}
+	if second["edge"] != 500 || second["relay"] != 2 {
+		t.Errorf("second tick = %v, want edge 500 / relay 2", second)
 	}
 }
