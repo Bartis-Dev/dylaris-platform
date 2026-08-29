@@ -222,6 +222,23 @@ describe('deployIntro', () => {
 // Every env line carries one of two markers, because the reader's real
 // question about each of them is "may I touch this". A line with neither is a
 // line they have to guess about.
+// The edge's private address is reachable from a customer machine too, because
+// warp routes the overlay - so the link's default preference succeeds and puts
+// every player's bytes through the tunnel. Only the kit knows which side of the
+// network this compose file lands on.
+describe('route-only is marked as an outside machine', () => {
+    it('sets LINK_EXTERNAL on the link', () => {
+        expect(routeOnlyCompose(base)).toContain('LINK_EXTERNAL: "true"');
+    });
+
+    // A managed node sets it for its own sidecar from NODE_EXTERNAL, so the
+    // node kit must NOT also carry it - two sources for one setting is how they
+    // end up disagreeing.
+    it('leaves it out of the node kit, which sets it itself', () => {
+        expect(nodeCompose(base)).not.toContain('LINK_EXTERNAL');
+    });
+});
+
 describe('compose annotations', () => {
     const envLine = /^ {6}[A-Z][A-Z0-9_]*:/;
 

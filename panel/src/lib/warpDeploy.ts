@@ -211,6 +211,11 @@ services:
 
       # keep - loopback, so this unauthenticated status port stays off your LAN.
       LINK_PORT: "127.0.0.1:25540"
+
+      # keep - this machine is outside our network, so link reaches our edges
+      # over the internet. Through the tunnel instead, your players would share
+      # one connection with your own uploads and drop whenever it restarts.
+      LINK_EXTERNAL: "true"
     network_mode: host
 `;
 }

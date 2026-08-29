@@ -413,6 +413,13 @@ func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, sidecarAddr string) []
 		fmt.Sprintf("REDIS_USER=%s", user),
 		fmt.Sprintf("REDIS_PASS=%s", pass),
 		fmt.Sprintf("REDIS_DB=%s", mcRedisDB),
+		// Which of an edge's two addresses the link tries first. On an external
+		// machine the private one is reachable too - warp routes the overlay -
+		// so preferring it succeeds and puts every player's bytes through the
+		// WireGuard tunnel, sharing one leader with this node's own Redis
+		// traffic and Beam uploads. The link falls back either way, so this is
+		// a preference and not a requirement.
+		fmt.Sprintf("LINK_EXTERNAL=%t", nodeExternal),
 	}
 }
 

@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.5
+
+### Features
+- A link on a customer machine now reaches the edge over the internet instead of
+  through the warp tunnel. Players no longer share that tunnel with the same
+  customer's uploads, and a warp restart no longer drops their sessions.
+  `core` `node` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.29.4
 
 ### Features

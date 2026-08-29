@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.5
+
+### Features
+- Your machine now reaches our edges directly instead of through the tunnel.
+  Your players no longer share that tunnel with your own uploads, and they are
+  no longer dropped when it restarts. Copy your deploy file from the panel again
+  to get it. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.29.3
 
 ### Features

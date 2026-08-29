@@ -109,8 +109,8 @@ func TestBuildLinkEnv(t *testing.T) {
 	testNodeID := "nodeXYZ"
 	got := buildLinkEnv(testNodeID, "tunnel-secret-1", "discovery-proof-1", mcRedisAddr)
 
-	if len(got) != 7 {
-		t.Fatalf("got %d env entries, want 7: %v", len(got), got)
+	if len(got) != 8 {
+		t.Fatalf("got %d env entries, want 8: %v", len(got), got)
 	}
 	m := envMap(t, got)
 
@@ -137,6 +137,31 @@ func TestBuildLinkEnv(t *testing.T) {
 	}
 	if m["REDIS_DB"] != mcRedisDB {
 		t.Errorf("REDIS_DB = %q, want %q", m["REDIS_DB"], mcRedisDB)
+	}
+	// A node in our own datacenter keeps the link on the private path, which is
+	// the direct one there.
+	if m["LINK_EXTERNAL"] != "false" {
+		t.Errorf("LINK_EXTERNAL = %q, want false for an in-cluster node", m["LINK_EXTERNAL"])
+	}
+}
+
+// On a customer machine the edge's private address is reachable too, because
+// warp routes the overlay - so the link's default preference SUCCEEDS and puts
+// every player's bytes through the WireGuard tunnel. The node is the only thing
+// that knows which kind of machine it is on, so it has to say so.
+func TestBuildLinkEnv_ExternalNodeTellsTheLink(t *testing.T) {
+	origExternal := nodeExternal
+	origSecret := nodeSecret
+	t.Cleanup(func() {
+		nodeExternal = origExternal
+		nodeSecret = origSecret
+	})
+	nodeSecret = []byte("unit-test-secret-value-buildlinkenv")
+	nodeExternal = true
+
+	m := envMap(t, buildLinkEnv("nodeXYZ", "s", "p", "10.9.9.9:6379"))
+	if m["LINK_EXTERNAL"] != "true" {
+		t.Errorf("LINK_EXTERNAL = %q, want true for an external node", m["LINK_EXTERNAL"])
 	}
 }
 
