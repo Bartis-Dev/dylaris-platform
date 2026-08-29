@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Route and link listings no longer return the tunnel token a link
+  authenticates with. For a managed server that token is derived from the NODE,
+  so it was the same credential for every server that node hosts, and reading
+  it needed only `network.read` on one of them. `core`
+- A holder of that token could open a tunnel to the edge and receive a share of
+  the player connections meant for the real link. Nothing on the client side
+  ever read the field. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.08.29.6
 
 ### Features

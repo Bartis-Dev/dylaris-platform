@@ -62,11 +62,21 @@ func (h *GatewayHandler) ctx() context.Context {
 // GetLinks GET /api/gateway/links - every link registered in Redis, each with
 // its online flag.
 func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
+	// A link IS its token here - the Redis key is link:<token> - so identifying
+	// one without handing over the credential means naming it by a digest
+	// instead. The whole token would let its holder claim that link's tunnel at
+	// the edge and take a share of its players; the digest identifies the same
+	// link across polls, which is all a listing needs. Nothing has ever read the
+	// full value on the client side.
 	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
-	if links == nil {
-		links = []services.GatewayLinkStatus{}
+	out := make([]map[string]interface{}, 0, len(links))
+	for _, l := range links {
+		out = append(out, map[string]interface{}{
+			"id":     services.LinkFingerprint(l.Token),
+			"online": l.Online,
+		})
 	}
-	json.NewEncoder(w).Encode(links)
+	json.NewEncoder(w).Encode(out)
 }
 
 // ==========================================
@@ -91,11 +101,9 @@ func (h *GatewayHandler) GetEdges(w http.ResponseWriter, r *http.Request) {
 // GetAllRoutes GET /api/gateway/routes - every gateway route across the whole
 // fleet, read from Redis.
 func (h *GatewayHandler) GetAllRoutes(w http.ResponseWriter, r *http.Request) {
-	routes := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
-	if routes == nil {
-		routes = []services.GatewayRoute{}
-	}
-	json.NewEncoder(w).Encode(routes)
+	// PublicRoutes, not the stored shape: every route carries the tunnel token
+	// its link authenticates with, and this listing spans the whole fleet.
+	json.NewEncoder(w).Encode(services.PublicRoutes(services.GetRoutesFromRedis(h.ctx(), h.state.Redis)))
 }
 
 // AdminDeleteRoute DELETE /api/gateway/routes/{domain} - removes any route by
@@ -323,17 +331,16 @@ func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	all := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
 	var routes []services.GatewayRoute
-	for _, rt := range all {
+	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
 		if rt.ServerUUID == server.UUID {
 			routes = append(routes, rt)
 		}
 	}
-	if routes == nil {
-		routes = []services.GatewayRoute{}
-	}
-	json.NewEncoder(w).Encode(routes)
+	// A managed route's tunnel token is derived from the NODE, so it is the same
+	// credential for every server that node hosts. This endpoint needs only
+	// network.read on ONE server, which an ordinary tenant holds on their own.
+	json.NewEncoder(w).Encode(services.PublicRoutes(routes))
 }
 
 // CreateServerRoute POST /api/servers/{id}/routes - queues a route for one

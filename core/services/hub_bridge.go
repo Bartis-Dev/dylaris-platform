@@ -89,6 +89,62 @@ type GatewayRoute struct {
 	OwnerID string `json:"owner_id,omitempty"`
 }
 
+// LinkFingerprint names a link without handing over its token.
+//
+// A link's identity IS its token (the Redis key is link:<token>), so a listing
+// has to identify one somehow. A SHA-256 prefix is stable across polls, tells
+// two links apart, and cannot be presented to an edge as a tunnel claim.
+func LinkFingerprint(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:8])
+}
+
+// PublicRoute is a route as it may be shown to a CLIENT. It is GatewayRoute
+// minus the tunnel token.
+//
+// That token is a credential, not a description. The edge admits a tunnel that
+// presents it (IsValidTokenStrict against link:<token>) and then round-robins
+// player streams across every session registered under it - so a second holder
+// does not merely observe, it receives about half of the connections meant for
+// the first and answers them itself.
+//
+// For a MANAGED server the token is derived from the NODE, so one route's
+// tunnel_id is the credential for every server on that node. It was reachable
+// through GET /api/servers/{id}/routes, which needs only network.read on one
+// server - a capability an ordinary tenant holds on their own. Nothing has ever
+// read the field on the client side; it was serialised because the whole struct
+// was.
+type PublicRoute struct {
+	Domain     string `json:"domain"`
+	TargetIP   string `json:"target_ip"`
+	TargetPort int    `json:"target_port"`
+	ServerUUID string `json:"server_uuid"`
+	CoreOwned  bool   `json:"core_owned,omitempty"`
+	OwnerID    string `json:"owner_id,omitempty"`
+}
+
+// Public strips the tunnel token off one route.
+func (r GatewayRoute) Public() PublicRoute {
+	return PublicRoute{
+		Domain:     r.Domain,
+		TargetIP:   r.TargetIP,
+		TargetPort: r.TargetPort,
+		ServerUUID: r.ServerUUID,
+		CoreOwned:  r.CoreOwned,
+		OwnerID:    r.OwnerID,
+	}
+}
+
+// PublicRoutes strips the tunnel token off a list, preserving order. Returns a
+// non-nil empty slice so a handler encodes [] rather than null.
+func PublicRoutes(routes []GatewayRoute) []PublicRoute {
+	out := make([]PublicRoute, 0, len(routes))
+	for _, r := range routes {
+		out = append(out, r.Public())
+	}
+	return out
+}
+
 // hubQueueMessage is the payload pushed to dylaris:hub:queue.
 type hubQueueMessage struct {
 	Action       string  `json:"action"`

@@ -255,19 +255,17 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// services.PublicRoute, so the tunnel token stays out of the response for the
+	// same reason as everywhere else: it is the link's credential at the edge,
+	// not a description of the route. LinkID is what the UI needs instead.
 	type linkRoute struct {
-		services.GatewayRoute
-		// Shadows the embedded tunnel_id out of the response. That token is the
-		// link's CREDENTIAL at the edge - presenting it is how a link claims a
-		// tunnel - and it was being handed to the browser in a listing that has
-		// never had a reader for it. LinkID is what the UI actually needs.
-		TunnelID string `json:"-"`
-		LinkID   string `json:"link_id,omitempty"`
+		services.PublicRoute
+		LinkID string `json:"link_id,omitempty"`
 	}
 	out := make([]linkRoute, 0)
 	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
 		if rt.CoreOwned && rt.OwnerID == userID {
-			out = append(out, linkRoute{GatewayRoute: rt, LinkID: linkIDByToken[rt.TunnelID]})
+			out = append(out, linkRoute{PublicRoute: rt.Public(), LinkID: linkIDByToken[rt.TunnelID]})
 		}
 	}
 	json.NewEncoder(w).Encode(out)
