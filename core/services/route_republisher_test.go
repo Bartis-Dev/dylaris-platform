@@ -18,6 +18,17 @@ func (f *republishFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error)
 	return f.rows, f.err
 }
 
+func (f *republishFakeStore) UpsertCoreLinkRoute(r store.CoreLinkRoute) error {
+	for i := range f.rows {
+		if f.rows[i].Domain == r.Domain {
+			f.rows[i] = r
+			return nil
+		}
+	}
+	f.rows = append(f.rows, r)
+	return nil
+}
+
 func liveRoute(t *testing.T, rp *RouteRepublisher, domain string) GatewayRoute {
 	t.Helper()
 	val, err := rp.redis.Get(context.Background(), "route:"+domain).Result()
@@ -157,5 +168,84 @@ func TestRepublish_NonLeaderDoesNothing(t *testing.T) {
 
 	if n, _ := rdb.Exists(context.Background(), "route:play.example.com").Result(); n != 0 {
 		t.Error("a non-leader replica published routes")
+	}
+}
+
+// Every route-only address that existed before this table did has to be
+// recorded, or the repair loop protects only the ones created afterwards and an
+// operator cannot tell which of theirs are covered.
+func TestAdoptExisting_RecordsRoutesThatPredateTheTable(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	seedGatewayRoute(t, rdb, "old.example.com", GatewayRoute{
+		CoreOwned: true, OwnerID: "owner-1", TunnelID: "tunnel-1", TargetIP: "192.168.1.50", TargetPort: 25566,
+	})
+	fs := &republishFakeStore{}
+	rp := NewRouteRepublisher(fs, rdb)
+
+	rp.adoptExisting(context.Background())
+
+	if len(fs.rows) != 1 {
+		t.Fatalf("stored %d rows, want 1", len(fs.rows))
+	}
+	got := fs.rows[0]
+	if got.Domain != "old.example.com" || got.OwnerID != "owner-1" || got.LinkToken != "tunnel-1" {
+		t.Errorf("adopted row = %+v", got)
+	}
+	if got.TargetHost != "192.168.1.50" || got.TargetPort != 25566 {
+		t.Errorf("adopted target = %s:%d, want 192.168.1.50:25566", got.TargetHost, got.TargetPort)
+	}
+}
+
+// A hub-managed route already has a durable row in the hub's own database.
+// Copying it here would give one route two owners that both write it.
+func TestAdoptExisting_IgnoresHubManagedRoutes(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	seedGatewayRoute(t, rdb, "srv.example.com", GatewayRoute{
+		CoreOwned: false, TunnelID: "node-tunnel", TargetIP: "mc_abc", TargetPort: 25565,
+	})
+	fs := &republishFakeStore{}
+	rp := NewRouteRepublisher(fs, rdb)
+
+	rp.adoptExisting(context.Background())
+
+	if len(fs.rows) != 0 {
+		t.Errorf("adopted %+v, want nothing: the hub owns that route", fs.rows)
+	}
+}
+
+// A route already recorded is left exactly as it is. Re-reading it from Redis
+// would let a drifted cache entry overwrite the record it is supposed to be
+// corrected BY, which is the wrong way round.
+func TestAdoptExisting_DoesNotOverwriteAnExistingRow(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	seedGatewayRoute(t, rdb, "play.example.com", GatewayRoute{
+		CoreOwned: true, OwnerID: "owner-1", TunnelID: "tunnel-1", TargetIP: "10.0.0.9", TargetPort: 25000,
+	})
+	fs := &republishFakeStore{rows: []store.CoreLinkRoute{
+		{Domain: "play.example.com", OwnerID: "owner-1", LinkToken: "tunnel-1", TargetHost: "127.0.0.1", TargetPort: 25565},
+	}}
+	rp := NewRouteRepublisher(fs, rdb)
+
+	rp.adoptExisting(context.Background())
+
+	if len(fs.rows) != 1 || fs.rows[0].TargetPort != 25565 {
+		t.Errorf("rows = %+v, want the stored record untouched", fs.rows)
+	}
+}
+
+// A failed listing would make every domain look unrecorded, and this writes
+// rows - so it writes none.
+func TestAdoptExisting_ListFails_RecordsNothing(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	seedGatewayRoute(t, rdb, "old.example.com", GatewayRoute{
+		CoreOwned: true, OwnerID: "owner-1", TunnelID: "tunnel-1", TargetIP: "127.0.0.1", TargetPort: 25565,
+	})
+	fs := &republishFakeStore{err: errors.New("db down")}
+	rp := NewRouteRepublisher(fs, rdb)
+
+	rp.adoptExisting(context.Background())
+
+	if len(fs.rows) != 0 {
+		t.Errorf("rows = %+v, want none written from a failed listing", fs.rows)
 	}
 }

@@ -23,6 +23,7 @@ const republishInterval = 60 * time.Second
 
 type routeRepublishStore interface {
 	ListCoreLinkRoutes() ([]store.CoreLinkRoute, error)
+	UpsertCoreLinkRoute(r store.CoreLinkRoute) error
 }
 
 // RouteRepublisher writes the stored route-only entries back into Redis.
@@ -54,6 +55,7 @@ func (s *RouteRepublisher) SetLeader(l leader.Election) { s.leader = l }
 
 func (s *RouteRepublisher) Start(ctx context.Context) {
 	log.Printf("Route republisher started (interval: %s)", republishInterval)
+	s.adoptExisting(ctx)
 	s.RunOnce(ctx)
 	ticker := time.NewTicker(republishInterval)
 	go func() {
@@ -166,4 +168,74 @@ func (s *RouteRepublisher) republish(ctx context.Context, r store.CoreLinkRoute)
 	}
 	s.redis.SAdd(ctx, "sys:index:routes", r.Domain)
 	return republishCorrected
+}
+
+// adoptExisting records the route-only entries that were live BEFORE there was
+// anywhere to record them.
+//
+// Without this the repair loop protects only routes created from now on, and an
+// operator has no way to tell which of their existing addresses are covered -
+// they would each have to be opened and saved again to acquire a row. So the
+// first pass after the upgrade reads what Redis holds and writes it down.
+//
+// Deliberately ONE-SHOT, at startup, and never on the ticker. Redis is the
+// authority here exactly once; making it a standing rule would undo the point
+// of the table, and would resurrect a route deleted in the window between its
+// row and its key going away.
+func (s *RouteRepublisher) adoptExisting(ctx context.Context) {
+	if s.leader != nil && !s.leader.IsLeader() {
+		return
+	}
+	if s.redis == nil || s.store == nil {
+		return
+	}
+	rows, err := s.store.ListCoreLinkRoutes()
+	if err != nil {
+		// Every domain would look unrecorded, and this writes rows.
+		log.Printf("[routes] adopt: list stored routes: %v", err)
+		return
+	}
+	stored := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		stored[r.Domain] = true
+	}
+	domains, err := s.redis.SMembers(ctx, "sys:index:routes").Result()
+	if err != nil {
+		log.Printf("[routes] adopt: %v", err)
+		return
+	}
+	adopted := 0
+	for _, domain := range domains {
+		if stored[domain] {
+			continue
+		}
+		val, err := s.redis.Get(ctx, "route:"+domain).Result()
+		if err != nil {
+			continue
+		}
+		var live struct {
+			TargetIP   string `json:"target_ip"`
+			TargetPort int    `json:"target_port"`
+			TunnelID   string `json:"tunnel_id"`
+			CoreOwned  bool   `json:"core_owned"`
+			OwnerID    string `json:"owner_id"`
+		}
+		// Only OUR kind. A hub-managed route already has a durable row of its
+		// own in the hub's database, and copying it here would give one route
+		// two owners that both write it.
+		if json.Unmarshal([]byte(val), &live) != nil || !live.CoreOwned || live.OwnerID == "" {
+			continue
+		}
+		if err := s.store.UpsertCoreLinkRoute(store.CoreLinkRoute{
+			Domain: domain, OwnerID: live.OwnerID, LinkToken: live.TunnelID,
+			TargetHost: live.TargetIP, TargetPort: live.TargetPort,
+		}); err != nil {
+			log.Printf("[routes] adopt %s: %v", domain, err)
+			continue
+		}
+		adopted++
+	}
+	if adopted > 0 {
+		log.Printf("[routes] recorded %d route-only entries that existed before there was anywhere to record them", adopted)
+	}
 }

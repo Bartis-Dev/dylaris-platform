@@ -34,6 +34,8 @@ Newest release first. The format is fixed and checked in CI - see the
   report nothing to remove and leave the addresses behind. `core`
 - Deleting a protected address whose Redis entry had gone answered "not found".
   Ownership is read from the stored record as well as the cache. `core`
+- Addresses that already existed are recorded once at startup, so the repair
+  above covers them too rather than only the ones created from now on. `core`
 
 ## 2026.08.29.9
 
