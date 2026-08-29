@@ -108,6 +108,52 @@ func TestAssignRegion_PrefersARegionThatHasALeader(t *testing.T) {
 	}
 }
 
+// The same rule, on the branch that skipped it: a key that NAMES a leaderless
+// region.
+//
+// TestAssignRegion_PrefersARegionThatHasALeader covers the placement path. Ten
+// lines above it, the stated-preference branch returned the key's region on
+// "enabled" alone - so the one check placement applies deliberately was the one
+// an explicit preference bypassed. A key gets its region straight from the
+// create request with no leader check, and a region outlives its leaders, so the
+// pair is easy to reach: production had an enabled region left over from a
+// hand-test, with a subnet, zero leaders and zero peers, beside the real one. A
+// key naming it would have enrolled "successfully" onto an overlay nothing
+// programs.
+func TestAssignRegion_IgnoresAStatedPreferenceForALeaderlessRegion(t *testing.T) {
+	svc, fs, _ := enrollTestService(t)
+	fs.regions = append(fs.regions, store.WarpRegion{Region: "seeded-empty", Subnet: "10.0.98.0/24", Enabled: true})
+
+	key := store.WarpAPIKey{ID: 1, Policy: "general", MaxConns: 5, OnNewConn: "block", Region: "seeded-empty"}
+	region, err := svc.assignRegion(context.Background(), key)
+	if err != nil {
+		t.Fatalf("assignRegion: %v", err)
+	}
+	if region == "seeded-empty" {
+		t.Fatal("honoured a preference for a region with no leader; the peer would sit on an overlay nothing programs")
+	}
+	if region != "leader-01" {
+		t.Errorf("assignRegion() = %q, want the region that has a leader", region)
+	}
+}
+
+// A stated preference for a region that DOES have a leader is still honoured,
+// including while that leader is down - the fixture writes no liveness key, so
+// nothing here is alive. Refusing a preference during a restart would move
+// peers off their pinned region for no reason.
+func TestAssignRegion_HonoursAPreferenceWhoseLeaderIsMerelyDown(t *testing.T) {
+	svc, _, _ := enrollTestService(t)
+
+	key := store.WarpAPIKey{ID: 1, Policy: "general", MaxConns: 5, OnNewConn: "block", Region: "leader-01"}
+	region, err := svc.assignRegion(context.Background(), key)
+	if err != nil {
+		t.Fatalf("assignRegion: %v", err)
+	}
+	if region != "leader-01" {
+		t.Errorf("assignRegion() = %q, want the preferred region: its leader has a row and will answer again", region)
+	}
+}
+
 // When NOTHING has a leader the historical behaviour stands: still assign, and
 // let Enroll refuse with ErrNoWarpLeader naming the region. Failing here would
 // answer "no region available", which sends an operator to the wrong screen.

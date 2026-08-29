@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.12
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- The Redis credential inside a Minecraft container is now limited to the six
+  keys the log shipper actually uses. It held the whole `dylaris:server:<uuid>:`
+  namespace, which includes the marker that enforces the disk quota - so a
+  plugin could delete it and the server was started straight back up. Applied on
+  the next node connect; containers keep their credential. `core`
+
+### Fixes
+- A warp key that names a region with no leader is no longer placed there. The
+  automatic choice already refused such a region; a key stating a preference
+  skipped that check, and a machine enrolling into one gets an overlay address
+  nothing ever programs. `core`
+
 ## 2026.08.29.11
 
 ### Features
@@ -19,11 +40,6 @@ Newest release first. The format is fixed and checked in CI - see the
   they do, route-only and BYON links have no path at all. `core`
 
 ### Security
-- The Redis credential inside a Minecraft container is now limited to the six
-  keys the log shipper actually uses. It held the whole `dylaris:server:<uuid>:`
-  namespace, which includes the marker that enforces the disk quota - so a
-  plugin could delete it and the server was started straight back up. Applied on
-  the next node connect; containers keep their credential. `core`
 - A tenant can no longer route their players through our overlay. Everything a
   customer machine could claim about itself is environment on that machine, so
   the warp allowlist is now what decides it. `core`

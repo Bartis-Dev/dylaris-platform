@@ -317,15 +317,6 @@ func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (s
 		return "", ErrNoWarpRegion
 	}
 
-	if key.Region != "" {
-		for _, r := range enabled {
-			if r.Region == key.Region {
-				return key.Region, nil
-			}
-		}
-		log.Printf("[warp] key %d prefers region %q which is not enabled; auto-assigning", key.ID, key.Region)
-	}
-
 	leaders, err := s.warp.ListWarpLeaders()
 	if err != nil {
 		return "", err
@@ -333,7 +324,8 @@ func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (s
 	aliveByRegion := map[string]bool{}
 	aliveLeaderIDsByRegion := map[string][]string{}
 	// Regions that have an enabled leader AT ALL, alive or not. That is a
-	// different question from liveness and it decides the fallback below.
+	// different question from liveness and it decides both the preference check
+	// below and the fallback further down.
 	hasLeaderByRegion := map[string]bool{}
 	for _, l := range leaders {
 		if !l.Enabled {
@@ -343,6 +335,40 @@ func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (s
 		if s.leaderAlive(ctx, l.LeaderID) {
 			aliveByRegion[l.Region] = true
 			aliveLeaderIDsByRegion[l.Region] = append(aliveLeaderIDsByRegion[l.Region], l.LeaderID)
+		}
+	}
+
+	// A key's stated preference is honoured only if the region can actually
+	// carry a peer.
+	//
+	// "Enabled" alone was the test, which skipped the very check the placement
+	// logic below applies deliberately - and its comment says why: a region with
+	// no leader row "has no address and never will, so assigning a peer there is
+	// choosing the one option that cannot recover". A key gets its region from
+	// the create request with no leader check, and a region outlives its leaders
+	// (removing a leader does not remove the region). Production had exactly that
+	// pair: an enabled region left over from a hand-test, with a subnet, zero
+	// leaders and zero peers, sitting next to the real one. A key naming it would
+	// have enrolled "successfully" onto an overlay nothing programs.
+	//
+	// The bar is a leader ROW, not a live leader: a leader that is down comes
+	// back, and refusing a preference during a restart would move peers off their
+	// pinned region for no reason.
+	if key.Region != "" {
+		isEnabled := false
+		for _, r := range enabled {
+			if r.Region == key.Region {
+				isEnabled = true
+				break
+			}
+		}
+		switch {
+		case !isEnabled:
+			log.Printf("[warp] key %d prefers region %q which is not enabled; auto-assigning", key.ID, key.Region)
+		case !hasLeaderByRegion[key.Region]:
+			log.Printf("[warp] key %d prefers region %q, which is enabled but has no leader; auto-assigning", key.ID, key.Region)
+		default:
+			return key.Region, nil
 		}
 	}
 	counts, err := s.warp.CountWarpPeersByRegion()
