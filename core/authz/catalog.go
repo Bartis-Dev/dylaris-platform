@@ -183,15 +183,17 @@ var catalog = []Capability{
 
 	{ID: "plans.read", Label: "View plans", Category: "Plans", Scope: ScopePanel, Verb: VerbRead},
 	{ID: "plans.write", Label: "Edit plans", Category: "Plans", Scope: ScopePanel, Verb: VerbWrite},
-	{ID: "plans.delete", Label: "Delete plans", Category: "Plans", Scope: ScopePanel, Verb: VerbDelete},
 
 	{ID: "servers.read", Label: "View all servers", Category: "Servers (oversight)", Scope: ScopePanel, Verb: VerbRead},
 	{ID: "servers.write", Label: "Edit any server", Category: "Servers (oversight)", Scope: ScopePanel, Verb: VerbWrite},
-	{ID: "servers.delete", Label: "Delete any server", Category: "Servers (oversight)", Scope: ScopePanel, Verb: VerbDelete},
-
-	{ID: "staff.modpack.read", Label: "View all modpacks (staff)", Category: "Modpacks (staff)", Scope: ScopePanel, Verb: VerbRead},
-	{ID: "staff.modpack.write", Label: "Edit any modpack (staff)", Category: "Modpacks (staff)", Scope: ScopePanel, Verb: VerbWrite},
-	{ID: "staff.modpack.delete", Label: "Delete any modpack (staff)", Category: "Modpacks (staff)", Scope: ScopePanel, Verb: VerbDelete},
+	// "servers.delete" (Delete any server) used to sit here, and the whole
+	// "Modpacks (staff)" category below it. Both were declared and enforced
+	// NOWHERE - no DELETE under /api/admin/servers, and modpacks gated only by
+	// the owner-scoped modpack.* caps - so the role editor offered permissions
+	// that conferred nothing. Removed rather than listed as exempt; if staff
+	// oversight for either is wanted, the endpoint comes first and the
+	// capability with it. TestEveryCapabilityReachesAChokepoint now refuses a
+	// catalog entry with no chokepoint.
 
 	{ID: "audit.read", Label: "View audit log", Category: "Audit", Scope: ScopePanel, Verb: VerbRead},
 }

@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.13
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Five permissions that did nothing are gone from the role editor: "Delete any
+  server", "Delete plans" and the three staff modpack ones. No endpoint ever
+  checked them, so granting one conferred nothing and withholding it withheld
+  nothing. Roles keep working; only the entries disappear. `core`
+
 ## 2026.08.29.12
 
 ### Features
