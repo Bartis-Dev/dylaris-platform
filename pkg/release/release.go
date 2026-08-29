@@ -24,7 +24,14 @@ import (
 // purpose: a typo like `nodes` would otherwise mean "this entry applies to a
 // component nobody runs", which reads as an empty release rather than as an
 // error.
-var Services = []string{"core", "panel", "node", "log-shipper", "edge", "link", "hub", "warp"}
+//
+// Closed also means INCOMPLETE is a defect rather than a policy. beam-relay was
+// missing while being its own image, its own build job and its own thing to
+// restart, so a security fix that only reached the relay could not be addressed
+// to the people running it - the entry had to either lie by naming `edge` or
+// name nothing. Appending is safe: the panel skips a component with no
+// instances that no release names.
+var Services = []string{"core", "panel", "node", "log-shipper", "edge", "link", "hub", "warp", "beam-relay"}
 
 func knownService(s string) bool { return slices.Contains(Services, s) }
 

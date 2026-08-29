@@ -1,6 +1,7 @@
 package release
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -369,6 +370,33 @@ func TestOnlyTrailingCodeIsAServiceList(t *testing.T) {
 	}
 	if len(e.Services) != 1 || e.Services[0] != "node" {
 		t.Errorf("services = %v, want [node]", e.Services)
+	}
+}
+
+// The gateway ships four images an operator restarts independently, and the
+// beam relay is one of them. It was absent from Services, so an entry about a
+// relay-only fix could not address the people running a relay: naming it was a
+// parse error, and the alternatives were to name `edge` (a different image) or
+// to name nothing. The closed set has to be complete to be closed.
+func TestServicesCoversEveryIndependentlyDeployedComponent(t *testing.T) {
+	for _, svc := range Services {
+		src := "## 2026.08.28\n### Features\n- x. `" + svc + "`\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n"
+		rs, err := Parse([]byte(src))
+		if err != nil {
+			t.Errorf("a bullet naming %q must parse: %v", svc, err)
+			continue
+		}
+		if got := rs[0].Features[0].Services; len(got) != 1 || got[0] != svc {
+			t.Errorf("services for %q = %v", svc, got)
+		}
+	}
+	if !slices.Contains(Services, "beam-relay") {
+		t.Error("beam-relay left the set; a relay-only entry can then only name the wrong image or nothing")
+	}
+	// Still closed: an unknown name is an error, not a silently empty audience.
+	bad := "## 2026.08.28\n### Features\n- x. `relay`\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n"
+	if _, err := Parse([]byte(bad)); err == nil {
+		t.Error("an unknown service name parsed; the set is no longer closed")
 	}
 }
 
