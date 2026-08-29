@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.14
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Route-only traffic is now measured. Those addresses carry no server UUID, and
+  metering was keyed on the server, so every byte a protected address moved
+  reached no counter and no tenant's monthly usage. `core`
+- The traffic aggregator no longer stops when a tenant owns no server. An
+  account holding only route-only addresses was skipped entirely, which was the
+  second half of the same gap. `core`
+
 ## 2026.08.29.13
 
 ### Features

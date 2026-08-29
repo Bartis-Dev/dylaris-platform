@@ -32,6 +32,11 @@ const (
 	trafficSeenPrefix  = "dylaris:traffic:agg:seen:"
 	trafficSeenTTL     = 30 * 24 * time.Hour
 	trafficScanCount   = 200
+
+	// Counter subjects for route-only addresses carry this infix. It lives
+	// under the edge prefix rather than beside it so the edge's existing Redis
+	// ACL grant covers it - see subjectOwners.
+	trafficOwnerSubjectPrefix = "owner:"
 )
 
 // TrafficAggregator turns the per-server byte counters edges + relays publish to
@@ -91,7 +96,7 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 	if !a.flags.IsBYONEnabled(ctx) {
 		return // no tenants to bill
 	}
-	owners, err := a.store.TenantServerOwners()
+	owners, err := a.subjectOwners()
 	if err != nil {
 		log.Printf("traffic aggregator: tenant lookup: %v", err)
 		return
@@ -118,7 +123,15 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 		}
 	}
 
-	a.snapshotBackupStorage(owners, period)
+	// Deliberately NOT the widened map: this walks tenants who own SERVERS, and
+	// a route-only tenant has no backups to snapshot. Passing them in would
+	// write a zero-byte storage row for an account that never had one.
+	serverOwners, err := a.store.TenantServerOwners()
+	if err != nil {
+		log.Printf("traffic aggregator: server owner lookup for backup snapshot: %v", err)
+		return
+	}
+	a.snapshotBackupStorage(serverOwners, period)
 }
 
 // snapshotBackupStorage overwrites each tenant's R2 backup-storage gauge for the
@@ -147,7 +160,45 @@ func (a *TrafficAggregator) snapshotBackupStorage(owners map[string]string, peri
 	}
 }
 
-// collect scans one counter family, attributes each server's new bytes to its
+// subjectOwners maps every counter SUBJECT the edges write to the tenant it
+// belongs to.
+//
+// Two kinds share one namespace, because they share one Redis key prefix (the
+// edge's ACL grants exactly dylaris:traffic:edge:*, so route-only could not get
+// a prefix of its own without a re-provisioned ACL):
+//
+//	<serverUUID>      a managed server on a tenant-owned node
+//	owner:<userID>    a route-only address, which has no server at all
+//
+// Route-only used to be absent from this map because it was absent from the
+// EDGE too: Core writes server_uuid:"" for those routes, metering keyed on the
+// server, and the whole product's traffic reached no counter. Adding the
+// counter without adding it here would have been the same defect one layer up.
+//
+// A subject that resolves to nothing is skipped by collect, which is what keeps
+// a stale counter for a deleted server or a removed route from inventing a row.
+func (a *TrafficAggregator) subjectOwners() (map[string]string, error) {
+	owners, err := a.store.TenantServerOwners()
+	if err != nil {
+		return nil, err
+	}
+	if owners == nil {
+		owners = map[string]string{}
+	}
+	routes, err := a.store.ListCoreLinkRoutes()
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range routes {
+		if r.OwnerID == "" {
+			continue
+		}
+		owners[trafficOwnerSubjectPrefix+r.OwnerID] = r.OwnerID
+	}
+	return owners, nil
+}
+
+// collect scans one counter family, attributes each subject's new bytes to its
 // tenant, and records the matching `seen` advance (applied later, after the DB
 // write succeeds).
 func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners map[string]string, perTenant map[string]*trafficAcc, tenantSeen map[string][]seenUpdate, isEdge bool) {
@@ -163,17 +214,17 @@ func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners m
 			return
 		}
 		for _, key := range keys {
-			serverUUID := strings.TrimPrefix(key, prefix)
-			tenant, ok := owners[serverUUID]
+			subject := strings.TrimPrefix(key, prefix)
+			tenant, ok := owners[subject]
 			if !ok {
-				continue // platform server or unknown — not billed
+				continue // platform server, deleted route, or unknown — not billed
 			}
 			fields, err := a.redis.HGetAll(ctx, key).Result()
 			if err != nil {
 				continue
 			}
 			current := sumByteFields(fields)
-			seenKey := trafficSeenPrefix + kind + ":" + serverUUID
+			seenKey := trafficSeenPrefix + kind + ":" + subject
 			last, _ := a.redis.Get(ctx, seenKey).Int64()
 			delta := current - last
 			if delta < 0 {

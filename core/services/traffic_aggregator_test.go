@@ -21,6 +21,9 @@ type trafficFakeStore struct {
 	ownersErr  error
 	ownersCall int
 
+	routes    []store.CoreLinkRoute
+	routesErr error
+
 	backupBytes    map[string]int64
 	backupBytesErr error
 
@@ -46,6 +49,12 @@ type trafficBackupCall struct {
 func (f *trafficFakeStore) TenantServerOwners() (map[string]string, error) {
 	f.ownersCall++
 	return f.owners, f.ownersErr
+}
+
+// Route-only addresses have no server row, so their counters are keyed on the
+// owner and this is where the aggregator learns those owners exist.
+func (f *trafficFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
+	return f.routes, f.routesErr
 }
 
 func (f *trafficFakeStore) TenantBackupBytes() (map[string]int64, error) {
@@ -317,5 +326,92 @@ func TestMonthStartUTC(t *testing.T) {
 	want := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	if got := monthStartUTC(in); !got.Equal(want) {
 		t.Errorf("monthStartUTC(%v) = %v, want %v", in, got, want)
+	}
+}
+
+// A route-only address carries player traffic and has NO server behind it:
+// Core writes server_uuid:"" for every one, so the edge meters it under
+// "owner:<userID>" instead. This is the Core half of that - without it the
+// counter exists in Redis and matches no tenant, which collect skips silently.
+func TestTrafficAggregator_RouteOnlyBilledToItsOwner(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{},
+		routes: []store.CoreLinkRoute{
+			{Domain: "a.eu.dylaris.com", OwnerID: "tenant-r"},
+		},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:owner:tenant-r", map[string]interface{}{"rx": 400, "tx": 600})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 {
+		t.Fatalf("want exactly one usage row, got %+v", fs.addUsageCalls)
+	}
+	c := fs.addUsageCalls[0]
+	if c.tenant != "tenant-r" || c.edge != 1000 {
+		t.Errorf("got tenant=%q edge=%d, want tenant-r / 1000", c.tenant, c.edge)
+	}
+	// The seen marker has to carry the full subject, or the next tick re-bills
+	// the same bytes against a marker written for a different key.
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:edge:owner:tenant-r", "1000")
+}
+
+// A tenant who bought ONLY route-only owns no server, so TenantServerOwners is
+// empty for them. runOnce used to return on that emptiness, which meant the one
+// product whose traffic was unmetered was also the one the aggregator refused
+// to run for. Both halves had to change.
+func TestTrafficAggregator_RouteOnlyTenantWithNoServers(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{},
+		routes: []store.CoreLinkRoute{{Domain: "solo.eu.dylaris.com", OwnerID: "tenant-solo"}},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:owner:tenant-solo", map[string]interface{}{"rx": 7, "tx": 3})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].tenant != "tenant-solo" {
+		t.Fatalf("route-only-only tenant was not billed: %+v", fs.addUsageCalls)
+	}
+}
+
+// A counter whose route has been deleted must not invent a row. Same rule the
+// server side already had: resolve or skip, never guess the tenant from the key.
+func TestTrafficAggregator_UnknownOwnerSubjectSkipped(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{"srv-1": "tenant-a"},
+		routes: nil,
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:owner:tenant-gone", map[string]interface{}{"rx": 5, "tx": 5})
+
+	agg.runOnce(context.Background())
+
+	for _, c := range fs.addUsageCalls {
+		if c.tenant == "tenant-gone" {
+			t.Fatalf("billed a subject with no route behind it: %+v", c)
+		}
+	}
+}
+
+// Both kinds in one tick land on one row for the same tenant, because the
+// allowance is sold per ACCOUNT, not per subject.
+func TestTrafficAggregator_ServerAndRouteOnlySumIntoOneRow(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{"srv-1": "tenant-a"},
+		routes: []store.CoreLinkRoute{{Domain: "a.eu.dylaris.com", OwnerID: "tenant-a"}},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx": 100, "tx": 100})
+	mustHSet(t, rdb, "dylaris:traffic:edge:owner:tenant-a", map[string]interface{}{"rx": 50, "tx": 50})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 {
+		t.Fatalf("want one row for the tenant, got %+v", fs.addUsageCalls)
+	}
+	if got := fs.addUsageCalls[0].edge; got != 300 {
+		t.Errorf("edge bytes = %d, want 300 (200 server + 100 route-only)", got)
 	}
 }

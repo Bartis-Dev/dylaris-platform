@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.14
+
+### Features
+- Nothing.
+
+### Breaking
+- Traffic through a protected address now counts against your included traffic.
+  It was not being counted at all, so your usage figure will start moving where
+  it previously stayed flat. Nothing on your side changes and there is nothing
+  for you to update.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.29.11
 
 ### Features
