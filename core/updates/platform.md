@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.11
+
+### Features
+- Nothing.
+
+### Breaking
+- A machine outside the cluster can no longer reach an edge's tunnel port
+  through the warp overlay. Its edges must publish `:25560` publicly; until
+  they do, route-only and BYON links have no path at all. `core`
+
+### Security
+- A tenant can no longer route their players through our overlay. Everything a
+  customer machine could claim about itself is environment on that machine, so
+  the warp allowlist is now what decides it. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.08.29.10
 
 ### Features

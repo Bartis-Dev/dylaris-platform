@@ -1223,10 +1223,22 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 const WarpFirewallRedisKey = "dylaris:warp:firewall:allowed_ports"
 
 // defaultWarpSpokeAllowedPorts is the compiled-in default allowlist (6379 Redis,
-// 25501 Core gRPC, 25551 beam relay, 25560 edge tunnel). Written in the sorted
-// order normalizeWarpPorts emits, so the first-boot value does not visibly
-// reorder on the first save. MUST match gateway/warp defaultSpokeAllowedPorts.
-const defaultWarpSpokeAllowedPorts = "6379,25501,25551,25560"
+// 25501 Core gRPC, 25551 beam relay). Written in the sorted order
+// normalizeWarpPorts emits, so the first-boot value does not visibly reorder on
+// the first save. MUST match gateway/warp defaultSpokeAllowedPorts.
+//
+// 25560, the edge tunnel, is deliberately absent. A customer machine must reach
+// an edge over the internet: through the overlay its players share one warp
+// leader's bandwidth with that same customer's Redis traffic and Beam uploads,
+// and drop every session whenever the leader restarts. This allowlist is the
+// only place that can enforce it - LINK_EXTERNAL, NODE_EXTERNAL and NODE_TAGS
+// are all env on the customer's own host, so nothing the machine declares about
+// itself is evidence.
+//
+// Adding it back re-opens that path for every tenant at once. The edge must
+// publish :25560 instead; a link then fails outright rather than quietly
+// degrading onto the overlay and looking healthy.
+const defaultWarpSpokeAllowedPorts = "6379,25501,25551"
 
 type WarpFirewallSettings struct {
 	AllowedPorts string `json:"allowedPorts"` // comma-separated destination TCP ports the overlay leaders allow spokes to reach

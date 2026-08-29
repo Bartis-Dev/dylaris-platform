@@ -214,7 +214,9 @@ services:
 
       # keep - this machine is outside our network, so link reaches our edges
       # over the internet. Through the tunnel instead, your players would share
-      # one connection with your own uploads and drop whenever it restarts.
+      # one connection with your own uploads and drop whenever it restarts,
+      # which is why that route is not open. Current versions work this out on
+      # their own and ignore this line; it stays because an older image does not.
       LINK_EXTERNAL: "true"
     network_mode: host
 `;

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Your link now reaches us over the internet only, never through the tunnel it
+  uses for everything else. It was doing both, and the tunnel route made your
+  players share one connection with your own uploads and drop whenever that
+  connection restarted.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.29.10
 
 ### Features
