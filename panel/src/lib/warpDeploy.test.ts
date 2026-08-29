@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { routeOnlyCompose, nodeCompose, deployCli, nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS } from './warpDeploy';
+import {
+    routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
+    nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS,
+} from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
 
@@ -188,36 +191,78 @@ describe('deployCli', () => {
         expect(deployCli('route-only')).toContain('logs -f link');
     });
 
-    // The first step is the one people get stuck on, and it is the only one
-    // that differs: a Linux reader has a shell, a Windows reader has Explorer
-    // and a Notepad that appends .txt behind their back.
-    it('shows how to create the file on each platform', () => {
-        const linux = deployCli('route-only', 'linux');
-        expect(linux).toContain('nano route-only.yml');
-        expect(linux).not.toContain('notepad');
+    // Creating the file is not a command, and on Windows not even a terminal
+    // step. It used to be step 1 of the block, where the one line nobody can
+    // copy sat among four they can.
+    it('leaves creating the file out of the command block', () => {
+        const cli = deployCli('route-only');
+        expect(cli).not.toContain('nano');
+        expect(cli).not.toContain('notepad');
+        expect(cli).toMatch(/^# 1\. Start it/);
+        expect(cli).toContain('docker compose -f route-only.yml pull');
+        expect(cli).toContain('docker compose -f route-only.yml up -d');
+    });
+});
 
-        const win = deployCli('route-only', 'windows');
-        expect(win).toContain('notepad route-only.yml');
-        // A lone backslash is not an escape in a template literal, it is
-        // dropped - which would render the path as $HOMEdylaris.
-        expect(win).toContain('mkdir "$HOME\\dylaris"');
-        expect(win).toContain('.txt');
-        expect(win).not.toContain('nano ');
+describe('deployIntro', () => {
+    it('names the file the commands then refer to', () => {
+        expect(deployIntro('route-only')).toContain('route-only.yml');
+        expect(deployIntro('node')).toContain('byon-node.yml');
+        expect(deployIntro('route-only')).toBe(deployIntro('route-only', 'linux'));
     });
 
-    it('defaults to the Linux steps', () => {
-        expect(deployCli('node')).toBe(deployCli('node', 'linux'));
+    // Notepad's default filter produces route-only.yml.txt, and Docker then
+    // reports a missing file rather than a misnamed one.
+    it('warns Windows readers about the appended .txt', () => {
+        expect(deployIntro('route-only', 'windows')).toContain('.txt');
+        expect(deployIntro('route-only', 'linux')).not.toContain('.txt');
+    });
+});
+
+// Every env line carries one of two markers, because the reader's real
+// question about each of them is "may I touch this". A line with neither is a
+// line they have to guess about.
+describe('compose annotations', () => {
+    const envLine = /^ {6}[A-Z][A-Z0-9_]*:/;
+
+    const annotated = (body: string) => {
+        const lines = body.split('\n');
+        return lines.every((line, idx) => {
+            if (!envLine.test(line)) return true;
+            // Walk up past sibling env lines (LOCAL_HOST under
+            // LINK_ALLOWED_TARGETS shares one marker) and past the wrapped
+            // tail of a comment, to the line the comment block STARTS on -
+            // that is where the marker sits.
+            let first = -1;
+            for (let i = idx - 1; i >= 0; i--) {
+                const prev = lines[i];
+                if (envLine.test(prev)) continue;
+                if (/^ *#/.test(prev)) { first = i; continue; }
+                break;
+            }
+            return first >= 0 && /^ *# (keep|EDIT)/.test(lines[first]);
+        });
+    };
+
+    it('marks every env as keep or EDIT', () => {
+        expect(annotated(routeOnlyCompose(base))).toBe(true);
+        expect(annotated(nodeCompose(base))).toBe(true);
     });
 
-    // Both platforms start the stack the same way, and both readers may be on
-    // Portainer instead of a shell.
-    it('starts the stack identically on both platforms', () => {
-        for (const p of ['linux', 'windows'] as const) {
-            const out = deployCli('route-only', p);
-            expect(out).toContain('docker compose -f route-only.yml pull');
-            expect(out).toContain('docker compose -f route-only.yml up -d');
-            expect(out).toContain('Portainer');
+    it('says up front what the two markers mean', () => {
+        for (const body of [routeOnlyCompose(base), nodeCompose(base)]) {
+            expect(body).toContain('Lines marked "keep"');
+            expect(body).toContain('EDIT is yours to change');
         }
+    });
+
+    // The header names the file the reader must save it as, and the commands
+    // then dial that exact name.
+    it('agrees with the file name the commands use', () => {
+        expect(routeOnlyCompose(base).startsWith('# route-only.yml')).toBe(true);
+        expect(nodeCompose(base).startsWith('# byon-node.yml')).toBe(true);
+        expect(composeFileName('route-only')).toBe('route-only.yml');
+        expect(composeFileName('node')).toBe('byon-node.yml');
     });
 });
 

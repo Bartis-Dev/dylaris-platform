@@ -10,7 +10,10 @@ import {
     listWarpKeys, revokeWarpKey, deleteWarpKey,
     type WarpRegionView, type WarpKeyView,
 } from '@/lib/api/types';
-import { routeOnlyCompose, nodeCompose, deployCli, nodeIdFromLabel, EXTERNAL_NODE_PORTS } from '@/lib/warpDeploy';
+import {
+    routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
+    DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS,
+} from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { coreOrigin } from '@/lib/api/core';
@@ -739,7 +742,7 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
         platform,
     };
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
-    const cli = deployCli(kind, platform);
+    const cli = deployCli(kind);
 
     const copy = (what: string, text: string) => {
         navigator.clipboard.writeText(text).then(() => {
@@ -832,7 +835,7 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
 
                     <div className="space-y-1">
                         <div className="flex items-center justify-between">
-                            <label className="mono-label">{kind === 'node' ? 'byon-node.yml' : 'warp.yml'}</label>
+                            <label className="font-mono text-sm font-medium text-(--base-09)">{composeFileName(kind)}</label>
                             {kind === 'route-only' && (
                                 <div className="flex items-center gap-1" role="group" aria-label="Target machine">
                                     {(['linux', 'windows'] as const).map((p) => (
@@ -857,12 +860,14 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
 
                     <div className="space-y-1">
                         <div className="flex items-center justify-between">
-                            <label className="mono-label">Then run</label>
+                            <label className="font-mono text-sm font-medium text-(--base-09)">Commands</label>
                             <button onClick={() => copy('cli', cli)} className="btn btn-secondary btn-sm">
                                 {copied === 'cli' ? <Check size={12} /> : <Copy size={12} />} Copy
                             </button>
                         </div>
+                        <p className="text-xs text-(--base-07)">{deployIntro(kind, platform)}</p>
                         <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre overflow-x-auto">{cli}</pre>
+                        <p className="text-xs text-(--base-06)">{DEPLOY_PORTAINER_NOTE}</p>
                     </div>
 
                     {kind === 'node' && (

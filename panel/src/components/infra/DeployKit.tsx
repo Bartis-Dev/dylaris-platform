@@ -3,7 +3,10 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon } from 'lucide-react';
-import { nodeCompose, routeOnlyCompose, deployCli } from '@/lib/warpDeploy';
+import {
+    nodeCompose, routeOnlyCompose, deployCli, deployIntro, composeFileName,
+    DEPLOY_PORTAINER_NOTE,
+} from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 
@@ -68,14 +71,22 @@ export function SecretField({ label, value, note }: { label: string; value: stri
     );
 }
 
-/** A copyable code block. Used for both the compose file and the CLI steps. */
-export function Snippet({ title, body }: { title: string; body: string }) {
+/**
+ * A copyable code block. Used for both the compose file and the CLI steps.
+ *
+ * The title is the FILE NAME the reader has to save the block as, so it is set
+ * like a heading rather than like a caption: it used to render in the same
+ * small grey as every other label on the page, which made the one word they
+ * have to type the hardest one to read.
+ */
+export function Snippet({ title, body, note }: { title: string; body: string; note?: string }) {
     return (
-        <div className="space-y-1">
+        <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
-                <span className="mono-label">{title}</span>
+                <span className="font-mono text-sm font-medium text-(--base-09)">{title}</span>
                 <CopyButton value={body} />
             </div>
+            {note && <p className="text-xs text-(--base-07)">{note}</p>}
             <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-03) font-mono text-[11px] leading-relaxed overflow-x-auto text-(--base-08)">
                 {body}
             </pre>
@@ -155,8 +166,9 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
                     containers, which needs host networking and NET_ADMIN.
                 </p>
             )}
-            <Snippet title={kind === 'node' ? 'byon-node.yml' : 'route-only.yml'} body={compose} />
-            <Snippet title="Commands" body={deployCli(kind, platform)} />
+            <Snippet title={composeFileName(kind)} body={compose} />
+            <Snippet title="Commands" body={deployCli(kind)} note={deployIntro(kind, platform)} />
+            <p className="text-xs text-(--base-06)">{DEPLOY_PORTAINER_NOTE}</p>
         </div>
     );
 }

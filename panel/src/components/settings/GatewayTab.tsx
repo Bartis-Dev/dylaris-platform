@@ -321,8 +321,14 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 
     const [settings, setSettings] = useState<GatewaySettings>({
         limits: {
-            global: -1, userDefault: -1, perServer: -1,
-            portMc: -1, portMcEnabled: true,
+            // null, not -1: the old sentinel for "unlimited" is not a value in
+            // the limits convention any more, and every cap is enforced as
+            // "count >= limit" - which a negative meets before the first route
+            // exists. Saving this screen before its load landed used to write
+            // that number into all four scopes and deny every route with
+            // "You have used all -1 addresses".
+            global: null, userDefault: null, perServer: null,
+            portMc: null, portMcEnabled: true,
         },
         hosterDomains: [],
         customDomainsEnabled: false,

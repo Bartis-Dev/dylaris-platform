@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.2
+
+### Features
+- Your deploy file now marks every setting as "keep" or "EDIT", and says how to
+  create and start it.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Creating an address could fail with "You have used all -1 addresses" even on a
+  plan that allows them. Fixed on our side; try again.
+
 ## 2026.08.29
 
 ### Features

@@ -1605,6 +1605,24 @@ func (s *PostgresStore) GetGatewayBandwidthHistory(since time.Time, component, h
 // GATEWAY ROUTE LIMITS (still managed by Core, not Hub)
 // ==========================================
 
+// normalizeRouteLimit reads a NEGATIVE stored cap as no cap.
+//
+// A negative is not a value in the limits convention (nil = no cap, 0 = none,
+// n = the cap). It is the OLD spelling of "unlimited", from before the column
+// was nullable, and rows written back then are still in this table.
+//
+// Left alone it is worse than merely stale. Every cap is tested as
+// "count >= limit", which a negative limit satisfies before the first route
+// exists - so the one value that used to mean UNLIMITED now blocks everything,
+// and says so in an operator's own words: "You have used all -1 addresses on
+// our domains". Read as nil it keeps exactly the meaning it was written with.
+func normalizeRouteLimit(l *models.GatewayRouteLimit) *models.GatewayRouteLimit {
+	if l != nil && l.MaxRoutes != nil && *l.MaxRoutes < 0 {
+		l.MaxRoutes = nil
+	}
+	return l
+}
+
 func (s *PostgresStore) GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error) {
 	var l models.GatewayRouteLimit
 	err := s.db.QueryRow(`SELECT id, scope, max_routes FROM gateway_route_limits WHERE scope = $1`, scope).
@@ -1612,13 +1630,20 @@ func (s *PostgresStore) GetGatewayRouteLimit(scope string) (*models.GatewayRoute
 	if err != nil {
 		return nil, err
 	}
-	return &l, nil
+	return normalizeRouteLimit(&l), nil
 }
 
 // SetGatewayRouteLimit writes one scope's cap. A nil max stores NULL, which is
 // "this scope is set, and it sets no cap" - distinct from deleting the row,
 // which hands the question to the next scope down.
+//
+// A negative max is written as NULL for the same reason it is READ as nil (see
+// normalizeRouteLimit): it is the old spelling of unlimited, and storing it
+// verbatim would keep recreating the row that has to be healed on every read.
 func (s *PostgresStore) SetGatewayRouteLimit(scope string, max *int) error {
+	if max != nil && *max < 0 {
+		max = nil
+	}
 	_, err := s.db.Exec(`
 		INSERT INTO gateway_route_limits (scope, max_routes) VALUES ($1, $2)
 		ON CONFLICT (scope) DO UPDATE SET max_routes = EXCLUDED.max_routes
@@ -1639,7 +1664,7 @@ func (s *PostgresStore) ListGatewayRouteLimits() ([]models.GatewayRouteLimit, er
 		if err := rows.Scan(&l.ID, &l.Scope, &l.MaxRoutes); err != nil {
 			continue
 		}
-		limits = append(limits, l)
+		limits = append(limits, *normalizeRouteLimit(&l))
 	}
 	return limits, nil
 }

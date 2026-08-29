@@ -105,15 +105,17 @@ function or(value: string | undefined, placeholder: string): string {
 function grpcTlsLines(fingerprint: string | undefined): string {
     const fp = (fingerprint ?? '').trim();
     if (fp === '') {
-        return `      # This platform runs the Core control channel in plaintext. The node
-      # defaults to TLS, so the opt-out has to be explicit here.
+        return `      # keep - this platform runs the control channel in plaintext, and the
+      # node defaults to TLS, so the opt-out has to be explicit.
       GRPC_TLS_ENABLED: "false"
+
 `;
     }
-    return `      # Core's control channel is TLS. The node pins this fingerprint
-      # instead of verifying a hostname, so it must match Core exactly.
+    return `      # keep - the control channel is TLS, and the node pins this fingerprint
+      # instead of a hostname. It must match ours exactly.
       GRPC_TLS_ENABLED: "true"
       GRPC_TLS_FINGERPRINT: "${fp}"
+
 `;
 }
 
@@ -154,19 +156,30 @@ export function nodeIdFromLabel(label: string | undefined): string | undefined {
 export function routeOnlyCompose(i: WarpDeployInput): string {
     const target = or(i.localTarget, defaultLocalTarget(i.platform));
     const header = i.platform === 'windows'
-        ? `# Docker Desktop. Host networking here joins the WSL2 VM, not Windows, so
-# your own server is reached at host.docker.internal rather than 127.0.0.1.`
-        : `# Linux. Kernel WireGuard needs host networking and NET_ADMIN.`;
-    return `# route-only.yml  ->  docker compose -f route-only.yml up -d
+        ? `# On Docker Desktop, host networking is the WSL2 VM's rather than Windows',
+# so your own server is reached at host.docker.internal.`
+        : `# Kernel WireGuard needs host networking and NET_ADMIN.`;
+    return `# route-only.yml
+#
+# warp opens an outbound tunnel to us; link hands your own server to the
+# gateway. Nothing is published and no port is opened.
 ${header}
+#
+# Lines marked "keep" are filled in for this link and must stay as they are.
+# Only a line marked EDIT is yours to change.
+
 services:
   warp:
     image: ${REG}/dylaris-gateway-warp:latest
     restart: unless-stopped
     environment:
+      # keep - this link's key. Shown once; we store only a hash of it.
       API_KEY: "${i.apiKey}"
+
+      # keep - our API, which is not the same host as the panel.
       ENROLL_URL: "${or(i.enrollUrl, '<core-url>')}"
-      # Overlay CIDR(s) to route through the tunnel - NOT your home LAN.
+
+      # keep - the network routed through the tunnel. NOT your home LAN.
       TUNNEL_SUBNETS: "${or(i.tunnelSubnets, '<overlay-cidr e.g. 10.20.0.0/16>')}"
     network_mode: host
     cap_add: [NET_ADMIN]
@@ -176,23 +189,27 @@ services:
     restart: unless-stopped
     depends_on: [warp]
     environment:
+      # keep - the same address as ENROLL_URL above.
       CORE_URL: "${or(i.enrollUrl, '<core-url>')}"
-      # The same warp key: the link exchanges it at boot for its own derived
-      # token, so no second secret travels with the kit.
+
+      # keep - the same key again. link trades it for its own token at boot, so
+      # no second secret has to travel with this file.
       LINK_BOOT_KEY: "${i.apiKey}"
-      # warp's local proxy. warp holds the real overlay address and refreshes
-      # it from Core, so this line never changes even if the platform moves.
+
+      # keep - warp's local proxy. warp holds the real address and refreshes it,
+      # so this line stays correct even when our platform moves.
       REDIS_ADDR: "127.0.0.1:${WARP_PROXY_REDIS_PORT}"
-      # Must stay false: the proxy is dialled at 127.0.0.1, so a TLS client
-      # would verify the certificate against loopback and fail. The whole path
-      # is already inside WireGuard.
+
+      # keep - the proxy is loopback, so there is no certificate to verify. The
+      # path is already inside WireGuard.
       REDIS_USE_TLS: "false"
-      # Your own Minecraft server. Host only, NO port - compared as an exact
-      # string, so "127.0.0.1:25565" never matches.
+
+      # EDIT if your server is not on this machine. Host only, NO port: it is
+      # compared as an exact string, so a "host:25565" here never matches.
       LINK_ALLOWED_TARGETS: "${target}"
       LOCAL_HOST: "${target}"
-      # Host networking, so the default ":25540" would put an unauthenticated
-      # status endpoint on your LAN. Nothing reads it in route-only mode.
+
+      # keep - loopback, so this unauthenticated status port stays off your LAN.
       LINK_PORT: "127.0.0.1:25540"
     network_mode: host
 `;
@@ -209,18 +226,30 @@ services:
  * separately.
  */
 export function nodeCompose(i: WarpDeployInput): string {
-    return `# byon-node.yml  ->  docker compose -f byon-node.yml up -d
-# Linux host or Docker Desktop. warp must be up before the node can reach Redis.
+    return `# byon-node.yml
+#
+# warp opens an outbound tunnel to us; the node runs your Minecraft servers on
+# this machine. It starts its own link sidecar - do not run link yourself.
+# Kernel WireGuard needs host networking and NET_ADMIN.
+#
+# Lines marked "keep" are filled in for this node and must stay as they are.
+# Only a line marked EDIT is yours to change.
+
 services:
   warp:
     image: ${REG}/dylaris-gateway-warp:latest
     restart: unless-stopped
     environment:
+      # keep - this node's key. Shown once; we store only a hash of it.
       API_KEY: "${i.apiKey}"
+
+      # keep - our API, which is not the same host as the panel.
       ENROLL_URL: "${or(i.enrollUrl, '<core-url>')}"
-      # Overlay CIDR(s) to route through the tunnel - NOT your home LAN.
+
+      # keep - the network routed through the tunnel. NOT your home LAN.
       TUNNEL_SUBNETS: "${or(i.tunnelSubnets, '<overlay-cidr e.g. 10.20.0.0/16>')}"
-      # Also serve the local proxy to containers: the link sidecar and every
+
+      # keep - serve the proxy to containers too. The link sidecar and every
       # Minecraft server sit on a Docker bridge and cannot reach loopback here.
       PROXY_BIND_DOCKER_BRIDGES: "true"
     network_mode: host
@@ -231,27 +260,29 @@ services:
     restart: unless-stopped
     depends_on: [warp]
     environment:
+      # keep - this machine is yours, not ours.
       NODE_EXTERNAL: "true"
+
+      # EDIT only for a different name. It ends up in keys and in the
+      # environment of every container, so letters, digits and dashes.
       NODE_ID: "${or(i.nodeId, '<stable-id-for-this-machine>')}"
-      # Single-use, first boot only.
+
+      # keep - single-use, first boot only.
       NODE_ENROLL_TOKEN: "${or(i.nodeEnrollToken, '<enroll-token-from-panel>')}"
-      # The Beam LAN fast-path listener on :25523. This node is host-networked,
-      # so that TLS listener sits on your LAN; set false to drop it and let beam
-      # transfers go through the relay instead. Written out rather than left to
-      # the code default because the ports list tells you to set it, and an env
-      # var that is not in this block cannot be set from a .env file at all.
+
+      # EDIT to "false" to drop the Beam LAN fast-path. It is a TLS listener on
+      # :25523, and this container is host-networked, so it sits on your LAN.
+      # Transfers then go through the relay instead.
       BEAM_LAN_FASTPATH: "true"
-${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR and no REDIS_ADDR: the node reaches both through
-      # warp's local proxy, and warp refreshes the real addresses from Core on
-      # its own. Nothing in this file has to change when the platform moves.
-      # NO CLUSTER_SECRET and no static Redis password on purpose: the node
-      # fetches a scoped Redis credential over gRPC once it has enrolled.
-      # It also starts its own link sidecar - do not run link yourself.
+
+${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR, no REDIS_ADDR and no CLUSTER_SECRET, on purpose: the
+      # node reaches us through warp's proxy, and it fetches a Redis credential
+      # scoped to itself once it has enrolled. Nothing here changes if we move.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /dev:/dev:ro
-      # Server files. Replace the named volume with a path of your own to keep
-      # them somewhere you can see:
+
+      # EDIT to keep the server files somewhere you can see:
       #   Linux           - /srv/dylaris:/app/dylaris_data
       #   Docker Desktop  - C:\\dylaris:/app/dylaris_data
       - byon_data:/app/dylaris_data
@@ -263,53 +294,55 @@ volumes:
 `;
 }
 
+/** The compose file's name on disk, and the name every command refers to. */
+export function composeFileName(kind: 'route-only' | 'node'): string {
+    return kind === 'route-only' ? 'route-only.yml' : 'byon-node.yml';
+}
+
 /**
- * The steps around the compose file: create it, start it, and check that the
- * tunnel actually carries traffic.
+ * The sentence above the command block: how the file gets onto the machine.
  *
- * Platform-specific because the first step is, and it is the step people get
- * stuck on. Saying "save the file" is enough for someone with a shell open on a
- * Linux box; on Windows the reader is in Explorer, and Notepad's default "Text
- * Documents" filter silently produces route-only.yml.txt, which Docker then
- * reports as a missing file.
+ * Prose rather than a numbered shell step, because creating a file is not a
+ * command - and on Windows it does not even happen in a terminal. It was the
+ * first line of the command block, where the one instruction nobody can copy
+ * sat among four they can.
+ *
+ * Windows gets the extra half sentence because Notepad's default "Text
+ * Documents" filter silently produces route-only.yml.txt, and Docker then
+ * reports a missing file rather than a misnamed one.
  */
-export function deployCli(kind: 'route-only' | 'node', platform: DeployPlatform = 'linux'): string {
-    const file = kind === 'route-only' ? 'route-only.yml' : 'byon-node.yml';
-    const save = platform === 'windows'
-        ? `# 1. Save the compose file above as ${file}. Docker Desktop must be
-#    running. In PowerShell:
-mkdir "$HOME\\dylaris" -Force; cd "$HOME\\dylaris"
-notepad ${file}
-#    Notepad offers to create it - say yes, paste, save, close. If you use the
-#    Save As dialog, set "Save as type" to All files, or Windows appends .txt
-#    and Docker reports the file as missing.`
-        : `# 1. Save the compose file above as ${file} on the machine:
-mkdir -p ~/dylaris && cd ~/dylaris
-nano ${file}    # paste, then Ctrl+O, Enter, Ctrl+X`;
+export function deployIntro(kind: 'route-only' | 'node', platform: DeployPlatform = 'linux'): string {
+    const file = composeFileName(kind);
+    return platform === 'windows'
+        ? `Save the file above as ${file}. In the Save-as dialog set "Save as type" to All files, or Windows appends .txt to it. Open PowerShell in that folder, then run:`
+        : `Save the file above as ${file}, open a terminal in that folder, then run:`;
+}
 
-    return `${save}
+/** For readers who do not want a terminal at all. */
+export const DEPLOY_PORTAINER_NOTE =
+    'Using Portainer instead? Stacks, Add stack, Web editor, paste the same file, Deploy. Nothing in it changes.';
 
-# 2. Start it. Pull first: the tunnel agent is what supplies the internal
+/** What to run once the file is on the machine, and what to check afterwards. */
+export function deployCli(kind: 'route-only' | 'node'): string {
+    const file = composeFileName(kind);
+    return `# 1. Start it. Pull first: the tunnel agent is what supplies the internal
 #    addresses, so a stale cached image would leave the rest of the stack
 #    with nothing to talk to.
 docker compose -f ${file} pull
 docker compose -f ${file} up -d
 
-# 3. Watch the tunnel come up (peer + handshake within ~15s):
+# 2. Watch the tunnel come up (peer + handshake within ~15s):
 docker compose -f ${file} logs -f warp
 
-# 4. Verify the overlay actually carries traffic, not just that wg0 exists:
+# 3. Verify the overlay actually carries traffic, not just that wg0 exists:
 docker compose -f ${file} exec warp wg show
 ${kind === 'node'
             ? `
-# 5. The node registers itself; it appears in the panel under Nodes within ~30s.
+# 4. The node registers itself; it appears in the panel under Nodes within ~30s.
 docker compose -f ${file} logs -f node`
             : `
-# 5. The link registers its tunnel; then create the route(s) in the panel.
-docker compose -f ${file} logs -f link`}
-
-# Portainer instead of a shell: Stacks -> Add stack -> Web editor, paste the
-# same file, Deploy. Nothing in it changes.`;
+# 4. The link registers its tunnel; then create the route(s) in the panel.
+docker compose -f ${file} logs -f link`}`;
 }
 
 /**

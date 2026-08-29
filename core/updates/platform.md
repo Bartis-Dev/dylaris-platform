@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.2
+
+### Features
+- Every setting in a deploy snippet is now marked "keep" or "EDIT", so it is
+  clear what must stay as it is. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A route limit stored as -1 refused every route instead of allowing any. It is
+  the old spelling of "unlimited", and caps are tested as "count is at the
+  limit", which a negative meets with nothing held. `core`
+- The Gateway settings screen no longer starts its four route limits at that
+  -1, which saving before the screen had loaded wrote to the database. `panel`
+
 ## 2026.08.29
 
 ### Features
