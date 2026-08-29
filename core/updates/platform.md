@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The Gateway settings screen no longer shows its own defaults when it cannot
+  load. Both panels used to lift the skeleton either way, so a failed request
+  rendered as "no limits, no domains, everything off" - and nothing typed in
+  could be saved, without saying so. `panel`
+
 ## 2026.08.29.7
 
 ### Features

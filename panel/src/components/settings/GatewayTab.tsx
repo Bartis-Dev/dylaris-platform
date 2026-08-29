@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     getGatewaySettings, saveGatewaySettings, GatewaySettings, HosterDomain, HosterValidation,
     getRoutingMode, saveRoutingMode, getRoutingMigrationStatus,
@@ -13,6 +13,8 @@ import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skelet
 import Spinner from '@/components/Spinner';
 import { LimitField } from '@/components/settings/LimitField';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
+import SettingsLoadError from '@/components/settings/SettingsLoadError';
+import { settingsLoadState } from '@/lib/settingsLoadState';
 import GuardedTabs from '@/components/settings/GuardedTabs';
 import { useTabParam } from '@/lib/useTabParam';
 import { toast } from '@/components/ui/Toast';
@@ -354,28 +356,48 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
     // Snapshot of last-saved gateway settings for dirty detection. The routing
     // mode has its own explicit "Apply Routing" flow and is tracked separately.
     const snapshotRef = useRef<GatewaySettings | null>(null);
+    const [loadFailed, setLoadFailed] = useState(false);
 
-    useEffect(() => {
-        Promise.all([getGatewaySettings(), getRoutingMode()]).then(([gwRes, rmRes]) => {
-            if (gwRes.success && gwRes.settings) {
-                const loaded: GatewaySettings = {
-                    ...gwRes.settings,
-                    hosterDomains: gwRes.settings.hosterDomains || [],
-                    customDomainsEnabled: !!gwRes.settings.customDomainsEnabled,
-                    cnameTarget: gwRes.settings.cnameTarget || '',
-                    blockedRoutePrefixes: gwRes.settings.blockedRoutePrefixes || [],
-                };
-                setSettings(loaded);
-                snapshotRef.current = loaded;
+    // A load that FAILS must not render as a configuration. The form falls back
+    // to its own defaults - no limits, no hoster domains, every toggle off -
+    // which is exactly what an unconfigured platform looks like, and dirty is
+    // measured against a snapshot a failed load never sets, so nothing typed in
+    // could be saved and nothing would say so. useSettingsForm expresses this
+    // through a blocked save bar; this screen is hand-rolled and has none.
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const [gwRes, rmRes] = await Promise.all([getGatewaySettings(), getRoutingMode()]);
+            if (!gwRes.success || !gwRes.settings) {
+                setLoadFailed(true);
+                return;
             }
+            const loaded: GatewaySettings = {
+                ...gwRes.settings,
+                hosterDomains: gwRes.settings.hosterDomains || [],
+                customDomainsEnabled: !!gwRes.settings.customDomainsEnabled,
+                cnameTarget: gwRes.settings.cnameTarget || '',
+                blockedRoutePrefixes: gwRes.settings.blockedRoutePrefixes || [],
+            };
+            setSettings(loaded);
+            snapshotRef.current = loaded;
+            setLoadFailed(false);
             if (rmRes.success) {
                 const m: RoutingMode = rmRes.mode || 'ip_port';
                 const f: FileAccessMode = rmRes.fileMode || 'sftp';
                 setRoutingMode(m); setOrigRoutingMode(m);
                 setFileMode(f); setOrigFileMode(f);
             }
-        }).finally(() => setLoading(false));
+        } catch {
+            // A rejected promise took the same path as a failed response before:
+            // straight past the setters and into finally, form rendered.
+            setLoadFailed(true);
+        } finally {
+            setLoading(false);
+        }
     }, []);
+
+    useEffect(() => { load(); }, [load]);
 
     // The migration poll only stops itself once the run reports finished, so
     // leaving this tab mid-migration otherwise left it running: a request every
@@ -536,7 +558,8 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
-    if (loading) return (
+    const loadState = settingsLoadState(loading, loadFailed);
+    if (loadState === 'loading') return (
         <div className="space-y-6">
             <SkeletonHeader />
             <SkeletonCard height="h-72" />
@@ -544,6 +567,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             <SkeletonCard height="h-96" />
         </div>
     );
+    if (loadState === 'failed') return <SettingsLoadError what="the gateway settings" onRetry={load} />;
 
     return (
         <SettingsPage
@@ -1059,17 +1083,31 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
 
     // Snapshot of last-saved config for dirty detection.
     const snapshotRef = useRef<XDPConfig | null>(null);
+    const [loadFailed, setLoadFailed] = useState(false);
 
-    useEffect(() => {
-        getXDPConfig().then(res => {
-            if (res.success && res.config) {
-                setCfg(res.config);
-                setPresent(!!res.present);
-                snapshotRef.current = res.config;
+    // Same reasoning as the gateway panel above: XDP_DEFAULTS rendered after a
+    // failed load is a screen that says XDP is off, which is a claim about the
+    // edges rather than about the request that did not come back.
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const res = await getXDPConfig();
+            if (!res.success || !res.config) {
+                setLoadFailed(true);
+                return;
             }
+            setCfg(res.config);
+            setPresent(!!res.present);
+            snapshotRef.current = res.config;
+            setLoadFailed(false);
+        } catch {
+            setLoadFailed(true);
+        } finally {
             setLoading(false);
-        });
+        }
     }, []);
+
+    useEffect(() => { load(); }, [load]);
 
     const set = <K extends keyof XDPConfig>(key: K, value: XDPConfig[K]) =>
         setCfg(s => ({ ...s, [key]: value }));
@@ -1099,7 +1137,8 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
 
     useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
-    if (loading) return (
+    const loadState = settingsLoadState(loading, loadFailed);
+    if (loadState === 'loading') return (
         <div className="space-y-6">
             <SkeletonHeader />
             <SkeletonCard height="h-80" />
@@ -1108,6 +1147,7 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
             <SkeletonCard height="h-40" />
         </div>
     );
+    if (loadState === 'failed') return <SettingsLoadError what="the XDP configuration" onRetry={load} />;
 
     return (
         <SettingsPage
