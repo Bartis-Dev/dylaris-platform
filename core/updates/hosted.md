@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.6
+
+### Features
+- Your protected addresses can be edited. Change the local address or port in
+  place instead of deleting the address and creating it again.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Changing an address you already have no longer counts against your address
+  allowance. Fixed on our side.
+
 ## 2026.08.29.5
 
 ### Features

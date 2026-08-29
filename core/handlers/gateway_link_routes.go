@@ -74,14 +74,35 @@ func (h *GatewayHandler) effectiveRouteLimit(userID string) *int64 {
 // out subdomains from a namespace that can run out, and a CNAME from their own
 // domain costs us nothing to allow. See services.DomainIsOurs.
 func (h *GatewayHandler) countOwnerRoutes(userID string) int {
+	n, _ := h.ownerRouteStats(userID, "")
+	return n
+}
+
+// ownerRouteStats counts the tenant's addresses on our domains and, in the same
+// pass, reports whether `domain` is one they ALREADY hold.
+//
+// The second answer is what separates creating an address from editing one. A
+// tenant changes a route's target by posting the same domain again - that is the
+// only overwrite CreateRouteViaLink permits - and the allowance check counts
+// what they already hold. Without this, a tenant sitting exactly on their cap
+// could not change the port of a route THEY OWN: the check would refuse them
+// over the very route it was counting, and the message would tell them to buy
+// more addresses to keep the number of addresses the same.
+func (h *GatewayHandler) ownerRouteStats(userID, domain string) (count int, ownsDomain bool) {
 	bases := h.ourBaseDomains()
-	n := 0
+	domain = strings.ToLower(strings.TrimSpace(domain))
 	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
-		if rt.OwnerID == userID && services.DomainIsOurs(rt.Domain, bases) {
-			n++
+		if rt.OwnerID != userID {
+			continue
+		}
+		if domain != "" && strings.EqualFold(rt.Domain, domain) {
+			ownsDomain = true
+		}
+		if services.DomainIsOurs(rt.Domain, bases) {
+			count++
 		}
 	}
-	return n
+	return count, ownsDomain
 }
 
 // ourBaseDomains is the hoster list the route cap is measured against.
@@ -175,7 +196,10 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	// The allowance itself can only be spent once we know whose domain this is: a
 	// route the tenant points at us from their OWN domain costs the allowance
 	// nothing, so refusing it on a full one would deny something we do not ration.
-	if services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(h.countOwnerRoutes(userID))) {
+	//
+	// An edit spends nothing either - see ownerRouteStats.
+	held, isEdit := h.ownerRouteStats(userID, finalDomain)
+	if !isEdit && services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(held)) {
 		http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead - that is unlimited.", *limit), http.StatusForbidden)
 		return
 	}
@@ -216,10 +240,34 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 // ListLinkRoutes GET /api/gateway/link-routes — the caller's route-only entries.
 func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
-	out := make([]services.GatewayRoute, 0)
+
+	// Which LINK each route runs through, resolved here because only this side
+	// can. A route stores the link's derived tunnel TOKEN, which is a secret and
+	// must not be listed; the panel knows kits by their link id. Without the
+	// translation the edit form cannot show which link a route uses, and a save
+	// would quietly move it to whichever link happened to be selected.
+	linkIDByToken := map[string]string{}
+	if kits, err := h.state.Store.ListWarpAPIKeysByOwner(userID); err == nil {
+		for _, k := range kits {
+			if k.NodeID != "" {
+				linkIDByToken[h.state.Gateway.LinkToken(k.NodeID)] = k.NodeID
+			}
+		}
+	}
+
+	type linkRoute struct {
+		services.GatewayRoute
+		// Shadows the embedded tunnel_id out of the response. That token is the
+		// link's CREDENTIAL at the edge - presenting it is how a link claims a
+		// tunnel - and it was being handed to the browser in a listing that has
+		// never had a reader for it. LinkID is what the UI actually needs.
+		TunnelID string `json:"-"`
+		LinkID   string `json:"link_id,omitempty"`
+	}
+	out := make([]linkRoute, 0)
 	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
 		if rt.CoreOwned && rt.OwnerID == userID {
-			out = append(out, rt)
+			out = append(out, linkRoute{GatewayRoute: rt, LinkID: linkIDByToken[rt.TunnelID]})
 		}
 	}
 	json.NewEncoder(w).Encode(out)

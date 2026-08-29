@@ -1141,7 +1141,13 @@ export interface LinkRoute {
     domain: string;
     target_ip: string;
     target_port: number;
-    tunnel_id?: string;
+    /**
+     * Which link kit this route runs through. Resolved by Core, which is the
+     * only side that can: the route itself stores the link's derived tunnel
+     * TOKEN - a credential, and no longer part of this response - while the
+     * panel knows kits by their link id.
+     */
+    link_id?: string;
     core_owned?: boolean;
     owner_id?: string;
 }

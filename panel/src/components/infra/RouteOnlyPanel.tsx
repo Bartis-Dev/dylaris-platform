@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash2, Loader2, Server, Link2, Copy, Check, ShieldCheck } from 'lucide-react';
+import { Plus, Trash2, Loader2, Server, Link2, Copy, Check, ShieldCheck, Pencil, X } from 'lucide-react';
 import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
 import {
     CreateRouteRequest, LinkRoute, LinkKit, MintedLinkKit,
@@ -11,6 +11,7 @@ import {
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { SkeletonCard } from '@/components/Skeleton';
 import { DeployKit, NotIncluded } from '@/components/infra/DeployKit';
+import { routeSubmitRequest } from '@/lib/routeSubmit';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 
 // Named RouteOnlyPanel, not RoutesPanel: views/infrastructure/RoutesPanel is
@@ -62,6 +63,14 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     const [creating, setCreating] = useState(false);
     const [error, setError] = useState('');
     const [toast, setToast] = useState('');
+
+    // The domain of the route being edited, or null while creating a new one.
+    //
+    // The domain itself is NOT editable in this mode, and that is the point.
+    // Saving posts the same domain again, which is the only overwrite Core
+    // permits for a route you own; posting a DIFFERENT one would leave the old
+    // route in place and quietly spend a second address.
+    const [editing, setEditing] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         try {
@@ -126,22 +135,49 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
         setError('');
         if (!linkId) { setError('Create a link first, then select it'); return; }
         if (!targetHost.trim()) { setError('Enter the local address of your server'); return; }
-        if (availability === 'taken') { setError('That domain is already taken'); return; }
+        // "Taken" is the right refusal for a new address and the wrong one for
+        // an edit: the domain being edited is taken BY THE PERSON EDITING IT.
+        if (!editing && availability === 'taken') { setError('That domain is already taken'); return; }
         setCreating(true);
         try {
-            const res = await createLinkRoute({ ...domainReq, linkId, targetPort, targetHost: targetHost.trim() });
-            if (!res.success) throw new Error((res as { message?: string }).message || 'Failed to create route');
+            const req = routeSubmitRequest(editing, domainReq, targetPort);
+            const res = await createLinkRoute({ ...req, linkId, targetHost: targetHost.trim() });
+            if (!res.success) throw new Error((res as { message?: string }).message || `Failed to ${editing ? 'save' : 'create'} route`);
             // On a custom domain the route is accepted but provisional: a four-hour
             // clock is now running and missing it deletes the route. Core says so in
             // ownershipNotice, and a fixed "Route created" would hide it.
             const notice = (res as { ownershipNotice?: string }).ownershipNotice;
-            flashToast(notice ? `Route created. ${notice}` : 'Route created');
+            const what = editing ? 'Route updated' : 'Route created';
+            flashToast(notice ? `${what}. ${notice}` : what);
+            if (editing) cancelEdit();
             await load();
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to create route');
+            setError(e instanceof Error ? e.message : `Failed to ${editing ? 'save' : 'create'} route`);
         } finally {
             setCreating(false);
         }
+    };
+
+    const startEdit = (rt: LinkRoute) => {
+        setEditing(rt.domain);
+        setError('');
+        setDomainReq({ domain: rt.domain, targetPort: rt.target_port });
+        setTargetHost(rt.target_ip);
+        setTargetPort(rt.target_port);
+        // Only when Core could name it. Falling back to the currently selected
+        // link would move the route to a different one on save without anyone
+        // asking for that.
+        if (rt.link_id) setLinkId(rt.link_id);
+        setAvailability('idle');
+    };
+
+    const cancelEdit = () => {
+        setEditing(null);
+        setError('');
+        setDomainReq({ targetPort: 25565 });
+        setTargetHost('127.0.0.1');
+        setTargetPort(25565);
+        setAvailability('idle');
     };
 
     const removeRoute = async (domain: string) => {
@@ -248,9 +284,16 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                 )}
             </div>
 
-            {/* Create route */}
-            <div className="card p-5 space-y-4">
-                <h2 className="font-medium text-(--base-09)">New route</h2>
+            {/* Create or edit route */}
+            <div id="route-form" className="card p-5 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                    <h2 className="font-medium text-(--base-09)">{editing ? 'Edit route' : 'New route'}</h2>
+                    {editing && (
+                        <button onClick={cancelEdit} className="btn btn-secondary btn-sm inline-flex items-center gap-1.5">
+                            <X size={13} /> Cancel
+                        </button>
+                    )}
+                </div>
 
                 <div className="flex flex-col gap-1.5">
                     <label className="input-label">Link</label>
@@ -267,7 +310,14 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
 
                 <div className="flex flex-col gap-1.5">
                     <label className="input-label">Your domain</label>
-                    <RouteDomainPicker value={domainReq} onChange={setDomainReq} onAvailabilityChange={setAvailability} />
+                    {editing ? (
+                        <>
+                            <div className="input-field text-sm font-mono text-(--base-08) opacity-70 cursor-not-allowed select-all">{editing}</div>
+                            <p className="text-xs text-(--base-06)">The address stays as it is. To use a different one, cancel and create a second route.</p>
+                        </>
+                    ) : (
+                        <RouteDomainPicker value={domainReq} onChange={setDomainReq} onAvailabilityChange={setAvailability} />
+                    )}
                 </div>
 
                 <div className="grid grid-cols-[1fr_auto] gap-3 max-w-md">
@@ -298,10 +348,15 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
 
                 {error && <p className="text-sm text-(--error-light)">{error}</p>}
 
-                <button onClick={submitRoute} disabled={creating || kits.length === 0 || suspended} className="btn btn-primary inline-flex items-center gap-2 w-fit disabled:opacity-60">
-                    {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                    {creating ? 'Creating…' : 'Create route'}
-                </button>
+                <div className="flex items-center gap-2">
+                    <button onClick={submitRoute} disabled={creating || kits.length === 0 || suspended} className="btn btn-primary inline-flex items-center gap-2 w-fit disabled:opacity-60">
+                        {creating ? <Loader2 size={16} className="animate-spin" /> : editing ? <Check size={16} /> : <Plus size={16} />}
+                        {creating ? (editing ? 'Saving…' : 'Creating…') : editing ? 'Save changes' : 'Create route'}
+                    </button>
+                    {editing && (
+                        <button onClick={cancelEdit} disabled={creating} className="btn btn-secondary w-fit disabled:opacity-60">Cancel</button>
+                    )}
+                </div>
             </div>
 
             {/* List routes */}
@@ -313,14 +368,36 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                     <div className="card p-5 text-sm text-(--base-06)">No routes yet.</div>
                 ) : (
                     routes.map(rt => (
-                        <div key={rt.domain} className="card px-4 py-3 flex items-center justify-between gap-3">
+                        <div
+                            key={rt.domain}
+                            className={`card px-4 py-3 flex items-center justify-between gap-3 ${editing === rt.domain ? 'border-(--accent)' : ''}`}
+                        >
                             <div className="min-w-0">
                                 <div className="font-mono text-sm text-(--base-09) truncate">{rt.domain}</div>
                                 <div className="text-xs text-(--base-06) font-mono">→ {rt.target_ip}:{rt.target_port}</div>
                             </div>
-                            <button onClick={() => removeRoute(rt.domain)} title="Delete" className="p-2 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0">
-                                <Trash2 size={16} />
-                            </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                                {editing === rt.domain ? (
+                                    <span className="badge badge-accent">Editing</span>
+                                ) : (
+                                    <button
+                                        onClick={() => startEdit(rt)}
+                                        title="Edit"
+                                        aria-label={`Edit ${rt.domain}`}
+                                        className="p-2 text-(--base-06) hover:text-(--base-09) transition-colors"
+                                    >
+                                        <Pencil size={16} />
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => removeRoute(rt.domain)}
+                                    title="Delete"
+                                    aria-label={`Delete ${rt.domain}`}
+                                    className="p-2 text-(--base-06) hover:text-(--error-light) transition-colors"
+                                >
+                                    <Trash2 size={16} />
+                                </button>
+                            </div>
                         </div>
                     ))
                 )}

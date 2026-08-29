@@ -496,3 +496,89 @@ func TestCreateLinkRoute_TenantCannotClaimAReservedLabel(t *testing.T) {
 		t.Errorf("body = %q, want it to say the label is reserved", rec.Body.String())
 	}
 }
+
+// --- Editing an existing route ---
+
+// The allowance counts addresses HELD, and an edit is posting the same domain
+// again - the one overwrite CreateRouteViaLink permits. Without separating the
+// two, a tenant sitting exactly on their cap could not change the port of a
+// route they own: the check refuses them over the very route it is counting,
+// and tells them to buy another address to keep the same number of addresses.
+func TestCreateLinkRoute_EditingAnOwnRouteDoesNotSpendTheAllowance(t *testing.T) {
+	fs := baseLinkRouteStore()
+	one := 1
+	fs.routeLimits = map[string]*models.GatewayRouteLimit{
+		"user:" + linkRouteUserID: {Scope: "user:" + linkRouteUserID, MaxRoutes: &one},
+	}
+	rdb := newLinkRouteRedis(t)
+	seedLinkRoute(t, rdb, "survival.example.com", services.GatewayRoute{
+		OwnerID: linkRouteUserID, TargetIP: "192.168.1.50", TargetPort: 25565,
+	})
+	gw := &linkRouteFakeGateway{}
+	h := newLinkRouteHandler(fs, gw, rdb)
+
+	body := baseLinkRouteBody()
+	body["targetPort"] = 25570
+	rec := httptest.NewRecorder()
+	h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, body))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if len(gw.createRouteViaLinkCalls) != 1 {
+		t.Fatalf("createRouteViaLink calls = %d, want 1", len(gw.createRouteViaLinkCalls))
+	}
+	if got := gw.createRouteViaLinkCalls[0].targetPort; got != 25570 {
+		t.Errorf("port = %d, want the edited 25570", got)
+	}
+}
+
+// The cap still has to hold for a genuinely NEW address, or the exemption would
+// be a way around it.
+func TestCreateLinkRoute_NewDomainStillHitsTheCap(t *testing.T) {
+	fs := baseLinkRouteStore()
+	one := 1
+	fs.routeLimits = map[string]*models.GatewayRouteLimit{
+		"user:" + linkRouteUserID: {Scope: "user:" + linkRouteUserID, MaxRoutes: &one},
+	}
+	rdb := newLinkRouteRedis(t)
+	seedLinkRoute(t, rdb, "survival.example.com", services.GatewayRoute{
+		OwnerID: linkRouteUserID, TargetIP: "192.168.1.50", TargetPort: 25565,
+	})
+	h := newLinkRouteHandler(fs, &linkRouteFakeGateway{}, rdb)
+
+	body := baseLinkRouteBody()
+	body["domain"] = "creative.example.com"
+	rec := httptest.NewRecorder()
+	h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, body))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a second address on a cap of one", rec.Code)
+	}
+}
+
+// Someone else's domain is not an edit. The exemption keys on the OWNER, so a
+// domain another tenant holds must still be refused rather than counting as
+// "already mine".
+func TestCreateLinkRoute_AnotherTenantsDomainIsNotAnEdit(t *testing.T) {
+	fs := baseLinkRouteStore()
+	one := 1
+	fs.routeLimits = map[string]*models.GatewayRouteLimit{
+		"user:" + linkRouteUserID: {Scope: "user:" + linkRouteUserID, MaxRoutes: &one},
+	}
+	rdb := newLinkRouteRedis(t)
+	seedLinkRoute(t, rdb, "mine.example.com", services.GatewayRoute{
+		OwnerID: linkRouteUserID, TargetIP: "192.168.1.50", TargetPort: 25565,
+	})
+	seedLinkRoute(t, rdb, "survival.example.com", services.GatewayRoute{
+		OwnerID: "someone-else", TargetIP: "10.0.0.9", TargetPort: 25565,
+	})
+	h := newLinkRouteHandler(fs, &linkRouteFakeGateway{}, rdb)
+
+	rec := httptest.NewRecorder()
+	h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, baseLinkRouteBody()))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}

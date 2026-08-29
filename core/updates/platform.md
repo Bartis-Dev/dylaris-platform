@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.6
+
+### Features
+- Protected addresses can be edited. Change a route's link, local address or
+  port in place instead of deleting it and creating it again. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- The route listing no longer returns each link's tunnel token. That token is
+  what a link presents to claim its tunnel at the edge, and nothing read it.
+  `core`
+
+### Fixes
+- Editing a route no longer counts as a new address, so an account at its
+  address limit can still change a route it already owns. `core`
+
 ## 2026.08.29.5
 
 ### Features
