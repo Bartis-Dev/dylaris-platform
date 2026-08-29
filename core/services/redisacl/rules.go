@@ -157,8 +157,42 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 // dylaris:server:<u>:input is a stdin bridge into a neighbouring tenant's JVM.
 func BuildShipperACLRules(password, serverUUID string) []interface{} {
 	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
-	rules = append(rules, "~dylaris:server:"+serverUUID+":*")
-	rules = append(rules, "&dylaris:server:"+serverUUID+":stats:live")
+	// The six keys the shipper touches, enumerated rather than wildcarded.
+	//
+	// This credential lives in the MC container's ENVIRONMENT, and that container
+	// runs the tenant's own plugins - so everything granted here is granted to
+	// code the tenant writes. dylaris:server:<u>:* handed that code write access
+	// to the whole namespace, and the namespace holds the keys that ENFORCE
+	// things against it:
+	//
+	//   disk_full     the entire disk-quota guard. The node sets it BEFORE
+	//                 gracefulStop, deliberately, because the reconciler ticks
+	//                 during those seconds - so the container is still alive and
+	//                 could DEL it. desired_state stays "online" on purpose, so
+	//                 the marker is the only thing holding the server down, and
+	//                 deleting it in a loop lifts the quota entirely.
+	//   desired_state the reconciler's start/stop authority. Core re-publishes it
+	//                 from the DB every 5s, so forging it is a race rather than a
+	//                 bypass - but it is the same grant.
+	//   node_busy, live_status, status, reconcile_failed, edge_motd_*, stats:*,
+	//                 migration*, proxy_ip:* - none of which the shipper writes.
+	//
+	// Redis ACL cannot exclude a key from a wildcard (same constraint as the warp
+	// principal in the gateway repo), so the only way to withhold those is to name
+	// what IS needed. log-shipper is one file; TestShipperACLGrantsEveryKeyItUses
+	// keeps this list and that file in step.
+	rules = append(rules,
+		"~dylaris:server:"+serverUUID+":logs",
+		"~dylaris:server:"+serverUUID+":logs:*",
+		"~dylaris:server:"+serverUUID+":java-heap",
+		"~dylaris:server:"+serverUUID+":input",
+		"~dylaris:server:"+serverUUID+":log_filter_rcon",
+		"~dylaris:server:"+serverUUID+":stop-requested",
+	)
+	// The stats:live channel used to be granted here. The shipper contains no
+	// Publish and no Subscribe at all - the node's stats collector and Core are
+	// the two ends of that channel - so it was a capability handed to tenant code
+	// for nothing.
 	for _, c := range commandCats {
 		rules = append(rules, c)
 	}

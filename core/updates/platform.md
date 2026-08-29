@@ -19,6 +19,11 @@ Newest release first. The format is fixed and checked in CI - see the
   they do, route-only and BYON links have no path at all. `core`
 
 ### Security
+- The Redis credential inside a Minecraft container is now limited to the six
+  keys the log shipper actually uses. It held the whole `dylaris:server:<uuid>:`
+  namespace, which includes the marker that enforces the disk quota - so a
+  plugin could delete it and the server was started straight back up. Applied on
+  the next node connect; containers keep their credential. `core`
 - A tenant can no longer route their players through our overlay. Everything a
   customer machine could claim about itself is environment on that machine, so
   the warp allowlist is now what decides it. `core`

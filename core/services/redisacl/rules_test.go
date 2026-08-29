@@ -179,8 +179,28 @@ func TestSFTPAuthKeyShape(t *testing.T) {
 
 func TestBuildShipperACLRulesIsNarrow(t *testing.T) {
 	r := joinRules(BuildShipperACLRules("pw", "uuid-a"))
-	if !strings.Contains(r, "~dylaris:server:uuid-a:*") {
-		t.Error("shipper must allow its server keys")
+	for _, needed := range []string{
+		"~dylaris:server:uuid-a:logs",
+		"~dylaris:server:uuid-a:logs:*",
+		"~dylaris:server:uuid-a:java-heap",
+		"~dylaris:server:uuid-a:input",
+		"~dylaris:server:uuid-a:log_filter_rcon",
+		"~dylaris:server:uuid-a:stop-requested",
+	} {
+		if !strings.Contains(r, needed) {
+			t.Errorf("shipper must be granted %q: %s", needed, r)
+		}
+	}
+	// The whole point of enumerating them. This credential is in the tenant's
+	// own container, and the namespace holds the keys that enforce limits
+	// AGAINST that tenant - disk_full is the entire disk-quota guard.
+	if strings.Contains(r, "~dylaris:server:uuid-a:*") {
+		t.Errorf("shipper is back on a namespace wildcard, which grants tenant code disk_full and desired_state: %s", r)
+	}
+	// It contains no Publish and no Subscribe, so a channel is a capability for
+	// nothing.
+	if strings.Contains(r, "&") {
+		t.Errorf("shipper granted a pub/sub channel it never uses: %s", r)
 	}
 	// ONE server, never the node's whole set. dylaris:server:<u>:input is a stdin
 	// bridge into the JVM, so a second server's keys here would let one tenant's
