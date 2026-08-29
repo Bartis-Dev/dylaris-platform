@@ -10,7 +10,7 @@ import {
 } from '@/lib/api';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { SkeletonCard } from '@/components/Skeleton';
-import { DeployKit, NotIncluded } from '@/components/infra/DeployKit';
+import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded } from '@/components/infra/DeployKit';
 import { routeSubmitRequest } from '@/lib/routeSubmit';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 
@@ -218,7 +218,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                 came to run, they need it again on every rebuild, and while it
                 was behind "Show the deploy steps again" the commonest question
                 was where the compose file had gone. */}
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] items-start">
+            <div className={DEPLOY_GRID}>
             <div className="space-y-6 min-w-0">
 
             {/* Links */}
@@ -401,7 +401,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
 
             {/* Sticky, because the reader works through the compose file while
                 scrolling the form and the route list beside it. */}
-            <aside className="space-y-3 min-w-0 lg:sticky lg:top-6">
+            <aside className={`space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
                 {minted && <MintReveal kit={minted} onCopy={flashToast} onClose={() => setMinted(null)} />}
                 {!minted && (
                     <p className="text-xs text-(--base-06)">

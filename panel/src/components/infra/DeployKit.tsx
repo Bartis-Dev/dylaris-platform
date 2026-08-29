@@ -14,6 +14,28 @@ import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 // their own copies, which is how route-only ended up with a mint flow on each
 // of them.
 
+// The two-column shape both halves use: what you configure on the left, the
+// compose file you run on the right. Both columns have a floor, and the grid
+// stacks the moment the container cannot hold both floors plus the gap - the
+// breakpoint IS 32 + 34 + 1.5, so the two numbers can only disagree if someone
+// changes one and not the other.
+//
+// 42rem on the right is measured, not picked: the widest line the snippet has
+// to show is a 64-hex key at 87 characters, and at the pre's 11px mono that is
+// ~575px of text, which 42rem clears once the card's p-4 and the pre's p-3 are
+// taken off. Below that the pre scrolls horizontally rather than wrapping a
+// value someone is about to copy.
+//
+// A CONTAINER query, not a viewport breakpoint: this page renders inside a flex
+// area, so the viewport width does not describe the space the grid actually has.
+// Requires an ancestor carrying `@container` - the page shell does.
+export const DEPLOY_GRID =
+    'grid gap-6 items-start @min-[67.5rem]:grid-cols-[minmax(32rem,1fr)_minmax(34rem,42rem)]';
+
+// Sticky only while the columns are side by side. Stacked, the compose file is
+// the last thing on the page and pinning it does nothing but shorten it.
+export const DEPLOY_ASIDE_STICKY = '@min-[67.5rem]:sticky @min-[67.5rem]:top-6';
+
 export function CopyButton({ value, label, className }: { value: string; label?: string; className?: string }) {
     const [copied, setCopied] = useState(false);
     return (

@@ -23,7 +23,7 @@ import { isLocationName } from '@/lib/validation';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
 import { resolveInfraTab, showInfraTabBar, infraAvailability, type InfraTab } from '@/lib/infraTab';
-import { DeployKit, NotIncluded, SecretField, usageLabel } from '@/components/infra/DeployKit';
+import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded, SecretField, usageLabel } from '@/components/infra/DeployKit';
 import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
 import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
 import ExternalNodesPanel from '@/components/infra/ExternalNodesPanel';
@@ -326,7 +326,11 @@ function MyNodesInner() {
     ].filter(t => have[t.id as keyof typeof have]) as { id: InfraTab; label: string; icon: typeof HardDrive }[];
 
     return (
-        <div className="p-6 max-w-6xl space-y-6 overflow-y-auto">
+        /* The SCROLL container is full width and unpadded, so the scrollbar sits
+           at the outer edge of the content area. With max-w on the scroller it
+           rode the inside of the centred box instead, floating mid-screen. */
+        <div className="flex-1 min-w-0 overflow-y-auto">
+        <div className="@container p-6 max-w-[92rem] space-y-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                     <h1 className="text-lg font-display font-bold text-(--base-09) mb-1">My infrastructure</h1>
@@ -407,7 +411,7 @@ function MyNodesInner() {
                not a detail of adding a machine: it is the thing the reader came
                to run, and they need it again on every rebuild. The keys join it
                there for the one moment they exist. */
-            <div className={byonAllowed && entitlementKnown ? 'grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] items-start' : ''}>
+            <div className={byonAllowed && entitlementKnown ? DEPLOY_GRID : ''}>
             <section className="card p-5 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -555,7 +559,7 @@ function MyNodesInner() {
                 the only moment they exist anywhere the reader can see them - the
                 copy has to say so before they close it. */}
             {byonAllowed && entitlementKnown && !revealedNode && (
-                <aside className="space-y-3 min-w-0 lg:sticky lg:top-6">
+                <aside className={`space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
                     <p className="text-xs text-(--base-06)">
                         {nodeKeys.length > 0 || tokens.length > 0
                             ? <>The keys cannot be shown again — only their hashes are stored. Paste the ones you saved where the file says <code className="font-mono">&lt;...&gt;</code>, or revoke the key and create a new one.</>
@@ -565,7 +569,7 @@ function MyNodesInner() {
                 </aside>
             )}
             {revealedNode && (
-                <aside className="card p-5 space-y-3 border-(--accent-border) bg-(--accent-ghost) lg:sticky lg:top-6">
+                <aside className={`card p-5 space-y-3 border-(--accent-border) bg-(--accent-ghost) ${DEPLOY_ASIDE_STICKY}`}>
                     <div className="text-sm font-medium text-(--base-09)">
                         {revealedNode.label} — two keys, shown once.
                     </div>
@@ -597,6 +601,7 @@ function MyNodesInner() {
             </div>
             )}
         </div>
+        </div>
     );
 }
 
@@ -607,7 +612,7 @@ function MyNodesInner() {
 export default function MyNodesPage() {
     return (
         <Suspense fallback={
-            <div className="p-6 max-w-6xl space-y-6">
+            <div className="p-6 max-w-[92rem] space-y-6">
                 <SkeletonCard height="h-10" />
                 <SkeletonCard height="h-64" />
             </div>
