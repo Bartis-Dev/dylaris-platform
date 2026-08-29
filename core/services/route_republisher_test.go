@@ -171,6 +171,49 @@ func TestRepublish_NonLeaderDoesNothing(t *testing.T) {
 	}
 }
 
+// pendingLeader is the state every replica is in for the first moments of its
+// life: the election goroutine has not answered yet. Flipping it is what a
+// successful acquire does.
+type pendingLeader struct{ leader bool }
+
+func (p *pendingLeader) IsLeader() bool { return p.leader }
+
+// Adoption is one-shot, and at startup the election has not run yet - so asking
+// once, synchronously, skipped it forever on every replica. It has to keep
+// asking until it is the leader, and then run exactly once.
+func TestAdoptOnce_WaitsForLeadershipInsteadOfSkipping(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	seedGatewayRoute(t, rdb, "old.example.com", GatewayRoute{
+		CoreOwned: true, OwnerID: "owner-1", TunnelID: "tunnel-1", TargetIP: "192.168.1.50", TargetPort: 25566,
+	})
+	fs := &republishFakeStore{}
+	rp := NewRouteRepublisher(fs, rdb)
+	el := &pendingLeader{}
+	rp.SetLeader(el)
+
+	// Boot: the election has not answered. Nothing is recorded, and the pass is
+	// NOT considered done.
+	rp.adoptOnce(context.Background())
+	if len(fs.rows) != 0 {
+		t.Fatalf("a non-leader adopted %d row(s)", len(fs.rows))
+	}
+
+	// The acquire lands. The next pass is the one that records.
+	el.leader = true
+	rp.adoptOnce(context.Background())
+	if len(fs.rows) != 1 || fs.rows[0].Domain != "old.example.com" {
+		t.Fatalf("adoption did not run once leadership arrived: %+v", fs.rows)
+	}
+
+	// And only once: a later pass must not re-read Redis as the authority.
+	rdb.Del(context.Background(), "route:old.example.com")
+	fs.rows = nil
+	rp.adoptOnce(context.Background())
+	if len(fs.rows) != 0 {
+		t.Fatalf("adoption ran a second time: %+v", fs.rows)
+	}
+}
+
 // Every route-only address that existed before this table did has to be
 // recorded, or the repair loop protects only the ones created afterwards and an
 // operator cannot tell which of theirs are covered.

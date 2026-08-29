@@ -45,6 +45,11 @@ type RouteRepublisher struct {
 	store  routeRepublishStore
 	redis  *redis.Client
 	leader leader.Election
+
+	// adopted is written and read only by the loop goroutine, so it needs no
+	// lock. It exists because adoption has to WAIT for leadership rather than
+	// be skipped when it is not there yet - see adoptOnce.
+	adopted bool
 }
 
 func NewRouteRepublisher(s routeRepublishStore, r *redis.Client) *RouteRepublisher {
@@ -55,20 +60,41 @@ func (s *RouteRepublisher) SetLeader(l leader.Election) { s.leader = l }
 
 func (s *RouteRepublisher) Start(ctx context.Context) {
 	log.Printf("Route republisher started (interval: %s)", republishInterval)
-	s.adoptExisting(ctx)
-	s.RunOnce(ctx)
 	ticker := time.NewTicker(republishInterval)
 	go func() {
 		defer ticker.Stop()
+		s.adoptOnce(ctx)
+		s.RunOnce(ctx)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				s.adoptOnce(ctx)
 				s.RunOnce(ctx)
 			}
 		}
 	}()
+}
+
+// adoptOnce runs the boot-time adoption pass on the leader, and keeps trying
+// until it has run.
+//
+// The election starts in its own goroutine and its flag is false until a Redis
+// round trip sets it, so a synchronous adopt at startup asks "am I the leader"
+// before anybody is - and adoption is one-shot, so losing that race skipped it
+// for the life of the process on EVERY replica. The one thing that recorded the
+// addresses predating the table then silently did nothing, which is the failure
+// it exists to prevent, inside the feature meant to prevent it.
+func (s *RouteRepublisher) adoptOnce(ctx context.Context) {
+	if s.adopted {
+		return
+	}
+	if s.leader != nil && !s.leader.IsLeader() {
+		return
+	}
+	s.adoptExisting(ctx)
+	s.adopted = true
 }
 
 // RunOnce reconciles every stored route once. Exported for tests and for a
