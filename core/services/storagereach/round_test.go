@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -220,13 +221,23 @@ func TestRunRound_OnProgressStaysZeroWhenAPeerNeverAppears(t *testing.T) {
 // the failure surfaced as a healthy 2/2 round reported as 0/2 with core-a
 // not-shared and core-b no-response.
 //
-// The report delay is 500ms against PollEvery's 20ms, a 25x gap. What the
-// delay has to buy is one NON-final poll: RunRound fires OnProgress on its
-// first poll unconditionally and again on the final one, so a round already
+// What the delay has to buy is one NON-final poll: RunRound fires OnProgress on
+// its first poll unconditionally and again on the final one, so a round already
 // complete at the first poll yields a single call and the len(seen) >= 2
-// assertion below fails. 150ms held on an idle box and is the same kind of
-// margin that did not survive instrumentation. RunRound still returns as soon
-// as both reports are in, so the cost is the 500ms delay, not the 10s cap.
+// assertion below fails.
+//
+// It is a BARRIER and not a duration, because a duration cannot express it. The
+// coordinator's first poll comes after its own inline Probe, and that probe
+// takes as long as a loaded runner makes it take - so any fixed sleep is a bet
+// that the probe finishes first, and 500ms lost that bet in CI with seen=[2].
+// Holding core-b's report until OnProgress has fired once states the actual
+// requirement instead of approximating it, and cannot lose.
+//
+// It cannot deadlock: the probe reaches its verdict from the peers' on-disk
+// beacons, which core-b still writes at full speed - only the Redis SET that
+// makes core-b's result visible to the COORDINATOR waits here. The timeout is
+// a backstop for a future change that breaks that, so it fails as an assertion
+// rather than as a hung test.
 func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -238,10 +249,14 @@ func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing
 	ctx := context.Background()
 
 	const delayedReportKeySuffix = ":report:core-b"
-	const reportDelay = 500 * time.Millisecond
+	polledOnce := make(chan struct{})
+	var polledOnceGuard sync.Once
 	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
 		if cmd == "SET" && len(args) > 0 && strings.HasSuffix(args[0], delayedReportKeySuffix) {
-			time.Sleep(reportDelay)
+			select {
+			case <-polledOnce:
+			case <-time.After(30 * time.Second):
+			}
 		}
 		return false
 	})
@@ -267,7 +282,10 @@ func TestRunRound_OnProgressSequenceIsNonDecreasingAndEndsAtFullCount(t *testing
 
 	var seen []int
 	opts := settlingRound()
-	opts.OnProgress = func(r RoundResult) { seen = append(seen, r.Confirmed) }
+	opts.OnProgress = func(r RoundResult) {
+		seen = append(seen, r.Confirmed)
+		polledOnceGuard.Do(func() { close(polledOnce) })
+	}
 
 	c := NewCoordinator(rdb, "core-a", sharedFactory(root))
 	res, err := c.RunRound(ctx, Config{Backend: "path", Path: "/mnt/shared"},
