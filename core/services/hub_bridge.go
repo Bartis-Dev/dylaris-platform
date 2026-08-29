@@ -45,6 +45,16 @@ type GatewayEdgeInfo struct {
 	// pre-versioning splice/edge is deployed.
 	SpliceVersion       string `json:"splice_version,omitempty"`
 	SpliceVersionLatest string `json:"splice_version_latest,omitempty"`
+	// SpliceImageRunning is the image the splice CONTAINER runs;
+	// SpliceImageAvailable is what the edge's SPLICE_IMAGE reference resolves
+	// to. The version pair above cannot answer "is the running splice the
+	// pinned one": a tag deleted from the registry frees the name for a later
+	// build, so two different images report the same version string - which is
+	// what splice-0.13.0 did on both production edges while the panel read them
+	// as current. Empty means the edge could not tell, and must never be read
+	// as agreement.
+	SpliceImageRunning   string `json:"splice_image_running,omitempty"`
+	SpliceImageAvailable string `json:"splice_image_available,omitempty"`
 }
 
 // EdgeLiveStats mirrors the EdgeMetrics payload published by the Edge service

@@ -745,6 +745,13 @@ export interface GatewayEdge {
     // Empty when a pre-versioning edge/splice is deployed.
     splice_version?: string;
     splice_version_latest?: string;
+    // The IMAGE the splice container runs, and the image SPLICE_IMAGE resolves
+    // to. The version pair above cannot answer "is the running splice the
+    // pinned one": a tag deleted from the registry frees the name for a later
+    // build, so two different images report the same version. Empty means the
+    // edge could not tell - never read two empties as agreement.
+    splice_image_running?: string;
+    splice_image_available?: string;
     stats?: EdgeStats;
 }
 

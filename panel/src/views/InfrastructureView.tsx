@@ -12,6 +12,7 @@ import BandwidthPanel from './infrastructure/BandwidthPanel';
 import { SkeletonStatGrid, SkeletonCard, SkeletonText } from '@/components/Skeleton';
 import StoragePlacement from '@/components/StoragePlacement';
 import type { StoragePlacement as StoragePlacementConfig } from '@/lib/api';
+import { spliceImageMismatch } from '@/lib/spliceDrift';
 import {
   sharedStorageMessage,
   sharedStorageSummary,
@@ -441,6 +442,12 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
   // this edge's running version differs (an empty running version = pre-versioning
   // splice, also treated as behind so the operator schedules a bump).
   const spliceBehind = !!latest && running !== latest;
+  // A DIFFERENT fault from being behind, and it needs both halves known: the
+  // running splice is not the image the pin names, at the same version string.
+  // That is a tag that moved, and the version comparison above cannot see it.
+  const runImg = edge.splice_image_running || '';
+  const availImg = edge.splice_image_available || '';
+  const imageMismatch = spliceImageMismatch(runImg, availImg);
 
   return (
     <div className="card p-4 flex flex-col gap-3">
@@ -465,6 +472,13 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
           {spliceBehind ? (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--warning)/10 mono-label text-(--warning-light)">
               <ArrowUpCircle size={9} /> {running ? `v${running}` : 'unknown'} &rarr; v{latest}
+            </span>
+          ) : imageMismatch ? (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--danger)/10 mono-label text-(--danger-light)"
+              title={`Running image ${runImg.slice(7, 19)}, SPLICE_IMAGE resolves to ${availImg.slice(7, 19)}. The pinned tag moved; redeploy the edge stack to recreate the sidecar.`}
+            >
+              <ArrowUpCircle size={9} /> v{running || latest} &middot; wrong image
             </span>
           ) : (
             <span className="text-[10px] font-mono text-(--base-07) tabular-nums">v{running || latest}</span>

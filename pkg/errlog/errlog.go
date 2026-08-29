@@ -40,7 +40,7 @@ type Logger struct {
 // CROSS-REPO: gateway/pkg/errlog carries a byte-identical copy, because the
 // gateway is a separate repository and its producers (edge, link, hub, beam)
 // must validate against the same list Core reads.
-var Services = []string{"edge", "link", "hub", "beam", "node"}
+var Services = []string{"edge", "link", "hub", "beam", "node", "warp"}
 
 // IsKnownService reports whether name is one a reader will ever scan for.
 func IsKnownService(name string) bool {
