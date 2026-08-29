@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.30
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- On "My infrastructure", the compose file you copy now gets a column wide
+  enough to show its longest line, and the two columns stack instead of
+  shrinking when your window is narrow. Nothing for you to update.
+
 ## 2026.08.29.14
 
 ### Features

@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.30
+
+### Features
+- The Infrastructure view has an Errors tab. Every service already wrote its
+  diagnostics to Redis and Core already sent them with the overview, and the
+  panel dropped the field - so six components reported into nothing. Only
+  errors and warnings drive the tab's count. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The two columns on "My infrastructure" have a floor and stack when the window
+  cannot hold both, instead of squeezing the compose file into a column too
+  narrow to read it in. `panel`
+- The scrollbar on that page sits at the edge of the content area again rather
+  than floating mid-screen next to the centred column. `panel`
+
 ## 2026.08.29.15
 
 ### Features

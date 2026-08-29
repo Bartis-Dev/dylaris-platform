@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Server, Globe, Network, RefreshCw, Trash2, AlertTriangle, X,
   Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine, Shield, Activity,
-  Users, Link2, HardDrive, Layers, ArrowUpCircle
+  Users, Link2, HardDrive, Layers, ArrowUpCircle, AlertCircle, Info
 } from 'lucide-react';
 import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, setNodeStoragePlacement, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
 import RoutesPanel from './infrastructure/RoutesPanel';
@@ -21,6 +21,13 @@ import {
 import { timeAgo } from '@/lib/time';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeLabel } from '@/lib/nodeLabel';
+import {
+  flattenServiceErrors,
+  attentionCount,
+  isAttention,
+  type FlatServiceError,
+  type ServiceErrorEntry,
+} from '@/lib/serviceErrors';
 
 interface StorageInfo {
   path: string;
@@ -104,9 +111,10 @@ interface InfrastructureData {
   routeCount: number;
   onlineLinks: number;
   onlineEdges: number;
+  errors: FlatServiceError[];
 }
 
-type Tab = 'nodes' | 'edges' | 'routes' | 'bandwidth';
+type Tab = 'nodes' | 'edges' | 'routes' | 'bandwidth' | 'errors';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -615,6 +623,53 @@ function SpliceVersionSummary({ edges }: { edges: GatewayEdge[] }) {
   );
 }
 
+// The service error streams, one list, newest first.
+//
+// Deliberately not grouped per service: the question is "what is broken", and
+// which component noticed is a property of the line, not a heading to scroll
+// past. The producing service is shown because it is often the ONLY hint about
+// where to look - a link reporting `failed to connect to 127.0.0.1:25550` is a
+// problem on the customer's machine, and the edge above it is perfectly healthy.
+function ServiceErrorList({ entries }: { entries: FlatServiceError[] }) {
+  if (entries.length === 0) {
+    return (
+      <div className="card p-8 text-center text-(--base-06) text-sm">
+        No service errors reported
+      </div>
+    );
+  }
+  return (
+    <div className="card divide-y divide-(--base-03)">
+      {entries.map((e, i) => (
+        <div key={`${e.ts}-${e.service}-${i}`} className="flex items-start gap-3 p-3">
+          <LevelIcon level={e.level} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mono-label text-(--accent-light)">{e.service}</span>
+              {e.source && <span className="mono-label text-(--base-06)">{e.source}</span>}
+            </div>
+            {/* break-words, not truncate: the whole value of these lines is the
+                address or name at the end of the message. */}
+            <p className={`text-sm mt-0.5 break-words ${isAttention(e) ? 'text-(--base-09)' : 'text-(--base-07)'}`}>
+              {e.message}
+            </p>
+          </div>
+          <span className="mono-label shrink-0 text-(--base-06)" title={e.ts}>
+            {Number.isNaN(Date.parse(e.ts)) ? e.ts || 'no timestamp' : timeAgo(e.ts)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LevelIcon({ level }: { level: ServiceErrorEntry['level'] }) {
+  const l = level?.toUpperCase();
+  if (l === 'ERROR') return <AlertCircle size={15} className="shrink-0 mt-0.5 text-(--error)" aria-label="Error" />;
+  if (l === 'WARN') return <AlertTriangle size={15} className="shrink-0 mt-0.5 text-(--warning-light)" aria-label="Warning" />;
+  return <Info size={15} className="shrink-0 mt-0.5 text-(--base-06)" aria-label="Info" />;
+}
+
 interface InfrastructureViewProps {
   gatewayEnabled?: boolean;
   onNavigateToAdminDisk?: (nodeId: number) => void;
@@ -655,6 +710,10 @@ export default function InfrastructureView({
           routeCount: res.routeCount ?? 0,
           onlineLinks: res.onlineLinks ?? 0,
           onlineEdges: res.onlineEdges ?? 0,
+          // Core has always sent this and the view always threw it away, so
+          // every service's diagnostics reached no screen at all. See
+          // lib/serviceErrors for why that is worse than it sounds.
+          errors: flattenServiceErrors(res.errors),
         });
       }
     } catch { /* keep previous data */ } finally {
@@ -704,6 +763,8 @@ export default function InfrastructureView({
   const onlineEdges = data?.onlineEdges ?? 0;
   const onlineNodes = nodes.filter(n => n.status === 'online').length;
   const totalPlayers = edges.reduce((sum, e) => sum + (e.stats?.active_mc_streams ?? 0), 0);
+  const serviceErrors = data?.errors ?? [];
+  const errorsNeedingAttention = attentionCount(serviceErrors);
 
   // Edges/Routes tabs only render when the feature is enabled AND something
   // is actually deployed — keeps the UI honest about empty backends.
@@ -744,6 +805,11 @@ export default function InfrastructureView({
       { id: 'routes' as Tab, label: 'Routes', count: routeCount },
     ] : []),
     ...(gatewayEnabled ? [{ id: 'bandwidth' as Tab, label: 'Bandwidth' }] : []),
+    // Only ERROR/WARN drive the count: the same streams carry INFO, and a badge
+    // that is never zero is a badge nobody reads.
+    ...(serviceErrors.length > 0
+      ? [{ id: 'errors' as Tab, label: 'Errors', count: errorsNeedingAttention }]
+      : []),
   ];
 
   return (
@@ -842,6 +908,9 @@ export default function InfrastructureView({
 
       {/* Tab: Bandwidth */}
       {tab === 'bandwidth' && <BandwidthPanel />}
+
+      {/* Tab: Errors */}
+      {tab === 'errors' && <ServiceErrorList entries={serviceErrors} />}
 
       {/* Force-Delete Modal */}
       {deleteModal && (
