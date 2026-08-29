@@ -95,7 +95,12 @@ func (h *GatewayHandler) ownerRouteStats(userID, domain string) (count int, owns
 		if rt.OwnerID != userID {
 			continue
 		}
-		if domain != "" && strings.EqualFold(rt.Domain, domain) {
+		// CoreOwned as well as owned BY THEM: a route-only entry is the only
+		// kind CreateRouteViaLink will overwrite, so it is the only kind an
+		// edit can be. A managed server's route on the same domain would
+		// otherwise wave the allowance check through for a request the gateway
+		// then refuses anyway.
+		if domain != "" && rt.CoreOwned && strings.EqualFold(rt.Domain, domain) {
 			ownsDomain = true
 		}
 		if services.DomainIsOurs(rt.Domain, bases) {

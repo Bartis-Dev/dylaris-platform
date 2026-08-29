@@ -71,6 +71,8 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     // permits for a route you own; posting a DIFFERENT one would leave the old
     // route in place and quietly spend a second address.
     const [editing, setEditing] = useState<string | null>(null);
+    // True while editing a route whose link Core could not name. See startEdit.
+    const [linkUnknown, setLinkUnknown] = useState(false);
 
     const load = useCallback(async () => {
         try {
@@ -168,11 +170,18 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
         // link would move the route to a different one on save without anyone
         // asking for that.
         if (rt.link_id) setLinkId(rt.link_id);
+        // And say so when it could not. A route whose link kit was revoked
+        // keeps running on the old tunnel and its link_id resolves to nothing,
+        // so the select shows some OTHER kit and saving would rebind the route
+        // to it. The one case where the form cannot be trusted to describe what
+        // it is editing is the one case that has to be said out loud.
+        setLinkUnknown(!rt.link_id);
         setAvailability('idle');
     };
 
     const cancelEdit = () => {
         setEditing(null);
+        setLinkUnknown(false);
         setError('');
         setDomainReq({ targetPort: 25565 });
         setTargetHost('127.0.0.1');
@@ -306,6 +315,12 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                         {kits.length === 0 && <option value="">Create a link first</option>}
                         {kits.map(k => <option key={k.id} value={k.link_id}>{k.name}</option>)}
                     </select>
+                    {editing && linkUnknown && (
+                        <p className="text-xs text-(--warning-light)">
+                            This route&apos;s link could not be identified &mdash; its kit was probably revoked.
+                            Saving will move the route to the link selected above.
+                        </p>
+                    )}
                 </div>
 
                 <div className="flex flex-col gap-1.5">

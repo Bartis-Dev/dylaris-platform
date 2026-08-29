@@ -332,8 +332,15 @@ func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (s
 	}
 	aliveByRegion := map[string]bool{}
 	aliveLeaderIDsByRegion := map[string][]string{}
+	// Regions that have an enabled leader AT ALL, alive or not. That is a
+	// different question from liveness and it decides the fallback below.
+	hasLeaderByRegion := map[string]bool{}
 	for _, l := range leaders {
-		if l.Enabled && s.leaderAlive(ctx, l.LeaderID) {
+		if !l.Enabled {
+			continue
+		}
+		hasLeaderByRegion[l.Region] = true
+		if s.leaderAlive(ctx, l.LeaderID) {
 			aliveByRegion[l.Region] = true
 			aliveLeaderIDsByRegion[l.Region] = append(aliveLeaderIDsByRegion[l.Region], l.LeaderID)
 		}
@@ -350,8 +357,27 @@ func (s *WarpService) assignRegion(ctx context.Context, key store.WarpAPIKey) (s
 		}
 	}
 	if len(regionsForPlacement) == 0 {
-		log.Printf("[warp] WARNING: no enabled region has a live leader; assigning to least-loaded enabled region anyway")
-		regionsForPlacement = enabled
+		// Degrade to regions that HAVE a leader, even a silent one. A leader
+		// that is down still has an address and works again when it returns;
+		// a region with no leader row has no address and never will, so
+		// assigning a peer there is choosing the one option that cannot
+		// recover. It matters most on a fresh install, where the seeded
+		// default region has no leaders and would otherwise sit alongside a
+		// real one and take assignments during any leader restart.
+		for _, r := range enabled {
+			if hasLeaderByRegion[r.Region] {
+				regionsForPlacement = append(regionsForPlacement, r)
+			}
+		}
+		if len(regionsForPlacement) > 0 {
+			log.Printf("[warp] WARNING: no enabled region has a LIVE leader; assigning to the least-loaded region that has one")
+		} else {
+			// Nothing has a leader. Keep the historical behaviour rather than
+			// failing the enroll here: Enroll refuses with ErrNoWarpLeader and
+			// says which region, which is a better answer than "no region".
+			log.Printf("[warp] WARNING: no enabled region has any leader; assigning to least-loaded enabled region anyway")
+			regionsForPlacement = enabled
+		}
 	}
 
 	// One mirror read for every alive leader across the candidate regions, then

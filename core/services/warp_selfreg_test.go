@@ -18,6 +18,12 @@ type selfRegStore struct {
 	// upserts counts leader writes, so a test can prove a pass that agrees with
 	// the registry writes NOTHING rather than rewriting the same row forever.
 	upserts int
+	// regionUpserts counts region writes, for the same reason and for proving a
+	// failed read writes none.
+	regionUpserts int
+	// regionsErr makes the region read fail, which is the case a per-region Get
+	// could not tell apart from "no such region".
+	regionsErr error
 }
 
 func newSelfRegStore() *selfRegStore {
@@ -27,15 +33,19 @@ func newSelfRegStore() *selfRegStore {
 	}
 }
 
-func (s *selfRegStore) GetWarpRegion(region string) (*store.WarpRegion, error) {
-	r, ok := s.regions[region]
-	if !ok {
-		return nil, errNoRow
+func (s *selfRegStore) ListWarpRegions() ([]store.WarpRegion, error) {
+	if s.regionsErr != nil {
+		return nil, s.regionsErr
 	}
-	return &r, nil
+	out := make([]store.WarpRegion, 0, len(s.regions))
+	for _, r := range s.regions {
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 func (s *selfRegStore) UpsertWarpRegion(region, subnet string, enabled bool) error {
+	s.regionUpserts++
 	s.regions[region] = store.WarpRegion{Region: region, Subnet: subnet, Enabled: enabled}
 	return nil
 }
@@ -53,12 +63,6 @@ func (s *selfRegStore) UpsertWarpLeader(leaderID, region, endpoint string, enabl
 	s.leaders[leaderID] = store.WarpLeader{LeaderID: leaderID, Region: region, Endpoint: endpoint, Enabled: enabled}
 	return nil
 }
-
-var errNoRow = errNoRowType{}
-
-type errNoRowType struct{}
-
-func (errNoRowType) Error() string { return "no rows" }
 
 func selfRegFixture(t *testing.T) (*WarpSelfRegistrar, *selfRegStore, *miniredis.Miniredis) {
 	t.Helper()
@@ -243,3 +247,54 @@ func TestSelfReg_FollowerDoesNothing(t *testing.T) {
 type notTheLeader struct{}
 
 func (notTheLeader) IsLeader() bool { return false }
+
+// The bug this shape exists to prevent. A per-region Get cannot tell "no such
+// region" from "the read failed" - both arrive as an error - and the natural
+// code falls through to the create branch, which is an UPSERT. One database
+// blip would then rewrite a live region's subnet from whatever a leader
+// happened to announce, stranding every machine holding an address out of the
+// stored one, and re-enable a region an operator had switched off.
+func TestSelfReg_RegionReadFails_WritesNothing(t *testing.T) {
+	r, st, mr := selfRegFixture(t)
+	st.regions["eu-central"] = store.WarpRegion{Region: "eu-central", Subnet: "10.20.0.0/16", Enabled: false}
+	st.regionsErr = errRegionRead
+	announce(t, mr, "eu-edge-02", liveAnnouncement())
+
+	r.RunOnce(context.Background())
+
+	if st.regionUpserts != 0 {
+		t.Errorf("region upserts = %d, want 0 - a failed read is not an absent region", st.regionUpserts)
+	}
+	if got := st.regions["eu-central"]; got.Subnet != "10.20.0.0/16" || got.Enabled {
+		t.Errorf("region = %+v, want it untouched", got)
+	}
+	if len(st.leaders) != 0 {
+		t.Errorf("leaders = %+v, want none written on a pass that could not read", st.leaders)
+	}
+}
+
+// Two leaders of the SAME new region in one pass must create it once. Reading
+// the registry per announcement made that a race with itself.
+func TestSelfReg_TwoLeadersOneNewRegion_CreateItOnce(t *testing.T) {
+	r, st, mr := selfRegFixture(t)
+	a := liveAnnouncement()
+	announce(t, mr, "eu-edge-01", a)
+	b := liveAnnouncement()
+	b.Endpoint = "178.104.241.73:25599"
+	announce(t, mr, "eu-edge-02", b)
+
+	r.RunOnce(context.Background())
+
+	if st.regionUpserts != 1 {
+		t.Errorf("region upserts = %d, want exactly 1", st.regionUpserts)
+	}
+	if len(st.leaders) != 2 {
+		t.Errorf("leaders = %+v, want both registered", st.leaders)
+	}
+}
+
+var errRegionRead = errRegionReadType{}
+
+type errRegionReadType struct{}
+
+func (errRegionReadType) Error() string { return "connection reset by peer" }

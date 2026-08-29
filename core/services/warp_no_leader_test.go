@@ -71,3 +71,56 @@ func TestReenroll_NoEnabledLeader_Refused(t *testing.T) {
 		t.Fatalf("re-enroll error = %v, want ErrNoWarpLeader", err)
 	}
 }
+
+// A region with NO leader must not win an assignment just because every real
+// region's leader happens to be down.
+//
+// This is the fresh-install shape: Core seeds a default region, an operator
+// runs a leader in a different one, and both are enabled. A leader that is down
+// still has an address and works again when it returns; a region with no leader
+// row has no address and never will - so a fallback that treats them alike
+// parks a peer on the one option that cannot recover, and now that enroll
+// refuses such a region outright, parks it there permanently.
+func TestAssignRegion_PrefersARegionThatHasALeader(t *testing.T) {
+	svc, fs, _ := enrollTestService(t)
+	// A SECOND region, distinct from the fixture's "leader-01", enabled, with no
+	// leader row of its own and no peers - so a least-loaded tiebreak prefers it
+	// and only the has-a-leader test can rule it out.
+	fs.regions = append(fs.regions, store.WarpRegion{Region: "seeded-empty", Subnet: "10.0.98.0/24", Enabled: true})
+	// And a peer already on the region that HAS the leader, so the empty one is
+	// strictly the least loaded. Without that the ranking is a tie and the old
+	// code would pick the right region by slice order - a test that passes for
+	// a reason the fix has nothing to do with.
+	fs.peers["existing"] = store.WarpPeer{Pubkey: "existing", Region: "leader-01", WGIP: "10.0.99.2"}
+	// Nothing writes a liveness key in this fixture, so NO region has a live
+	// leader: the degradation path is the one under test.
+
+	key := store.WarpAPIKey{ID: 1, Policy: "general", MaxConns: 5, OnNewConn: "block"}
+	region, err := svc.assignRegion(context.Background(), key)
+	if err != nil {
+		t.Fatalf("assignRegion: %v", err)
+	}
+	if region == "seeded-empty" {
+		t.Fatal("assigned to the region with no leader; nothing there can ever answer an enroll")
+	}
+	if region != "leader-01" {
+		t.Errorf("assignRegion() = %q, want the region that has a leader", region)
+	}
+}
+
+// When NOTHING has a leader the historical behaviour stands: still assign, and
+// let Enroll refuse with ErrNoWarpLeader naming the region. Failing here would
+// answer "no region available", which sends an operator to the wrong screen.
+func TestAssignRegion_NoRegionHasALeader_StillAssigns(t *testing.T) {
+	svc, fs, _ := enrollTestService(t)
+	fs.leaders = nil
+
+	key := store.WarpAPIKey{ID: 1, Policy: "general", MaxConns: 5, OnNewConn: "block"}
+	region, err := svc.assignRegion(context.Background(), key)
+	if err != nil {
+		t.Fatalf("assignRegion: %v", err)
+	}
+	if region != "leader-01" {
+		t.Errorf("assignRegion() = %q, want the only enabled region", region)
+	}
+}

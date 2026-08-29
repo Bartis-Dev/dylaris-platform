@@ -47,8 +47,17 @@ const (
 )
 
 // warpRegistrarStore is the narrow store surface this needs.
+//
+// Regions and leaders are LISTED rather than fetched one at a time, and that is
+// a correctness choice rather than a performance one. A per-region Get cannot
+// tell "no such region" from "the read failed" - both arrive as an error - and
+// the only safe thing to do with that ambiguity is nothing, while the natural
+// code shape does the opposite: it falls through to the create branch, which is
+// an UPSERT, and rewrites a live region's subnet from a database blip. A list
+// either succeeds, in which case absence is a fact, or it fails, in which case
+// the whole pass stops.
 type warpRegistrarStore interface {
-	GetWarpRegion(region string) (*store.WarpRegion, error)
+	ListWarpRegions() ([]store.WarpRegion, error)
 	UpsertWarpRegion(region, subnet string, enabled bool) error
 	ListWarpLeaders() ([]store.WarpLeader, error)
 	UpsertWarpLeader(leaderID, region, endpoint string, enabled bool) error
@@ -102,6 +111,10 @@ func (s *WarpSelfRegistrar) Start(ctx context.Context) {
 
 // RunOnce reads every live announcement and applies it. Exported for tests and
 // for a caller that wants the registry current right now.
+//
+// The registry is read ONCE per pass and carried through, so a pass either sees
+// a consistent picture or does nothing at all - and two leaders announcing the
+// same new region create it once rather than racing on it.
 func (s *WarpSelfRegistrar) RunOnce(ctx context.Context) {
 	if s.leader != nil && !s.leader.IsLeader() {
 		return
@@ -114,8 +127,35 @@ func (s *WarpSelfRegistrar) RunOnce(ctx context.Context) {
 		log.Printf("[warp] self-registration: %v", err)
 		return
 	}
+	if len(found) == 0 {
+		return
+	}
+
+	regions, err := s.store.ListWarpRegions()
+	if err != nil {
+		log.Printf("[warp] self-registration: list regions: %v", err)
+		return
+	}
+	leaders, err := s.store.ListWarpLeaders()
+	if err != nil {
+		log.Printf("[warp] self-registration: list leaders: %v", err)
+		return
+	}
+
+	subnetByRegion := make(map[string]string, len(regions))
+	for _, r := range regions {
+		subnetByRegion[r.Region] = r.Subnet
+	}
+	byID := make(map[string]store.WarpLeader, len(leaders))
+	for _, l := range leaders {
+		byID[l.LeaderID] = l
+	}
+
 	for id, a := range found {
-		s.apply(id, a)
+		if !s.ensureRegion(id, a, subnetByRegion) {
+			continue
+		}
+		s.applyLeader(id, a, byID)
 	}
 }
 
@@ -168,66 +208,63 @@ func (s *WarpSelfRegistrar) announcements(ctx context.Context) (map[string]Leade
 	}
 }
 
-// apply reconciles one announcement into the registry.
-func (s *WarpSelfRegistrar) apply(id string, a LeaderAnnouncement) {
-	if !s.ensureRegion(id, a) {
-		return
-	}
-	leaders, err := s.store.ListWarpLeaders()
-	if err != nil {
-		log.Printf("[warp] self-registration: list leaders: %v", err)
-		return
-	}
-	for _, l := range leaders {
-		if l.LeaderID != id {
-			continue
-		}
-		if l.Endpoint == a.Endpoint && l.Region == a.Region {
-			return // already what it says it is
-		}
-		// The stored Enabled flag is carried over, never re-asserted. An
-		// operator who disabled a leader means it, and a heartbeat arriving
-		// sixty seconds later must not undo that - it would be a switch that
-		// flips itself back on while the machine it belongs to is still
-		// running, which is exactly when someone reaches for it.
-		if err := s.store.UpsertWarpLeader(id, a.Region, a.Endpoint, l.Enabled); err != nil {
-			log.Printf("[warp] self-registration: update leader %s: %v", id, err)
+// applyLeader reconciles one announcement into the leader registry. `byID` is
+// the registry as it was read at the start of the pass.
+func (s *WarpSelfRegistrar) applyLeader(id string, a LeaderAnnouncement, byID map[string]store.WarpLeader) {
+	l, known := byID[id]
+	if !known {
+		// Enabled on sight. The announcement is authenticated by possession of
+		// the scoped Redis credential, and the leader derives the region's
+		// WireGuard key from CLUSTER_SECRET anyway - it can already do
+		// everything a leader does. A pending state would only reinstate the
+		// manual step this removes.
+		if err := s.store.UpsertWarpLeader(id, a.Region, a.Endpoint, true); err != nil {
+			log.Printf("[warp] self-registration: register leader %s: %v", id, err)
 			return
 		}
-		log.Printf("[warp] leader %s moved: %s/%s -> %s/%s", id, l.Region, l.Endpoint, a.Region, a.Endpoint)
+		byID[id] = store.WarpLeader{LeaderID: id, Region: a.Region, Endpoint: a.Endpoint, Enabled: true}
+		log.Printf("[warp] leader %s registered itself in region %s at %s", id, a.Region, a.Endpoint)
 		return
 	}
-	// Enabled on sight. The announcement is authenticated by possession of the
-	// scoped Redis credential, and the leader derives the region's WireGuard key
-	// from CLUSTER_SECRET anyway - it can already do everything a leader does.
-	// A pending state would only reinstate the manual step this removes.
-	if err := s.store.UpsertWarpLeader(id, a.Region, a.Endpoint, true); err != nil {
-		log.Printf("[warp] self-registration: register leader %s: %v", id, err)
+	if l.Endpoint == a.Endpoint && l.Region == a.Region {
+		return // already what it says it is
+	}
+	// The stored Enabled flag is carried over, never re-asserted. An operator
+	// who disabled a leader means it, and a heartbeat arriving sixty seconds
+	// later must not undo that - it would be a switch that flips itself back on
+	// while the machine it belongs to is still running, which is exactly when
+	// someone reaches for it.
+	if err := s.store.UpsertWarpLeader(id, a.Region, a.Endpoint, l.Enabled); err != nil {
+		log.Printf("[warp] self-registration: update leader %s: %v", id, err)
 		return
 	}
-	log.Printf("[warp] leader %s registered itself in region %s at %s", id, a.Region, a.Endpoint)
+	log.Printf("[warp] leader %s moved: %s/%s -> %s/%s", id, l.Region, l.Endpoint, a.Region, a.Endpoint)
 }
 
 // ensureRegion makes sure the announced region exists, and reports whether the
-// leader may be registered into it.
-func (s *WarpSelfRegistrar) ensureRegion(id string, a LeaderAnnouncement) bool {
-	reg, err := s.store.GetWarpRegion(a.Region)
-	if err == nil && reg != nil {
+// leader may be registered into it. `subnetByRegion` is the region registry as
+// it was read at the start of the pass; a region created here is added to it so
+// a second leader in the same pass sees it.
+func (s *WarpSelfRegistrar) ensureRegion(id string, a LeaderAnnouncement, subnetByRegion map[string]string) bool {
+	if stored, exists := subnetByRegion[a.Region]; exists {
 		// A subnet disagreement is a misconfiguration, not something to
 		// reconcile. Enrolled machines hold addresses out of the stored subnet,
 		// so overwriting it would strand every one of them; and the leader
 		// bounds its peers by its own, so routing them through it would fail
 		// anyway. Say which two values disagree and change nothing.
-		if a.Subnet != "" && reg.Subnet != a.Subnet {
+		if a.Subnet != "" && stored != a.Subnet {
 			log.Printf("[warp] leader %s announces subnet %s but region %s is %s; not registering it. Fix WARP_WG_SUBNET or the region.",
-				id, a.Subnet, a.Region, reg.Subnet)
+				id, a.Subnet, a.Region, stored)
 			return false
 		}
 		return true
 	}
-	// No region yet. The leader knows its own subnet, and requiring an operator
-	// to retype it into the panel is where the two used to drift apart - the
-	// leader fatals at boot on a mismatch, so the pair has to agree exactly.
+	// The region is absent, and absent is a FACT here rather than a guess: the
+	// list it came from either succeeded or stopped the pass.
+	//
+	// The leader knows its own subnet, and requiring an operator to retype it
+	// into the panel is where the two used to drift apart - the leader fatals at
+	// boot on a mismatch, so the pair has to agree exactly.
 	if a.Subnet == "" {
 		log.Printf("[warp] leader %s announces region %s, which does not exist, and no subnet to create it with. Set WARP_WG_SUBNET or create the region.", id, a.Region)
 		return false
@@ -236,6 +273,7 @@ func (s *WarpSelfRegistrar) ensureRegion(id string, a LeaderAnnouncement) bool {
 		log.Printf("[warp] self-registration: create region %s: %v", a.Region, err)
 		return false
 	}
+	subnetByRegion[a.Region] = a.Subnet
 	log.Printf("[warp] region %s created from leader %s (subnet %s)", a.Region, id, a.Subnet)
 	return true
 }

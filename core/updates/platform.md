@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.29.9
+
+### Features
+- Nothing.
+
+### Breaking
+- `GET /api/gateway/links` now names each link by a digest instead of returning
+  its tunnel token. Announced last release as a security fix; naming it here
+  because a script reading the `token` field will not find it. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- A failed read of the warp region registry could rewrite a live region's
+  subnet and re-enable a disabled one. Absence and "could not tell" arrived as
+  the same answer, and the write path treated both as absent. `core`
+- A peer is no longer assigned to a region that has no leader at all while a
+  region with a leader is merely offline. `core`
+- Editing a protected address only skips the address allowance for a
+  route-only entry, not for a managed server's route on the same name. `core`
+
 ## 2026.08.29.8
 
 ### Features

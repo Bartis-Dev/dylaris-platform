@@ -512,7 +512,7 @@ func TestCreateLinkRoute_EditingAnOwnRouteDoesNotSpendTheAllowance(t *testing.T)
 	}
 	rdb := newLinkRouteRedis(t)
 	seedLinkRoute(t, rdb, "survival.example.com", services.GatewayRoute{
-		OwnerID: linkRouteUserID, TargetIP: "192.168.1.50", TargetPort: 25565,
+		OwnerID: linkRouteUserID, TargetIP: "192.168.1.50", TargetPort: 25565, CoreOwned: true,
 	})
 	gw := &linkRouteFakeGateway{}
 	h := newLinkRouteHandler(fs, gw, rdb)
@@ -543,7 +543,7 @@ func TestCreateLinkRoute_NewDomainStillHitsTheCap(t *testing.T) {
 	}
 	rdb := newLinkRouteRedis(t)
 	seedLinkRoute(t, rdb, "survival.example.com", services.GatewayRoute{
-		OwnerID: linkRouteUserID, TargetIP: "192.168.1.50", TargetPort: 25565,
+		OwnerID: linkRouteUserID, TargetIP: "192.168.1.50", TargetPort: 25565, CoreOwned: true,
 	})
 	h := newLinkRouteHandler(fs, &linkRouteFakeGateway{}, rdb)
 
@@ -568,10 +568,37 @@ func TestCreateLinkRoute_AnotherTenantsDomainIsNotAnEdit(t *testing.T) {
 	}
 	rdb := newLinkRouteRedis(t)
 	seedLinkRoute(t, rdb, "mine.example.com", services.GatewayRoute{
-		OwnerID: linkRouteUserID, TargetIP: "192.168.1.50", TargetPort: 25565,
+		OwnerID: linkRouteUserID, TargetIP: "192.168.1.50", TargetPort: 25565, CoreOwned: true,
 	})
 	seedLinkRoute(t, rdb, "survival.example.com", services.GatewayRoute{
 		OwnerID: "someone-else", TargetIP: "10.0.0.9", TargetPort: 25565,
+	})
+	h := newLinkRouteHandler(fs, &linkRouteFakeGateway{}, rdb)
+
+	rec := httptest.NewRecorder()
+	h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, baseLinkRouteBody()))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+// A MANAGED server's route is not an edit, even on a domain the same tenant
+// owns. CreateRouteViaLink overwrites only core-owned entries, so treating it
+// as one would wave the allowance check through for a request the gateway then
+// refuses anyway - and the refusal a tenant sees would depend on which check
+// happened to fire first.
+func TestCreateLinkRoute_AManagedRouteOfTheirsIsNotAnEdit(t *testing.T) {
+	fs := baseLinkRouteStore()
+	one := 1
+	fs.routeLimits = map[string]*models.GatewayRouteLimit{
+		"user:" + linkRouteUserID: {Scope: "user:" + linkRouteUserID, MaxRoutes: &one},
+	}
+	rdb := newLinkRouteRedis(t)
+	// Same owner, same domain, but written by the hub for a managed server:
+	// no core_owned flag.
+	seedLinkRoute(t, rdb, "survival.example.com", services.GatewayRoute{
+		OwnerID: linkRouteUserID, TargetIP: "mc_abc", TargetPort: 25565, ServerUUID: "abc",
 	})
 	h := newLinkRouteHandler(fs, &linkRouteFakeGateway{}, rdb)
 
