@@ -1,18 +1,27 @@
 "use client";
 
 import { CreditCard, Info } from 'lucide-react';
-import { getBillingSettings, setBillingSettings, BillingSettings } from '@/lib/api/billing';
+import {
+    getBillingSettings, setBillingSettings, BillingSettings,
+    limitFromSetting, limitToSetting,
+} from '@/lib/api/billing';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
+import { LimitField } from '@/components/settings/LimitField';
 
 const SPEC_RE = /^\d+[dwm]$/;
+const NUM_RE = /^\d+$/;
 
 const DEFAULTS: BillingSettings = {
     gracePeriod: '3d',
     r2Retention: '3m',
     nodeRetention: '2w',
-    r2QuotaGb: '0',
+    // Empty, not "0": unset means no cap, and a "0" default here was what the
+    // next save wrote back as a real cap of none for every tenant.
+    r2QuotaGb: '',
+    r2IncludedGb: '50',
+    r2BookableGb: '500',
     presignTtlNodeMin: '60',
     presignTtlByonMin: '360',
     paymentUrl: '',
@@ -31,7 +40,12 @@ export default function BillingTab() {
                 gracePeriod: res.gracePeriod || DEFAULTS.gracePeriod,
                 r2Retention: res.r2Retention || DEFAULTS.r2Retention,
                 nodeRetention: res.nodeRetention || DEFAULTS.nodeRetention,
-                r2QuotaGb: res.r2QuotaGb || DEFAULTS.r2QuotaGb,
+                // NOT `|| DEFAULTS`: an empty quota is the meaningful "no cap"
+                // answer, and substituting anything for it is the bug this
+                // screen shipped.
+                r2QuotaGb: res.r2QuotaGb ?? '',
+                r2IncludedGb: res.r2IncludedGb || DEFAULTS.r2IncludedGb,
+                r2BookableGb: res.r2BookableGb || DEFAULTS.r2BookableGb,
                 presignTtlNodeMin: res.presignTtlNodeMin || DEFAULTS.presignTtlNodeMin,
                 presignTtlByonMin: res.presignTtlByonMin || DEFAULTS.presignTtlByonMin,
                 paymentUrl: res.paymentUrl || '',
@@ -51,6 +65,16 @@ export default function BillingTab() {
         SPEC_RE.test(s.gracePeriod) &&
         SPEC_RE.test(s.r2Retention) &&
         SPEC_RE.test(s.nodeRetention);
+    // An emptied allowance field would be saved as the built-in default rather
+    // than as the zero it looks like, so the save is blocked until it says a
+    // number. Zero is legal and means none.
+    const allowancesValid = NUM_RE.test(s.r2IncludedGb) && NUM_RE.test(s.r2BookableGb);
+
+    const blockedReason = !specsValid
+        ? 'Retention values must look like 3d, 2w or 3m'
+        : !allowancesValid
+            ? 'Included and bookable backup storage must be a whole number of GB'
+            : undefined;
 
     return (
         <SettingsPage
@@ -74,7 +98,7 @@ export default function BillingTab() {
             <SettingsCard
                 title="Non-payment windows"
                 form={form}
-                saveBlockedReason={specsValid ? undefined : 'Retention values must look like 3d, 2w or 3m'}
+                saveBlockedReason={blockedReason}
             >
                 <SettingsGroup title="Retention" first>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -102,21 +126,60 @@ export default function BillingTab() {
                     </div>
                 </SettingsGroup>
 
-                <SettingsGroup title="Quota">
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label" htmlFor="billing-r2-quota">R2 backup quota (GB)</label>
-                        <input
+                <SettingsGroup
+                    title="Backup storage"
+                    description="What a tenant may store, and what they may book on top once they have agreed to be charged for it."
+                >
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div className="min-w-0 max-w-md">
+                            <label className="input-label" htmlFor="billing-r2-quota">Flat quota per tenant</label>
+                            <p id="billing-r2-quota-hint" className="text-xs text-(--base-06) mt-1">
+                                The fallback for tenants who bought nothing, which is everyone on a
+                                self-hosted install. New backups are refused with a message once
+                                exceeded; the ones already stored are kept.
+                            </p>
+                        </div>
+                        <LimitField
                             id="billing-r2-quota"
-                            type="number"
-                            min={0}
-                            value={s.r2QuotaGb}
-                            onChange={e => patch({ r2QuotaGb: e.target.value })}
-                            className="input-field w-32"
+                            describedBy="billing-r2-quota-hint"
+                            unit="GB"
+                            value={limitFromSetting(s.r2QuotaGb)}
+                            onChange={v => patch({ r2QuotaGb: limitToSetting(v) })}
                         />
-                        <p className="text-xs text-(--base-06)">
-                            Max stored backup size per tenant. 0 means no cap. New backups are blocked
-                            with a message once exceeded.
-                        </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label" htmlFor="billing-r2-included">Included per unit (GB)</label>
+                            <input
+                                id="billing-r2-included"
+                                type="number"
+                                min={0}
+                                value={s.r2IncludedGb}
+                                onChange={e => patch({ r2IncludedGb: e.target.value })}
+                                className="input-field w-32"
+                            />
+                            <p className="text-xs text-(--base-06)">
+                                Free with every purchased node or route-only location, so a tenant
+                                holding two gets twice this. 0 includes none.
+                            </p>
+                        </div>
+                        <div className="flex flex-col gap-[5px]">
+                            <label className="input-label" htmlFor="billing-r2-bookable">Bookable per unit (GB)</label>
+                            <input
+                                id="billing-r2-bookable"
+                                type="number"
+                                min={0}
+                                value={s.r2BookableGb}
+                                onChange={e => patch({ r2BookableGb: e.target.value })}
+                                className="input-field w-32"
+                            />
+                            <p className="text-xs text-(--base-06)">
+                                The most a tenant can add on top with metered storage on, and where
+                                it stops. 0 means nothing is for sale on top. Shown to customers
+                                before they agree, and they are notified when it changes.
+                            </p>
+                        </div>
                     </div>
                 </SettingsGroup>
 

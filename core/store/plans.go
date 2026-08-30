@@ -224,6 +224,32 @@ func (s *PostgresStore) SetUserTrafficBilling(userID string, ceilingGB int64, en
 	return err
 }
 
+// SetUserBillingConsent records what the tenant has AGREED to be charged for.
+// A nil leaves that column alone.
+//
+// Separate from SetUserTrafficBilling because the ceiling stopped being sent:
+// the store owns the money and the consent, Core owns the allowances and works
+// them out from its own settings. That change broke the old writer without
+// anybody noticing, because its caller required BOTH the ceiling and the flag to
+// be present and silently did nothing when only one was - so a tenant who
+// switched metered billing on stayed recorded as having refused it.
+func (s *PostgresStore) SetUserBillingConsent(userID string, traffic, backup *bool) error {
+	if traffic == nil && backup == nil {
+		return nil
+	}
+	// Written with COALESCE rather than a built query so a partial update cannot
+	// clear the flag it was not told about.
+	_, err := s.db.Exec(`
+		INSERT INTO user_billing (user_id, traffic_billing_enabled, backup_billing_enabled, updated_at)
+		VALUES ($1, COALESCE($2, FALSE), COALESCE($3, FALSE), NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			traffic_billing_enabled = COALESCE($2, user_billing.traffic_billing_enabled),
+			backup_billing_enabled  = COALESCE($3, user_billing.backup_billing_enabled),
+			updated_at              = NOW()`,
+		userID, traffic, backup)
+	return err
+}
+
 // CountNodesByOwner returns how many nodes a tenant owns (for the max_nodes gate).
 func (s *PostgresStore) CountNodesByOwner(ownerID string) (int, error) {
 	var n int

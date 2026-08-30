@@ -41,6 +41,13 @@ func (f *retentionFakeStore) DeleteBackupRun(id int) error {
 	return nil
 }
 
+// Retention resolves with an empty owner on purpose, so this is never consulted.
+// It is here to make that assertion possible: a nil return that IS reached would
+// still be nil, so the test below proves it by the archive that survives.
+func (f *retentionFakeStore) GetUserDefaultBackupStorage(string) (*models.BackupStorage, error) {
+	return nil, nil
+}
+
 // localStorageAt lives in backup_reaper_test.go - a real "local" backend rooted
 // at a temp dir, which is what these tests need too: whether the archive is gone
 // is a property of the provider, not of anything stubbed here.
@@ -156,5 +163,40 @@ func TestDeleteTenantBackupsDropsTheRowForAnAlreadyMissingObject(t *testing.T) {
 
 	if len(fs.deletedRuns) != 1 {
 		t.Errorf("deletedRuns = %v, want [5] — a missing object is a completed deletion", fs.deletedRuns)
+	}
+}
+
+// A bucket the TENANT connected is never emptied by retention.
+//
+// We pay nothing for it, so deleting frees us nothing, and it holds data they
+// are paying somebody else to keep. Suspending an account for non-payment is not
+// a licence to delete files out of storage that is not ours.
+//
+// The row stays too: the archive is still there and still theirs to restore, and
+// a row deleted while its object lives is the orphan this whole path exists to
+// avoid.
+func TestDeleteTenantBackupsSparesTheTenantsOwnStorage(t *testing.T) {
+	dir := t.TempDir()
+	archive := writeArchive(t, dir, "run-9.tar.gz")
+
+	owner := "u1"
+	theirs := localStorageAt(t, dir)
+	theirs.ID = 9
+	theirs.OwnerID = &owner
+
+	fs := &retentionFakeStore{
+		runs: []store.BackupRunRef{{RunID: 9, StorageKey: "run-9.tar.gz", StorageID: &theirs.ID}},
+		byID: map[int]*models.BackupStorage{9: theirs},
+		def:  localStorageAt(t, dir),
+	}
+	svc := &BillingLifecycleService{store: fs}
+
+	svc.deleteTenantBackups(context.Background(), owner)
+
+	if _, err := os.Stat(archive); err != nil {
+		t.Errorf("retention deleted an archive out of the tenant's own bucket: %v", err)
+	}
+	if len(fs.deletedRuns) != 0 {
+		t.Errorf("dropped run rows %v for archives that are still there", fs.deletedRuns)
 	}
 }

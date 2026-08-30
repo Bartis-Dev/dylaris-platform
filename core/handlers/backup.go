@@ -484,10 +484,12 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Forbidden", 403)
 		return
 	}
-	// Same resolution the run path uses: the job's storage, else the default.
-	// Refusing on a nil StorageID made every job created with the panel's
-	// "Default storage" option undownloadable even though its backup succeeded.
-	bs, err := services.ResolveJobStorage(h.state.Store, job.StorageID)
+	// Same resolution the run path uses: the archive's own storage, else the
+	// job's, else the default. Refusing on a nil StorageID made every job
+	// created with the panel's "Default storage" option undownloadable even
+	// though its backup succeeded.
+	bs, err := services.ResolveRunStorage(h.state.Store, run, job.StorageID,
+		services.BackupJobOwner(h.state.Store, job.ServerID))
 	if err != nil {
 		if errors.Is(err, services.ErrNoBackupStorage) {
 			sendJSONError(w, "No backup storage is configured", 400)
@@ -563,7 +565,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	// Same resolution the run path uses. This is the one that matters most: a
 	// backup that cannot be restored is worse than no backup, because the
 	// failure only shows up when someone is already recovering.
-	storage, err := services.ResolveJobStorage(h.state.Store, job.StorageID)
+	storage, err := services.ResolveRunStorage(h.state.Store, run, job.StorageID, srv.OwnerID)
 	if err != nil {
 		if errors.Is(err, services.ErrNoBackupStorage) {
 			sendJSONError(w, "No backup storage is configured", 400)
@@ -681,7 +683,8 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 	// is perfectly reachable. Since the panel's storage dropdown offers "Default
 	// storage" first, deleting a backup from the UI usually removed the row and
 	// left the archive behind for good.
-	if bs, sErr := services.ResolveJobStorage(h.state.Store, job.StorageID); sErr == nil {
+	if bs, sErr := services.ResolveRunStorage(h.state.Store, run, job.StorageID,
+		services.BackupJobOwner(h.state.Store, job.ServerID)); sErr == nil {
 		if provider, pErr := backupstorage.Open(r.Context(), bs, h.backupDeps()); pErr == nil {
 			if dErr := provider.Delete(r.Context(), run.StorageKey); dErr != nil {
 				log.Printf("DeleteBackupRun: run %d object %s not deleted: %v — the row is removed anyway, so this archive is now untracked",
@@ -876,20 +879,21 @@ func (h *BackupHandler) hasServerAccess(r *http.Request, serverID int, capID str
 // returns the new run-id. The actual heavy lifting happens on the node; this
 // function returns immediately so the HTTP request stays snappy.
 func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJob) (int, error) {
-	if job.StorageID == nil {
-		def, _ := h.state.Store.GetDefaultBackupStorage()
-		if def == nil {
-			return 0, fmt.Errorf("no storage configured — set a default in Settings → Backups first")
-		}
-		job.StorageID = &def.ID
-	}
-	storage, err := h.state.Store.GetBackupStorage(*job.StorageID)
-	if err != nil {
-		return 0, fmt.Errorf("storage not found: %w", err)
-	}
+	// The server first, because who owns it decides which storage answers.
 	srv, err := h.state.Store.GetServerByID(job.ServerID)
 	if err != nil {
 		return 0, fmt.Errorf("server not found: %w", err)
+	}
+	// One chain, the same one the scheduler walks: the job's storage, else the
+	// owner's own default, else the platform's. This used to hand-roll two of
+	// the three steps and skip the owner entirely, so a tenant who had connected
+	// their own bucket had it honoured on some paths and ignored on this one.
+	storage, err := services.ResolveJobStorage(h.state.Store, job.StorageID, srv.OwnerID)
+	if err != nil {
+		if errors.Is(err, services.ErrNoBackupStorage) {
+			return 0, fmt.Errorf("no storage configured - set a default in Settings, Backups first")
+		}
+		return 0, fmt.Errorf("storage not found: %w", err)
 	}
 	// R2 backup quota: refuse a new backup once the tenant is at/over quota
 	// (0/unset = unlimited, so solo/hoster is unaffected).
@@ -911,8 +915,11 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 
 	storageKey := fmt.Sprintf("backups/%s/job-%d/%s.tar.gz", srv.UUID, job.ID, time.Now().UTC().Format("20060102-150405"))
 	runID, err := h.state.Store.CreateBackupRun(&models.BackupRun{
-		JobID:      job.ID,
-		Status:     "running",
+		JobID:  job.ID,
+		Status: "running",
+		// Recorded from the storage this dispatch resolved, so the archive stays
+		// findable if the job is pointed elsewhere later.
+		StorageID:  &storage.ID,
 		StorageKey: storageKey,
 	})
 	if err != nil {

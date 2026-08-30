@@ -49,6 +49,10 @@ func applyPlansSchema(db *sql.DB) error {
 	for _, col := range []string{
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS max_nodes INTEGER`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS max_links INTEGER`,
+		// Separate consent from the traffic one on purpose: agreeing to pay for
+		// player traffic is not agreeing to pay for stored backups, and one
+		// switch for both would enrol somebody in a charge they never saw.
+		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS backup_billing_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS traffic_edge_gb BIGINT`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS traffic_relay_gb BIGINT`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS traffic_combined_gb BIGINT`,

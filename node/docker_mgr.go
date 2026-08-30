@@ -981,7 +981,40 @@ func (dm *DockerManager) RecreateWithCommand(config ServerConfig) error {
 		return err
 	}
 
-	_, err = dm.startMinecraftContainer(config, netID, netName)
+	_, err = dm.startMinecraftContainer(config, netID, netName, true)
+	return err
+}
+
+// RecreateKeepingRunState applies a new image or start command and leaves the
+// server in the run state it was already in.
+//
+// The plain RecreateWithCommand above always ends with the container running,
+// which is right for an install and for a sub-server switch - both of them mean
+// "and run it". It is wrong for a settings change: an operator who edits a JVM
+// flag on a server they had deliberately stopped has not asked for it to start,
+// and on a Minecraft server "briefly started" is a world load, not a no-op.
+//
+// A container that does not exist is left alone. The saved config is what the
+// next start builds from, so persisting it is the whole job - creating one here
+// would put a container on a host for a server nobody has started yet.
+func (dm *DockerManager) RecreateKeepingRunState(config ServerConfig) error {
+	containerName := fmt.Sprintf("mc_%s", config.UUID)
+	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
+	if err != nil {
+		log.Printf("reconfigure: no container for %s yet; the new settings apply on the next start", config.UUID)
+		return nil
+	}
+	wasRunning := info.State != nil && info.State.Running
+
+	timeout := 15
+	dm.cli.ContainerStop(dm.ctx, containerName, container.StopOptions{Timeout: &timeout})
+	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
+
+	netID, netName, nerr := dm.ensureGlobalNetwork()
+	if nerr != nil {
+		return nerr
+	}
+	_, err = dm.startMinecraftContainer(config, netID, netName, wasRunning)
 	return err
 }
 
@@ -1033,7 +1066,10 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 	return nil
 }
 
-func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, netName string) (string, error) {
+// autoStart false creates the container and leaves it stopped. Only the
+// settings-change path wants that; an install and a switch both mean "and run
+// it", and pass true.
+func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, netName string, autoStart bool) (string, error) {
 	// Docker accepts an empty image and builds a container with nothing in it,
 	// so the failure surfaces much later as `exec: "java": executable file not
 	// found in $PATH` - after the previous container is already gone. Refuse it
@@ -1131,8 +1167,10 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		return "", fmt.Errorf("mc container create error: %v", err)
 	}
 
-	if err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{}); err != nil {
-		return "", fmt.Errorf("mc container start error: %v", err)
+	if autoStart {
+		if err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{}); err != nil {
+			return "", fmt.Errorf("mc container start error: %v", err)
+		}
 	}
 
 	// Confirm the container actually landed on a network. Docker accepts an
@@ -1147,7 +1185,10 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	// network is missing or renamed), and quietly re-attaching would hide it. A
 	// hard error surfaces at the point of creation, which is the only place the
 	// cause is still visible.
-	if info, ierr := dm.cli.ContainerInspect(dm.ctx, resp.ID); ierr == nil && len(info.NetworkSettings.Networks) == 0 {
+	// Only meaningful for a container that was actually started: Docker
+	// materialises the endpoint on start, so a created-but-stopped container
+	// legitimately reports none and would fail this check every time.
+	if info, ierr := dm.cli.ContainerInspect(dm.ctx, resp.ID); autoStart && ierr == nil && len(info.NetworkSettings.Networks) == 0 {
 		dm.cli.ContainerRemove(dm.ctx, resp.ID, container.RemoveOptions{Force: true})
 		return "", fmt.Errorf("mc container %s was created with no network attached (wanted %q, id %s) — "+
 			"the shared network is missing or named differently on this host; refusing to leave a server "+

@@ -246,3 +246,38 @@ func applyModpackCrosscheckSchema(db *sql.DB) error {
 	}
 	return nil
 }
+
+// applySubServerInstallSchema records HOW each sub-server was installed.
+//
+// The setup request has carried modrinthProjectId / modrinthVersionId / packId
+// since modpack installs existed, with a comment saying we remember them "so the
+// panel can later check Modrinth for newer versions and offer one-click update".
+// Nothing ever stored them - they were handed to the node and dropped - so the
+// panel could not show an operator which modpack a sub-server runs, let alone
+// prefill it for an edit. Editing a modpack server to change a JVM flag meant
+// re-picking the modpack from memory.
+//
+// Per (server, sub_server_name) rather than on servers, because sub-servers are
+// directories and each one is installed separately; the servers row only ever
+// described whichever was active. Same key shape as server_mods and
+// server_modpack_contents, deliberately.
+func applySubServerInstallSchema(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS sub_server_installs (
+		server_id             INTEGER     NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		sub_server_name       TEXT        NOT NULL,
+		installer_type        TEXT        NOT NULL DEFAULT '',
+		mc_version            TEXT        NOT NULL DEFAULT '',
+		build_version         TEXT        NOT NULL DEFAULT '',
+		loader                TEXT        NOT NULL DEFAULT '',
+		modrinth_project_id   VARCHAR(64) NOT NULL DEFAULT '',
+		modrinth_version_id   VARCHAR(64) NOT NULL DEFAULT '',
+		modrinth_project_slug TEXT        NOT NULL DEFAULT '',
+		pack_id               INTEGER     NOT NULL DEFAULT 0,
+		pack_build_id         INTEGER     NOT NULL DEFAULT 0,
+		installed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		PRIMARY KEY (server_id, sub_server_name)
+	)`); err != nil {
+		return fmt.Errorf("sub-server installs: create sub_server_installs: %w", err)
+	}
+	return nil
+}

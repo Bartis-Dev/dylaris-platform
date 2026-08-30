@@ -26,6 +26,29 @@ func createBackupTables(db *sql.DB) error {
 		// its plaintext secret inside config until its next write, which the
 		// store migrates into secret_enc (read-then-rewrite).
 		`ALTER TABLE backup_storages ADD COLUMN IF NOT EXISTS secret_enc TEXT NOT NULL DEFAULT ''`,
+		// Whose storage this is. NULL is the platform's own, which is every row
+		// that existed before this column, so the meaning of the existing data
+		// does not change. A tenant's row is theirs alone: they configure it,
+		// their backups go to it, and we never pay for what it holds.
+		//
+		// CASCADE rather than SET NULL: a deleted user's S3 credentials must not
+		// survive them, and a row left behind with no owner would become a
+		// PLATFORM storage - visible to admins and offerable as a default.
+		`ALTER TABLE backup_storages ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id) ON DELETE CASCADE`,
+		`CREATE INDEX IF NOT EXISTS idx_backup_storages_owner ON backup_storages(owner_id) WHERE owner_id IS NOT NULL`,
+		// The name is unique WITHIN a scope, not globally. A column-level UNIQUE
+		// would let one tenant's "Backblaze" block every other tenant's, and a
+		// plain UNIQUE (owner_id, name) would do the opposite: Postgres treats
+		// NULLs as distinct, so it would stop enforcing uniqueness among the
+		// platform rows, which is where it is enforced today.
+		`ALTER TABLE backup_storages DROP CONSTRAINT IF EXISTS backup_storages_name_key`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_storages_platform_name ON backup_storages(name) WHERE owner_id IS NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_storages_owner_name ON backup_storages(owner_id, name) WHERE owner_id IS NOT NULL`,
+		// One default per scope, enforced by the database rather than only by the
+		// transaction that clears the previous one. Two platform defaults would
+		// make "the default" whichever row the LIMIT 1 happened to return.
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_storages_platform_default ON backup_storages((is_default)) WHERE is_default AND owner_id IS NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_storages_owner_default ON backup_storages(owner_id) WHERE is_default AND owner_id IS NOT NULL`,
 		// Per-server backup job. Multiple jobs allowed per container; each
 		// optionally targets a single sub-server (sub_server = NULL means
 		// full-container snapshot).
@@ -57,6 +80,28 @@ func createBackupTables(db *sql.DB) error {
 			storage_key TEXT NOT NULL DEFAULT '',
 			error_message TEXT NOT NULL DEFAULT ''
 		)`,
+		// How the sub-servers in this archive were INSTALLED, as JSON, captured
+		// when the run succeeded.
+		//
+		// A restore replaces files without saying anything about the install, so
+		// without this the record kept describing whatever was installed LAST -
+		// restore a backup taken under modpack version 3 while the record says 5
+		// and the setup screen confidently shows the wrong pack. Carried on the
+		// run rather than inside the archive so the backup FORMAT does not have to
+		// change, and so an archive written by an older node still restores.
+		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS install_snapshot TEXT NOT NULL DEFAULT ''`,
+		// Where this archive actually WENT, resolved at run time.
+		//
+		// The location used to be re-derived from the job on every read, which is
+		// only correct while a job never changes storage. It also could not
+		// answer the question billing now asks - whether these bytes are on our
+		// storage or on the tenant's own - because a job with no storage set
+		// resolves through a chain, and the chain's answer changes.
+		//
+		// SET NULL on delete, and a NULL here means "before this column, or the
+		// storage is gone": both are read as ours, which is the safe direction
+		// for a quota (it counts rather than silently exempting).
+		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS storage_id INTEGER REFERENCES backup_storages(id) ON DELETE SET NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id, started_at DESC)`,
 		// One row per restore attempt. We keep history separate from
 		// backup_runs because a single archive can be restored many times

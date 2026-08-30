@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Server, setupServer, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, getServerRoutes, GatewayRoute, CreateRouteRequest } from '@/lib/api';
+import { Server, setupServer, updateServerRuntime, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, getServerRoutes, GatewayRoute, CreateRouteRequest } from '@/lib/api';
 import { createBeamAdapter } from '@/lib/adapters';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
@@ -13,6 +13,9 @@ import SetupViewMode from './setup/SetupViewMode';
 import SetupNewWizard from './setup/SetupNewWizard';
 import SetupEditMode from './setup/SetupEditMode';
 import RoutesModal from '@/components/RoutesModal';
+import { getSubServerInstalls, type SubServerInstall } from '@/lib/api/subServerInstalls';
+import WipeChoiceDialog from '@/views/setup/WipeChoiceDialog';
+import { classifyInstallChange, type InstallChange, type WipeToken } from '@/lib/installWipe';
 import { API_URL } from '@/lib/api/core';
 import { isSubServerName } from '@/lib/validation';
 const DEFAULT_GC_FLAGS = '-XX:+UseG1GC -XX:MaxHeapFreeRatio=40 -XX:MinHeapFreeRatio=15 -XX:-ShrinkHeapInSteps';
@@ -84,17 +87,24 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     // back to the major when the build is a loader version (Fabric/Forge).
     useEffect(() => {
         if (formMode === 'view') return;
-        const v = effectiveMcVersion(selectedMajor, selectedBuild);
-        if (!v) return;
-        const rec = recommendJavaForVersion(v);
+        // A modpack carries its own Minecraft version, and on the modpack tabs
+        // the online version pickers are empty - so keying this on them alone
+        // meant picking a modpack recommended nothing and the form silently kept
+        // whatever Java was last selected. Which one applies follows the tab the
+        // operator is actually installing from.
+        const fromPicker =
+            installTab === 'modpack' ? (modpackSelection?.mcVersion || '')
+            : installTab === 'pack' ? (packSelection?.mcVersion || '')
+            : effectiveMcVersion(selectedMajor, selectedBuild);
+        if (!fromPicker) return;
+        const rec = recommendJavaForVersion(fromPicker);
         if (rec) setJavaImage(rec);
-    }, [selectedMajor, selectedBuild, formMode]);
+    }, [selectedMajor, selectedBuild, formMode, installTab, modpackSelection?.mcVersion, packSelection?.mcVersion]);
 
     // Pre-populate version when entering edit mode (handles case where software didn't change)
     useEffect(() => {
         if (formMode !== 'edit' || allVersions.length === 0) return;
-        const mcVer = server.minecraftVersion || '';
-        const buildNum = server.buildNumber || '';
+        const { mcVersion: mcVer, buildVersion: buildNum } = recordedVersions();
         if (!mcVer) return;
         if (allVersions.some(v => v.major === mcVer)) {
             setSelectedMajor(mcVer);
@@ -133,6 +143,19 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     // the createServerRoute call on submit when the user picked a
     // domain that's already routed to this same server.
     const [existingRoutes, setExistingRoutes] = useState<GatewayRoute[]>([]);
+    // How each sub-server was installed. Absent for anything installed before
+    // Core started recording it, which is why every read falls back to the
+    // server row rather than treating "no record" as "installed with nothing".
+    const [installs, setInstalls] = useState<SubServerInstall[]>([]);
+    // Set while the cleanup dialog is open. handleSubmit runs again with the
+    // chosen tokens once it is answered, so the whole submit path stays one
+    // function rather than two that have to agree.
+    const [pendingWipe, setPendingWipe] = useState<InstallChange | null>(null);
+    // True when edit mode opened before the install records had arrived. The
+    // records are fetched on mount and the Edit button is a click away, so a fast
+    // operator got the servers-row fallback and a form that had quietly not
+    // loaded their modpack - the exact complaint this feature answers.
+    const [editPrefillPending, setEditPrefillPending] = useState(false);
     const [showRoutesModal, setShowRoutesModal] = useState(false);
     const loadRoutes = useCallback(async () => {
         try {
@@ -143,6 +166,33 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         } catch { /* non-fatal: tooltip just won't know about own routes */ }
     }, [server.id]);
     useEffect(() => { loadRoutes(); }, [loadRoutes]);
+
+    const loadInstalls = useCallback(async () => {
+        const res = await getSubServerInstalls(server.id);
+        if (res.success && res.installs) setInstalls(res.installs);
+    }, [server.id]);
+    useEffect(() => { loadInstalls(); }, [loadInstalls]);
+
+    const installFor = useCallback(
+        (name: string) => installs.find(i => i.subServerName === name),
+        [installs],
+    );
+
+    /**
+     * The versions to put back on the form, preferring the RECORDED install.
+     *
+     * The servers row carries the same two values, but only ever for whichever
+     * sub-server is active - so with two sub-servers it is the wrong answer for
+     * one of them, and editing that one silently offered the other's version.
+     * The row stays the fallback for anything installed before Core recorded it.
+     */
+    const recordedVersions = useCallback(() => {
+        const rec = installFor(server.activeSubServer || '');
+        return {
+            mcVersion: rec?.mcVersion || server.minecraftVersion || '',
+            buildVersion: rec?.buildVersion || server.buildNumber || '',
+        };
+    }, [installFor, server.activeSubServer, server.minecraftVersion, server.buildNumber]);
 
     // Delete sub-server
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -256,20 +306,48 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         setSwitchTarget(null);
     };
 
+    /** Puts the form on the tab the sub-server was installed from. */
+    const applyInstallTab = useCallback((sType: string) => {
+        if (sType === 'library') {
+            setInstallTab('library');
+        } else if (sType === 'upload' || sType === 'upload-zip') {
+            setInstallTab('upload');
+        } else if (sType === 'modpack') {
+            // Used to fall into the else below, which put a modpack server on the
+            // ONLINE tab with "modpack" selected as its server software - a value
+            // no software list contains.
+            setInstallTab('modpack');
+        } else if (sType === 'pack') {
+            setInstallTab('pack');
+        } else {
+            setSoftware(sType);
+            setInstallTab('online');
+        }
+    }, []);
+
+    // Finish a prefill that opened before the records had loaded. Runs once: the
+    // flag is cleared here, so an operator who then switches tabs by hand is not
+    // moved back by a late response.
+    useEffect(() => {
+        if (!editPrefillPending || formMode !== 'edit') return;
+        const rec = installFor(server.activeSubServer || '');
+        if (!rec) return;
+        setEditPrefillPending(false);
+        applyInstallTab(rec.installerType);
+    }, [editPrefillPending, formMode, installFor, server.activeSubServer, applyInstallTab]);
+
     const enterEditMode = () => {
         setFormMode('edit');
         setSubName(server.activeSubServer || '');
         setJavaImage(server.image || JAVA_21);
         setExtraFlags(server.extraJvmFlags || '');
-        const sType = server.installerType || defaultSoftware;
-        if (sType === 'library') {
-            setInstallTab('library');
-        } else if (sType === 'upload') {
-            setInstallTab('upload');
-        } else {
-            setSoftware(sType);
-            setInstallTab('online');
-        }
+        // The RECORDED install wins over the servers row: that row only ever
+        // described whichever sub-server was active, so with two sub-servers it
+        // was the wrong answer for one of them. Falls back to the row for
+        // anything installed before Core recorded this.
+        const rec = installFor(server.activeSubServer || '');
+        setEditPrefillPending(!rec);
+        applyInstallTab(rec?.installerType || server.installerType || defaultSoftware);
         setError('');
     };
 
@@ -293,8 +371,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
 
     const prefillVersionFromServer = (versions: VersionEntry[]) => {
         if (formMode !== 'edit') return;
-        const mcVer = server.minecraftVersion || '';
-        const buildNum = server.buildNumber || '';
+        const { mcVersion: mcVer, buildVersion: buildNum } = recordedVersions();
         if (mcVer && versions.some(v => v.major === mcVer)) {
             setSelectedMajor(mcVer);
             if (buildNum && versions.some(v => v.major === mcVer && v.build === buildNum)) {
@@ -316,6 +393,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
 
     const handleSwitchServer = async () => {
         if (!switchTarget) return;
+
         setSubmitting(true);
         setError('');
         const res = await switchSubServer(server.id, switchTarget);
@@ -324,7 +402,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         setSubmitting(false);
     };
 
-    const handleSubmit = async () => {
+    const handleSubmit = async (wipePaths?: WipeToken[]) => {
         const sanitized = sanitizeName(subName);
         if (!sanitized) { setSubNameError('Server name is required.'); return; }
         // The field shows this error while you type, and nothing used to act on
@@ -336,6 +414,48 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             setSubNameError('Use letters, numbers, -, _ or +, up to 50 characters.');
             return;
         }
+
+        // What is actually changing decides which of two very different things
+        // this save is. Ask before destroying anything, and only when the INSTALL
+        // is changing: a dialog on every save is one people learn to click
+        // through.
+        if (wipePaths === undefined && formMode === 'edit') {
+            const change = classifyInstallChange(installFor(sanitized), {
+                tab: installTab,
+                software,
+                mcVersion: selectedMajor,
+                buildVersion: selectedBuild,
+                modrinthVersionId: modpackSelection?.versionId,
+                packBuildId: packSelection?.buildId,
+            });
+            if (change !== 'runtime' && change !== 'none') {
+                setPendingWipe(change);
+                return;
+            }
+            // Nothing about the install changed, so the installer must not run.
+            // It used to anyway - there was no other path that could rebuild a
+            // start command - which made "change a GC flag" a reinstall over a
+            // live server directory.
+            setSubmitting(true);
+            setError('');
+            const res = await updateServerRuntime(server.id, { javaImage, extraJvmFlags: extraFlags });
+            setSubmitting(false);
+            if (!res.success) {
+                setError(res.message || 'Could not apply the settings');
+                return;
+            }
+            if (res.warning) setError(res.warning);
+            onSetupComplete();
+            // NOT enterViewMode(): that re-derives the fields from the `server`
+            // prop, which is still the pre-save row - onSetupComplete refreshes it
+            // asynchronously. Going through it showed the OLD Java version back to
+            // an operator who had just changed it, until they left the tab and
+            // came back. What was saved is what is on screen.
+            setFormMode('view');
+            setSwitchTarget(null);
+            return;
+        }
+
         setSubmitting(true);
         setError('');
 
@@ -396,6 +516,11 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             installer.type = 'upload';
         }
 
+        // Only what the operator ticked. Absent means "install on top", which is
+        // what every install did before the dialog existed and is still right for
+        // a jar swap.
+        if (wipePaths && wipePaths.length > 0) installer.wipePaths = wipePaths;
+
         const res = await setupServer(server.id, {
             subServerName: sanitized,
             javaImage,
@@ -425,6 +550,12 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                 // resets cleanly for the next round.
                 setGatewayRoute({ targetPort: 25565 });
             }
+            // Whatever happens below, the local route list is refetched before
+            // the form is shown again. Without it the picker keeps the list it
+            // had BEFORE the route existed, decides the domain is somebody
+            // else's, and shows "already taken" about the route just created -
+            // until the operator opens the routes modal or reloads the page.
+            let routeCreated = false;
             if (hasDomain && !alreadyOurs) {
                 try {
                     const routeRes = await createServerRoute(server.id, gatewayRoute);
@@ -437,12 +568,15 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                         routeError = routeRes.error || routeRes.message || 'Could not create domain route';
                     } else {
                         setGatewayRoute({ targetPort: 25565 });
+                        routeCreated = true;
                     }
                 } catch (e: any) {
                     routeError = e?.message || 'Could not create domain route';
                 }
             }
             await loadSubServers();
+            if (routeCreated) await loadRoutes();
+            await loadInstalls();
             if (routeError) {
                 setError(`Server installed, but domain route failed: ${routeError}`);
             } else {
@@ -648,6 +782,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
 
             {formMode === 'edit' && (
                 <SetupEditMode
+                    currentInstall={installFor(server.activeSubServer || '')}
                     subName={subName}
                     javaImage={javaImage}
                     onJavaChange={setJavaImage}
@@ -758,6 +893,14 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                 through the layout. Reload local existingRoutes when
                 the user mutates anything so the picker's "own route"
                 check stays in sync. */}
+            {pendingWipe && (
+                <WipeChoiceDialog
+                    change={pendingWipe}
+                    onCancel={() => setPendingWipe(null)}
+                    onConfirm={(tokens) => { setPendingWipe(null); void handleSubmit(tokens); }}
+                />
+            )}
+
             {showRoutesModal && (
                 <RoutesModal
                     serverId={server.id}

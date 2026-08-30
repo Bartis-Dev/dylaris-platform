@@ -27,6 +27,20 @@ const (
 	BillingPaymentURLKey    = "billing.payment_url"
 	BillingR2QuotaKey       = "billing.r2_quota_gb" // platform default; empty = no cap, 0 = none
 
+	// BillingR2IncludedKey is the backup storage one purchased UNIT brings, in
+	// GB. Multiplied by what the tenant holds, the same way every other
+	// allowance on this platform is - a customer with three BYON units gets
+	// three times the addresses and three times the traffic, and backup storage
+	// had no reason to be the one thing that did not scale with the purchase.
+	BillingR2IncludedKey = "billing.r2_included_gb"
+	// BillingR2BookableKey is how much MORE a tenant may take on top, once they
+	// have agreed to be charged for it. Zero means the included amount is the
+	// end of it, whatever they agree to.
+	BillingR2BookableKey = "billing.r2_bookable_gb"
+
+	DefaultR2IncludedGB = 50
+	DefaultR2BookableGB = 500
+
 	DefaultGracePeriod   = "3d"
 	DefaultR2Retention   = "3m"
 	DefaultNodeRetention = "2w"
@@ -47,15 +61,81 @@ func r2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
 	if b != nil && b.R2QuotaGB != nil {
 		return b.R2QuotaGB
 	}
-	if v, _ := st.GetSetting(BillingR2QuotaKey); v != "" {
-		if n, perr := strconv.ParseInt(v, 10, 64); perr == nil {
-			if n < 0 {
-				return nil // a stored negative is legacy "unlimited"; honour it as no cap
-			}
-			return &n
+	// What the purchase brings, plus what they agreed to be charged for on top.
+	// Ahead of the flat platform setting because it is the more specific answer:
+	// the flat one predates units and cannot see how many were bought.
+	if q := purchasedR2QuotaGB(st, b); q != nil {
+		return q
+	}
+	// ParseLimitSetting is the one reader of an operator-typed limit: "" defers
+	// to the default passed here (nil, no cap), "unlimited" is a decided no-cap,
+	// and a number is that cap including 0. A stored negative is a legacy
+	// "unlimited" and lands on the same nil.
+	raw, _ := st.GetSetting(BillingR2QuotaKey)
+	return ParseLimitSetting(raw, nil)
+}
+
+// R2IncludedGB is the backup storage a tenant's purchase brings, before anything
+// they have agreed to be charged for. Zero when they hold nothing.
+func R2IncludedGB(st store.Store, b *store.UserBilling) int64 {
+	return settingInt(st, BillingR2IncludedKey, DefaultR2IncludedGB) * purchasedUnits(b)
+}
+
+// R2BookableGB is how much a tenant MAY take beyond the included amount once
+// metered backup billing is on. Also per unit: the cap on what they can spend
+// scales with what they bought, like the allowance it sits on top of.
+func R2BookableGB(st store.Store, b *store.UserBilling) int64 {
+	return R2BookablePerUnit(st) * purchasedUnits(b)
+}
+
+// R2BookablePerUnit is the stored setting on its own, before any tenant's units
+// are applied. The operator screen edits this number, and the notification that
+// goes out when it changes is written against it.
+func R2BookablePerUnit(st store.Store) int64 {
+	return settingInt(st, BillingR2BookableKey, DefaultR2BookableGB)
+}
+
+// purchasedR2QuotaGB is the hard stop for a tenant who bought something: their
+// included allowance, plus the bookable extra ONLY if they agreed to pay for it.
+//
+// nil when they hold nothing, so a tenant with no purchase falls through to the
+// flat platform setting rather than being handed a quota of zero - which would
+// stop backups on every self-hosted install the moment this shipped.
+func purchasedR2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
+	if purchasedUnits(b) == 0 {
+		return nil
+	}
+	total := R2IncludedGB(st, b)
+	if b != nil && b.BackupBillingEnabled {
+		total += R2BookableGB(st, b)
+	}
+	return &total
+}
+
+// purchasedUnits counts the countable products a tenant holds. nil and 0 both
+// mean none: the store clears the override rather than writing 0, so a stored
+// zero is not a quantity it ever meant.
+func purchasedUnits(b *store.UserBilling) int64 {
+	if b == nil {
+		return 0
+	}
+	var n int64
+	if b.MaxNodes != nil && *b.MaxNodes > 0 {
+		n += *b.MaxNodes
+	}
+	if b.MaxLinks != nil && *b.MaxLinks > 0 {
+		n += *b.MaxLinks
+	}
+	return n
+}
+
+func settingInt(st store.Store, key string, fallback int64) int64 {
+	if v, _ := st.GetSetting(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			return n
 		}
 	}
-	return nil
+	return fallback
 }
 
 // R2QuotaExceeded reports whether a tenant may store one more byte of R2 backup.
@@ -323,10 +403,21 @@ func (s *BillingLifecycleService) deleteTenantBackups(ctx context.Context, userI
 	}
 	deps := backupstorage.Deps{Registry: s.registry, NodeStore: s.store}
 	for _, ref := range refs {
-		storage, err := ResolveJobStorage(s.store, ref.StorageID)
+		// The empty owner is deliberate: retention only ever removes archives on
+		// OUR storage, so the chain must not walk into the tenant's own default.
+		// A ref with no storage id at all predates the column, and a run that
+		// predates it went to the platform default.
+		storage, err := ResolveJobStorage(s.store, ref.StorageID, "")
 		if err != nil {
 			log.Printf("billing lifecycle: run %d (%s): cannot resolve storage: %v — keeping the row so the object is not orphaned",
 				ref.RunID, ref.StorageKey, err)
+			continue
+		}
+		// A bucket the tenant connected themselves is not ours to empty. We pay
+		// nothing for it, so deleting frees us nothing, and it holds data they
+		// are paying somebody else to keep. The row stays too: the archive is
+		// still there and still theirs to restore.
+		if storage.OwnerID != nil {
 			continue
 		}
 		provider, err := backupstorage.Open(ctx, storage, deps)

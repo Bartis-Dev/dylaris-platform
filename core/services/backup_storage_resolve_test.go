@@ -10,6 +10,7 @@ import (
 type fakeBackupStorageStore struct {
 	byID    map[int]*models.BackupStorage
 	def     *models.BackupStorage
+	userDef map[string]*models.BackupStorage
 	byIDErr error
 	defErr  error
 }
@@ -28,6 +29,10 @@ func (f fakeBackupStorageStore) GetDefaultBackupStorage() (*models.BackupStorage
 	return f.def, nil
 }
 
+func (f fakeBackupStorageStore) GetUserDefaultBackupStorage(ownerID string) (*models.BackupStorage, error) {
+	return f.userDef[ownerID], nil
+}
+
 func intPtr(i int) *int { return &i }
 
 // TestResolveJobStorage pins the contract the two halves of the backup feature
@@ -42,7 +47,7 @@ func TestResolveJobStorage(t *testing.T) {
 
 	t.Run("job storage wins when set", func(t *testing.T) {
 		s := fakeBackupStorageStore{byID: map[int]*models.BackupStorage{7: own}, def: def}
-		got, err := ResolveJobStorage(s, intPtr(7))
+		got, err := ResolveJobStorage(s, intPtr(7), "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -54,7 +59,7 @@ func TestResolveJobStorage(t *testing.T) {
 	// The case that shipped broken.
 	t.Run("nil storage falls back to the default", func(t *testing.T) {
 		s := fakeBackupStorageStore{byID: map[int]*models.BackupStorage{}, def: def}
-		got, err := ResolveJobStorage(s, nil)
+		got, err := ResolveJobStorage(s, nil, "")
 		if err != nil {
 			t.Fatalf("a job on the default storage was refused: %v", err)
 		}
@@ -67,24 +72,24 @@ func TestResolveJobStorage(t *testing.T) {
 	// from "the id you gave does not resolve".
 	t.Run("nil storage and no default is the one real refusal", func(t *testing.T) {
 		s := fakeBackupStorageStore{byID: map[int]*models.BackupStorage{}}
-		if _, err := ResolveJobStorage(s, nil); !errors.Is(err, ErrNoBackupStorage) {
+		if _, err := ResolveJobStorage(s, nil, ""); !errors.Is(err, ErrNoBackupStorage) {
 			t.Errorf("err = %v, want ErrNoBackupStorage", err)
 		}
 	})
 
 	t.Run("a storage id that no longer exists is not silently defaulted", func(t *testing.T) {
 		s := fakeBackupStorageStore{byID: map[int]*models.BackupStorage{}, def: def}
-		if _, err := ResolveJobStorage(s, intPtr(99)); !errors.Is(err, ErrNoBackupStorage) {
+		if _, err := ResolveJobStorage(s, intPtr(99), ""); !errors.Is(err, ErrNoBackupStorage) {
 			t.Errorf("err = %v, want ErrNoBackupStorage", err)
 		}
 	})
 
 	t.Run("lookup errors propagate", func(t *testing.T) {
 		boom := errors.New("db down")
-		if _, err := ResolveJobStorage(fakeBackupStorageStore{byIDErr: boom}, intPtr(7)); !errors.Is(err, boom) {
+		if _, err := ResolveJobStorage(fakeBackupStorageStore{byIDErr: boom}, intPtr(7), ""); !errors.Is(err, boom) {
 			t.Errorf("by-id err = %v, want the db error", err)
 		}
-		if _, err := ResolveJobStorage(fakeBackupStorageStore{defErr: boom}, nil); !errors.Is(err, boom) {
+		if _, err := ResolveJobStorage(fakeBackupStorageStore{defErr: boom}, nil, ""); !errors.Is(err, boom) {
 			t.Errorf("default err = %v, want the db error", err)
 		}
 	})

@@ -6,10 +6,41 @@ export interface BillingSettings {
     gracePeriod: string;
     r2Retention: string;
     nodeRetention: string;
+    // A tri-state limit as a string: "" is unset, "unlimited" is a decided
+    // no-cap, a number is that cap including 0. Read and written through
+    // limitFromSetting / limitToSetting, never by hand.
     r2QuotaGb: string;
+    // Plain quantities per purchased unit, not tri-state limits: an unlimited
+    // included allowance would be free infinite storage, and an unlimited
+    // bookable one is the open bill its ceiling exists to prevent.
+    r2IncludedGb: string;
+    r2BookableGb: string;
     presignTtlNodeMin: string;
     presignTtlByonMin: string;
     paymentUrl: string;
+}
+
+/** The settings-table sentinel for "no cap at all", mirroring services.LimitUnlimited. */
+export const LIMIT_UNLIMITED = 'unlimited';
+
+/**
+ * Reads an operator-typed limit out of the settings table into what LimitField
+ * speaks: null is no cap, a number is the cap, and 0 is a real cap of none.
+ *
+ * An UNSET setting reads as null rather than 0. The two are opposite answers -
+ * "nobody has capped this" against "they may store nothing" - and Core used to
+ * hand the panel a "0" for unset, which the next save wrote back as a real cap
+ * of none for every tenant.
+ */
+export function limitFromSetting(raw: string): number | null {
+    if (raw === '' || raw === LIMIT_UNLIMITED) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : null;
+}
+
+/** The inverse, and the only writer. null stores the word, never an empty string. */
+export function limitToSetting(v: number | null): string {
+    return v === null ? LIMIT_UNLIMITED : String(v);
 }
 
 // Per-user retention + limit overrides. Empty string on a spec / null on a numeric
@@ -42,6 +73,10 @@ export interface UserBillingAdmin {
 // stops being free. Absent (undefined) on a self-hosted install, where nothing is
 // metered and there is nothing to warn about.
 export interface MyTrafficStatus {
+    // The pool the tenant is CLOSEST to losing, not a sum. A total is the one
+    // number that cannot stop anybody: somebody inside three allowances and past
+    // the fourth is stopped by the fourth, and a banner reading 40% next to a
+    // halted server is worse than no banner.
     usedGb: number;
     ceilingGb: number;
     // Uncapped upward: someone at 300% is shown 300%, not a reassuring 100%.
@@ -49,6 +84,22 @@ export interface MyTrafficStatus {
     // false means reaching the ceiling STOPS their services instead of billing
     // them - which is the part the banner has to say out loud.
     billingEnabled: boolean;
+    // The highest threshold ANY pool has reached: 0, 80, 90 or 100.
+    warn?: number;
+    // Every allowance the tenant is judged against. Player traffic is per
+    // region; file transfers hold one pool for all of them.
+    pools?: TrafficPool[];
+}
+
+// TrafficPool is one allowance. includedGb null means nothing is configured for
+// it, which is NOT a limit of zero: it is not capped and not billed.
+export interface TrafficPool {
+    kind: string;   // "edge" (player traffic) | "relay" (file transfers)
+    region: string; // "*" when the pool is not per region
+    usedGb: number;
+    includedGb: number | null;
+    pct: number;
+    warn: number;
 }
 
 // getMyBilling returns the caller's lifecycle state for the banner.

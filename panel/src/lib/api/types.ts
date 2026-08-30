@@ -349,6 +349,21 @@ export const serverPower = (id: number, action: string) => fetchAPI(`/servers/${
 export const getInstallCooldown = (id: number): Promise<{ success: boolean; seconds: number }> =>
     fetchAPI(`/servers/${id}/install-cooldown`);
 export const setupServer = (id: number, data: any) => fetchAPI(`/servers/${id}/setup`, { method: 'POST', body: JSON.stringify(data) });
+
+/**
+ * Change the Java image and the JVM flags WITHOUT reinstalling.
+ *
+ * setupServer re-runs the installer over the server directory, which is right
+ * when the install is actually changing and destructive when it is not. This is
+ * the non-destructive half: the node rebuilds the start command from what is
+ * already on disk and recreates the container around it, leaving the server in
+ * whatever run state it was in.
+ */
+export const updateServerRuntime = (
+    id: number,
+    data: { javaImage: string; extraJvmFlags: string },
+): Promise<{ success: boolean; warning?: string; message?: string }> =>
+    fetchAPI(`/servers/${id}/runtime`, { method: 'PATCH', body: JSON.stringify(data) });
 export const switchSubServer = (id: number, subServerName: string) => fetchAPI(`/servers/${id}/switch`, { method: 'POST', body: JSON.stringify({ subServerName }) });
 export const getSftpCredentials = (id: number) => fetchAPI(`/servers/${id}/sftp-credentials`);
 

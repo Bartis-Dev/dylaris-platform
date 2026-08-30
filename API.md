@@ -135,10 +135,10 @@ can still show what exists.
 
 ## At a glance
 
-- **476 routes** in 50 sections: 214 GET, 140 POST, 37 PUT, 34 PATCH, 52 DELETE.
-- **33** accept no credential at all; read the Gates column before assuming any of them is open.
-- **327** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **33** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **7** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **484 routes** in 50 sections: 217 GET, 142 POST, 37 PUT, 36 PATCH, 53 DELETE.
+- **34** accept no credential at all; read the Gates column before assuming any of them is open.
+- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **34** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **8** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -158,7 +158,7 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (2)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (19)
+- [/api/me](#apime) (24)
 - [/api/modrinth](#apimodrinth) (6)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (17)
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (72)
+- [/api/servers](#apiservers) (74)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -177,7 +177,7 @@ can still show what exists.
 - [/api/status](#apistatus) (1)
 - [/api/storage](#apistorage) (1)
 - [/api/storage-connections](#apistorage-connections) (6)
-- [/api/store](#apistore) (6)
+- [/api/store](#apistore) (7)
 - [/api/system](#apisystem) (4)
 - [/api/tabproxy](#apitabproxy) (1)
 - [/api/ticket-canned-responses](#apiticket-canned-responses) (1)
@@ -484,6 +484,11 @@ can still show what exists.
 | GET | `/api/me/api-keys` | session | `apikeys.read` | - | `APIKeysHandler.List` | the calling user's own API keys, plus what they are allowed to mint. |
 | POST | `/api/me/api-keys` | session | `apikeys.write` | Limit, LimitBody | `APIKeysHandler.Create` | mints a key and returns its plaintext exactly once. |
 | DELETE | `/api/me/api-keys/{id:[0-9]+}` | session | `apikeys.delete` | - | `APIKeysHandler.Revoke` | revokes one of the caller's own keys. |
+| GET | `/api/me/backup-storages` | session | `backupstorage.read` | - | `BackupHandler.ListOwnStorages` | the caller's own storages, with secrets stripped, and which of them is their default. |
+| POST | `/api/me/backup-storages` | session | `backupstorage.write` | - | `BackupHandler.CreateOwnStorage` | connects a bucket of the caller's own. |
+| PATCH | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.write` | - | `BackupHandler.UpdateOwnStorage` | - |
+| DELETE | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.delete` | - | `BackupHandler.DeleteOwnStorage` | The archives already written to it are NOT deleted: they are in a bucket the tenant controls, and this only removes our record of how to reach it. |
+| POST | `/api/me/backup-storages/{id:[0-9]+}/test` | session | `backupstorage.write` | - | `BackupHandler.TestOwnStorage` | the same round trip the admin path runs, against the caller's own storage only. |
 | GET | `/api/me/billing` | session | _no capability_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
 | GET | `/api/me/entitlement` | session | _no capability_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |
 | GET | `/api/me/modrinth-pat` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `ModrinthPATHandler.Status` | returns whether the user has a PAT configured + (if so) the username + last_validated timestamp. |
@@ -639,6 +644,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/edge-motd` | session | `overview.read` | - | `ServerHandler.GetServerEdgeMotd` | Returns the per-server edge transitional-MOTD config (mode + custom text). |
 | PATCH | `/api/servers/{id:[0-9]+}/edge-motd` | session | `server.settings.write` | - | `ServerHandler.SetServerEdgeMotd` | Updates the per-server edge transitional-MOTD mode/text and publishes it to Redis so the gateway edge picks it up (auto/custom/off; see the edge's handleSpliceServerStatus). |
 | GET | `/api/servers/{id:[0-9]+}/install-cooldown` | session | `overview.read` | - | `ServerHandler.GetInstallCooldown` | returns how many seconds remain on the post-install cooldown for a server, so the UI can disable power actions and show a countdown instead of letting the user click and get a 429. |
+| GET | `/api/servers/{id:[0-9]+}/installs` | session | `server.settings.write` | - | `ServerHandler.SubServerInstalls` | how each sub-server of this server was installed. |
 | PATCH | `/api/servers/{id:[0-9]+}/loader-metadata` | session | `server.settings.write` | - | `ServerHandler.DeclareServerLoaderMetadata` | persists a server's InstallerType (loader) + MinecraftVersion (and optional BuildNumber) WITHOUT reinstalling or wiping the server. |
 | GET | `/api/servers/{id:[0-9]+}/members` | session | `members.read` | - | `MemberHandler.GetMembers` | the member invites on one server. |
 | POST | `/api/servers/{id:[0-9]+}/members` | session | `members.write` | - | `MemberHandler.InviteMember` | invites a user onto the server with a permission set. |
@@ -670,6 +676,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/routes` | session | `network.read` | - | `GatewayHandler.GetServerRoutes` | the gateway routes belonging to one server, filtered out of the full Redis set by server UUID. |
 | POST | `/api/servers/{id:[0-9]+}/routes` | session | `network.write` | RequireGatewayEnabled | `GatewayHandler.CreateServerRoute` | queues a route for one server. |
 | DELETE | `/api/servers/{id:[0-9]+}/routes/{domain:.+}` | session | `network.write` | - | `GatewayHandler.DeleteServerRoute` | queues removal of one of this server's routes. |
+| PATCH | `/api/servers/{id:[0-9]+}/runtime` | session | `server.settings.write` | - | `ServerHandler.UpdateServerRuntime` | change the Java image and the JVM flags WITHOUT reinstalling. |
 | GET | `/api/servers/{id:[0-9]+}/scheduled-tasks` | session | `schedule.read` | - | `ScheduledTasksHandler.List` | the cron tasks configured on one server. |
 | POST | `/api/servers/{id:[0-9]+}/scheduled-tasks` | session | `schedule.write` | - | `ScheduledTasksHandler.Create` | adds a cron task. |
 | PATCH | `/api/servers/{id:[0-9]+}/scheduled-tasks/{taskId:[0-9]+}` | session | `schedule.write` | - | `ScheduledTasksHandler.Update` | edits a cron task belonging to the server in the path. |
@@ -784,6 +791,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+| GET | `/api/store/backup-defaults` | **none** | _public_ | Limit | `StoreHandler.BackupDefaults` | store-key. |
 | POST | `/api/store/link/start` | session | _no capability_ | - | `StoreHandler.LinkStart` | authed panel user. |
 | POST | `/api/store/link/verify` | **none** | _public_ | Limit, LimitBody | `StoreHandler.LinkVerify` | store-key. |
 | POST | `/api/store/provision` | **none** | _public_ | Limit, LimitBody | `StoreHandler.Provision` | store-key. |

@@ -16,7 +16,6 @@ import BillingBanner from '@/components/BillingBanner';
 import StorageBanner from '@/components/StorageBanner';
 import { ConfirmDialogRoot } from '@/components/ui/ConfirmDialog';
 import { ToastRoot } from '@/components/ui/Toast';
-import CoreRegionChip from '@/components/CoreRegionChip';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
@@ -116,12 +115,13 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
 
     return (
         <SidebarCollapseProvider>
-        {/* min-w-[720px] is a deliberate floor, not an oversight. Below it the
-            file browser, the console and the routes table stop being usable at
-            any font size, and a horizontal scrollbar is the honest answer -
-            better than a layout that renders and does not work. It also bounds
-            the testing surface to three bands instead of a continuum. */}
-        <div className="flex flex-col h-screen min-w-[720px] bg-(--base-00) text-(--base-09) font-body overflow-hidden">
+        {/* min-w-[1024px] is a deliberate floor, not an oversight. Below it the
+            file browser, the console, the routes table and the module strip stop
+            being usable at any font size, and a horizontal scrollbar is the
+            honest answer - better than a layout that renders and does not work.
+            It also bounds the testing surface to two bands instead of a
+            continuum. Phones are not a target: they get their own app. */}
+        <div className="flex flex-col h-screen min-w-[1024px] bg-(--base-00) text-(--base-09) font-body overflow-hidden">
             {/* Single host for confirmDialog(). Mounted here so every authed
                 screen can ask without threading a node through its own JSX. */}
             <ConfirmDialogRoot />
@@ -142,7 +142,6 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             <div className="relative z-30 shrink-0">
                 <Navbar brand={<SidebarBrand />}>
                     <UtilityCluster>
-                    <CoreRegionChip />
                     <UploadManagerWidget />
                     {/* UpdatesBell is for everyone now: an admin sees the platform notes and
                         every component, a customer sees the customer notes and their own nodes. */}
@@ -246,6 +245,16 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                     className="dropdown-item"
                                 >
                                     <Package size={20} className="mr-3" /> Modrinth
+                                </GuardedLink>
+                                {/* Unconditional, like API Keys beside it: the route is
+                                    capability-gated at Core and the page says so plainly
+                                    when the grant is missing. The panel holds no list of
+                                    the caller's own capabilities to hide it by. */}
+                                <GuardedLink
+                                    href="/account/backup-storage"
+                                    className="dropdown-item"
+                                >
+                                    <HardDrive size={20} className="mr-3" /> Backup storage
                                 </GuardedLink>
                                 {/* Connect-store entry only on the hosted build. */}
                                 {featureFlags.store && (

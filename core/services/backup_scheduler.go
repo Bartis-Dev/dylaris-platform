@@ -194,6 +194,9 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			if err := b.store.UpdateBackupRestoreStatus(result.RestoreID, result.Status, result.Error, completed); err != nil {
 				log.Printf("restore result: update failed for id=%d: %v", result.RestoreID, err)
 			}
+			if result.Status == "success" {
+				b.restoreInstalls(restore.RunID, restore.ServerID)
+			}
 		}
 	}
 }
@@ -249,6 +252,7 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 			}
 			b.store.UpdateBackupRunStatus(result.RunID, result.Status, result.Error, result.SizeBytes, run.StorageKey, time.Now())
 			if result.Status == "success" {
+				b.snapshotInstalls(result.RunID, job)
 				b.enforceRetention(ctx, run.JobID)
 			}
 		}
@@ -273,18 +277,23 @@ func (b *BackupScheduler) enforceRetention(ctx context.Context, jobID int) {
 	// archives behind, permanently and without a log line. That is the failure
 	// mode with no ceiling: it repeats on every prune, for every such job, and
 	// nothing afterwards knows those objects exist.
-	storage, err := ResolveJobStorage(b.store, job.StorageID)
-	if err != nil {
-		log.Printf("retention prune: job %d — cannot resolve storage: %v; %d pruned archive(s) are now untracked",
-			jobID, err, len(pruned))
-		return
-	}
+	owner := BackupJobOwner(b.store, job.ServerID)
 	// Best-effort delete from storage — DB rows are already gone. That ordering
 	// is pre-existing: PruneOldBackupRuns both prunes and reports, so a failure
 	// here still orphans that one archive. Resolving the storage correctly turns
 	// "always orphans" into "orphans on a transient fault", which is the part
 	// worth fixing without restructuring the store call.
+	//
+	// Resolved PER RUN, not once for the job: a job whose storage was changed
+	// has older archives sitting somewhere else, and deleting them from the
+	// job's current storage would delete nothing while reporting success.
 	for _, run := range pruned {
+		storage, err := ResolveRunStorage(b.store, &run, job.StorageID, owner)
+		if err != nil {
+			log.Printf("retention prune: job %d — cannot resolve storage for run %d: %v; the archive is now untracked",
+				jobID, run.ID, err)
+			continue
+		}
 		if err := b.deleteStorageObject(ctx, storage, run.StorageKey); err != nil {
 			log.Printf("retention prune: %s delete failed: %v", run.StorageKey, err)
 		}
@@ -438,7 +447,10 @@ func (b *BackupScheduler) statBackupObject(ctx context.Context, run models.Backu
 	// StorageID meant a job on the default storage could not even be checked
 	// for whether its archive existed, so every one of its runs was reported
 	// as UNVERIFIED.
-	bs, err := ResolveJobStorage(b.store, job.StorageID)
+	// The RUN's own storage where it has one: an archive written before the job
+	// was pointed somewhere else is still where it was written, and statting the
+	// job's current storage would report it missing.
+	bs, err := ResolveRunStorage(b.store, &run, job.StorageID, BackupJobOwner(b.store, job.ServerID))
 	if err != nil {
 		return backupstorage.Object{}, fmt.Errorf("resolve storage: %w", err)
 	}
@@ -459,15 +471,15 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		return fmt.Errorf("node lookup: %w", err)
 	}
 
-	// Resolve storage (job-level or fallback to default).
-	var storage *models.BackupStorage
-	if job.StorageID != nil {
-		storage, err = b.store.GetBackupStorage(*job.StorageID)
-	} else {
-		storage, err = b.store.GetDefaultBackupStorage()
-	}
-	if err != nil || storage == nil {
-		return fmt.Errorf("no storage available")
+	// Resolve storage through the one chain: job -> the owner's own default ->
+	// the platform default. This used to hand-roll two of the three steps, so a
+	// tenant who had connected their own bucket had every SCHEDULED backup
+	// written to ours anyway - the manual path honoured their choice and the
+	// cron path did not, which is the sort of difference nobody notices until
+	// the bill or the restore.
+	storage, err := ResolveJobStorage(b.store, job.StorageID, srv.OwnerID)
+	if err != nil {
+		return fmt.Errorf("resolve storage: %w", err)
 	}
 
 	// R2 backup quota: skip the scheduled run once the tenant is at/over quota
@@ -496,8 +508,11 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 
 	storageKey := fmt.Sprintf("backups/%s/job-%d/%s.tar.gz", srv.UUID, job.ID, time.Now().UTC().Format("20060102-150405"))
 	runID, err := b.store.CreateBackupRun(&models.BackupRun{
-		JobID:      job.ID,
-		Status:     "running",
+		JobID:  job.ID,
+		Status: "running",
+		// Recorded now, from the storage this dispatch actually resolved, so the
+		// archive stays findable if the job is pointed elsewhere later.
+		StorageID:  &storage.ID,
 		StorageKey: storageKey,
 	})
 	if err != nil {
@@ -593,4 +608,70 @@ func ComputeBackupNextRun(schedule string, from time.Time) *time.Time {
 	}
 	next := from.Add(d)
 	return &next
+}
+
+// snapshotInstalls records how the archived sub-servers were installed.
+//
+// A backup captures files and says nothing about the install, so without this a
+// restore left the records describing whatever was installed LAST: restore an
+// archive taken under modpack version 3 while the record says 5, and the setup
+// screen confidently shows the wrong pack and treats re-picking version 3 as a
+// change.
+//
+// A job with no sub-server backs up the whole container, so every record for the
+// server is captured; a scoped job captures the one it archives.
+//
+// Best-effort: the backup has already succeeded and must not be marked failed
+// because a convenience snapshot could not be written.
+func (b *BackupScheduler) snapshotInstalls(runID int, job *models.BackupJob) {
+	var records []models.SubServerInstall
+	if job.SubServer != nil && *job.SubServer != "" {
+		rec, err := b.store.GetSubServerInstall(job.ServerID, *job.SubServer)
+		if err != nil || rec == nil {
+			return
+		}
+		records = []models.SubServerInstall{*rec}
+	} else {
+		all, err := b.store.ListSubServerInstalls(job.ServerID)
+		if err != nil || len(all) == 0 {
+			return
+		}
+		records = all
+	}
+	blob, err := json.Marshal(records)
+	if err != nil {
+		log.Printf("backup snapshot: marshal for run %d: %v", runID, err)
+		return
+	}
+	if err := b.store.SetBackupRunInstallSnapshot(runID, string(blob)); err != nil {
+		log.Printf("backup snapshot: run %d: %v", runID, err)
+	}
+}
+
+// restoreInstalls puts the archived install records back after a restore.
+//
+// Nothing to put back is the common case and NOT an error: every run from before
+// this was captured has an empty snapshot, and the honest answer there is to
+// leave the existing records alone rather than clear them. A restore that
+// silently emptied them would trade a record that might be stale for no record
+// at all, which reads on screen as "we never wrote this down".
+func (b *BackupScheduler) restoreInstalls(runID, serverID int) {
+	run, err := b.store.GetBackupRun(runID)
+	if err != nil || run == nil || run.InstallSnapshot == "" {
+		return
+	}
+	var records []models.SubServerInstall
+	if err := json.Unmarshal([]byte(run.InstallSnapshot), &records); err != nil {
+		log.Printf("restore installs: run %d snapshot is unreadable: %v", runID, err)
+		return
+	}
+	for _, rec := range records {
+		// The server ID comes from the RESTORE, not from the snapshot: an archive
+		// can be restored onto a different server, and writing the recorded id
+		// back would attach the record to whatever the backup came from.
+		rec.ServerID = serverID
+		if err := b.store.UpsertSubServerInstall(rec); err != nil {
+			log.Printf("restore installs: server %d/%s: %v", serverID, rec.SubServerName, err)
+		}
+	}
 }

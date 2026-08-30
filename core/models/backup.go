@@ -5,14 +5,23 @@ import (
 	"time"
 )
 
-// BackupStorage is an admin-configured target for backup archives.
+// BackupStorage is a target for backup archives: either the platform's own,
+// configured by an admin, or one a tenant connected for themselves.
 type BackupStorage struct {
-	ID        int             `json:"id"`
-	Name      string          `json:"name"`
-	Provider  string          `json:"provider"` // "local"|"shared" | "s3" | "node-local" | "core-storage"
-	Config    json.RawMessage `json:"config"`
-	IsDefault bool            `json:"isDefault"`
-	CreatedAt time.Time       `json:"createdAt"`
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	Provider string          `json:"provider"` // "local"|"shared" | "s3" | "node-local" | "core-storage"
+	Config   json.RawMessage `json:"config"`
+	// OwnerID is nil for the platform's own storages, which is what every row
+	// was before tenants could bring their own. A tenant's storage is theirs:
+	// only they may target it, we do not pay for what it holds, and it is
+	// therefore outside their backup quota.
+	OwnerID *string `json:"ownerId,omitempty"`
+	// IsDefault is the default WITHIN its scope: the platform default when
+	// OwnerID is nil, that tenant's own default otherwise. A tenant's default
+	// wins over the platform's for their jobs.
+	IsDefault bool      `json:"isDefault"`
+	CreatedAt time.Time `json:"createdAt"`
 
 	// SecretSet reports, on a read response, that an s3 secret is stored
 	// WITHOUT returning it. It is transient: set by the store on read from the
@@ -52,6 +61,16 @@ type BackupRun struct {
 	SizeBytes    int64      `json:"sizeBytes"`
 	StorageKey   string     `json:"storageKey"`
 	ErrorMessage string     `json:"errorMessage"`
+	// StorageID is where the archive actually went, recorded when the run
+	// started. nil on runs from before it was recorded, and on runs whose
+	// storage has since been deleted; both are read as the platform's own,
+	// which is the safe direction for a quota.
+	StorageID *int `json:"storageId,omitempty"`
+	// InstallSnapshot is the sub-server install records this archive was taken
+	// from, as JSON. Empty for runs from before it was captured, and for runs
+	// that failed - a restore then leaves the records alone, which is the
+	// honest answer when nobody wrote down what was there.
+	InstallSnapshot string `json:"-"`
 }
 
 // BackupRestore records a restore attempt against an archived BackupRun.

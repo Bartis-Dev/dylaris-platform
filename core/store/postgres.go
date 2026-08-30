@@ -1004,6 +1004,19 @@ func (s *PostgresStore) UpdateServerSetup(id int, image, command, activeSubServe
 	return err
 }
 
+// UpdateServerRuntime persists ONLY the Java image and the JVM flags.
+//
+// Deliberately narrow. UpdateServerSetup writes those two alongside the active
+// sub-server and the whole loader triple, which is right after an install and
+// wrong for a settings change: a runtime edit would then rewrite the installer
+// metadata from whatever the form happened to hold, and the Content tab reads
+// that triple to decide whether it is looking at mods or plugins.
+func (s *PostgresStore) UpdateServerRuntime(serverID int, javaImage, extraJvmFlags string) error {
+	_, err := s.db.Exec("UPDATE servers SET game_image = $1, extra_jvm_flags = $2 WHERE id = $3",
+		javaImage, extraJvmFlags, serverID)
+	return err
+}
+
 // UpdateServerLoaderMetadata persists ONLY installer_type/minecraft_version/
 // build_number, unlike UpdateServerSetup which also rewrites game_image/
 // start_command/active_sub_server/extra_jvm_flags. Used by the metadata-only

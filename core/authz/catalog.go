@@ -93,6 +93,19 @@ var catalog = []Capability{
 	{ID: "backups.delete", Label: "Delete backup", Category: "Backups", Scope: ScopeServer, Verb: VerbDelete},
 	{ID: "backups.restore", Label: "Restore backup", Category: "Backups", Scope: ScopeServer, Verb: VerbRestore},
 
+	// A tenant's OWN object storage for backups, across all their servers, which
+	// is why it is owner-scoped rather than per server. Separate from
+	// backups.* because it is a different thing to trust somebody with:
+	// backups.create runs a backup to a target the platform chose, this decides
+	// where the bytes GO and holds an S3 credential.
+	//
+	// Not granted by any preset. Connecting arbitrary S3 endpoints makes Core
+	// talk to hosts an operator did not pick, so it is a deliberate grant rather
+	// than something that arrives with a role.
+	{ID: "backupstorage.read", Label: "View own backup storage", Category: "Backups", Scope: ScopeOwner, Verb: VerbRead},
+	{ID: "backupstorage.write", Label: "Connect own backup storage", Category: "Backups", Scope: ScopeOwner, Verb: VerbWrite},
+	{ID: "backupstorage.delete", Label: "Remove own backup storage", Category: "Backups", Scope: ScopeOwner, Verb: VerbDelete},
+
 	{ID: "network.read", Label: "View network", Category: "Network", Scope: ScopeServer, Verb: VerbRead},
 	{ID: "network.write", Label: "Edit network", Category: "Network", Scope: ScopeServer, Verb: VerbWrite},
 

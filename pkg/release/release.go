@@ -31,7 +31,12 @@ import (
 // to the people running it - the entry had to either lie by naming `edge` or
 // name nothing. Appending is safe: the panel skips a component with no
 // instances that no release names.
-var Services = []string{"core", "panel", "node", "log-shipper", "edge", "link", "hub", "warp", "beam-relay"}
+// spine is a gateway component like edge/link/hub/warp/beam-relay, and is here
+// for the same reason they are: this list is what the gateway's notes validate
+// against too. It is the one entry that is NOT an image - it ships as a systemd
+// binary - which changes nothing about naming it, since the tag answers "you
+// must update THIS to get the change" rather than "restart this container".
+var Services = []string{"core", "panel", "node", "log-shipper", "edge", "link", "hub", "warp", "beam-relay", "spine"}
 
 func knownService(s string) bool { return slices.Contains(Services, s) }
 

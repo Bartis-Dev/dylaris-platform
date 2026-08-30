@@ -127,6 +127,9 @@ type subServerDeleteFakeStore struct {
 	statusSet  string
 	activeSet  bool
 	desiredSet bool
+	// installCleared is the sub-server whose install record was dropped, "" if
+	// the handler never got there.
+	installCleared string
 }
 
 func (f *subServerDeleteFakeStore) GetUserByID(id string) (*models.User, error) {
@@ -157,6 +160,14 @@ func (f *subServerDeleteFakeStore) UpdateServerActiveSubServer(id int, name stri
 }
 func (f *subServerDeleteFakeStore) UpdateServerDesiredState(id int, state string) error {
 	f.desiredSet = true
+	return nil
+}
+
+// The install record is removed with the directory. Recorded here so the test
+// also pins that the cleanup happens - a row that outlives its sub-server would
+// prefill the setup form with a modpack that is no longer on disk.
+func (f *subServerDeleteFakeStore) DeleteSubServerInstall(serverID int, subServer string) error {
+	f.installCleared = subServer
 	return nil
 }
 
@@ -205,6 +216,15 @@ func TestDeleteSubServerHonorsTheDeleteCapability(t *testing.T) {
 				if fs.statusSet != "" || fs.activeSet || fs.desiredSet {
 					t.Error("the refused request still reset the server's state")
 				}
+				if fs.installCleared != "" {
+					t.Error("the refused request still dropped the install record")
+				}
+			}
+			if tt.wantStatus == http.StatusOK && fs.installCleared != "survival" {
+				// The record has to go with the directory. Left behind, it
+				// prefills the setup form with a modpack that is no longer on
+				// disk - and a name that can be re-created later inherits it.
+				t.Errorf("install record cleared for %q, want \"survival\"", fs.installCleared)
 			}
 		})
 	}

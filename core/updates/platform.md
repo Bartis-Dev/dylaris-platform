@@ -8,6 +8,60 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.30.5
+
+### Features
+- Traffic allowances are now set per region for player traffic, and once for file
+  transfers, under Settings, Traffic limits. The two are counted apart, so a
+  tenant past one is not past the other. `core` `panel`
+- Changing the Java version or the JVM flags no longer reinstalls the server. It
+  used to run the installer over a live server directory because that was the
+  only path that could rebuild a start command. `core` `node` `panel`
+- The setup tab remembers how each sub-server was installed, the exact modpack
+  included, and a version or modpack change now asks what to clear first with the
+  usual answers ticked. Worlds are never on that list. `core` `node` `panel`
+- Settings, Billing now carries the included and bookable backup storage per
+  purchased unit. Lowering the bookable figure notifies every tenant who agreed
+  to be charged for storage, since it moves the ceiling they agreed to.
+  `core` `panel`
+- Users can connect an S3 bucket of their own for backups, under Account, Backup
+  storage. It needs the new `backupstorage.*` capabilities, which no preset
+  grants: connecting arbitrary endpoints makes Core talk to hosts you did not
+  choose. `core` `panel`
+
+### Breaking
+- Backup storage now scales with the purchase: 50 GB per unit held, editable
+  under Settings, Billing. It was one figure for the whole account, so a tenant
+  with three units got three times the addresses and traffic and one times the
+  backup space. `core` `panel`
+- Traffic allowances have no account-wide fallback any more. Until something is
+  set under Settings, Traffic limits, nothing is capped and nothing is billed.
+  The screen says so when it is empty. `core`
+- The "Platform default" traffic scope is gone. Its rows were moved to the tenant
+  default on upgrade, and writing to it is now refused. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Backup archives now record which storage they went to. Changing a job's storage
+  used to make every earlier archive unrestorable, undownloadable and
+  undeletable while the panel still listed it as present. `core`
+- Saving the Billing screen no longer caps every tenant's backups at zero. An
+  unset R2 quota read back as "0", which the next save stored as a real cap of
+  none, while the help text beside it called that "no cap". `core` `panel`
+- Metered traffic consent reached Core again. It stopped being recorded when the
+  ceiling left the provision payload: the receiving side required BOTH, so a
+  tenant who switched metered billing on stayed recorded as having refused it
+  and was stopped instead of billed. `core`
+- The module bar no longer loses entries for good when the window is narrowed.
+  They now come back when it is widened, and its overflow menu opens instead of
+  being clipped out of sight. `panel`
+- A domain route added during setup appears straight away. It used to read as
+  already taken until the routes dialog was opened or the page reloaded. `panel`
+- The Java version is now recognised from a selected modpack, which previously
+  left whatever was chosen last in place. `panel`
+
 ## 2026.08.30.4
 
 ### Features

@@ -47,6 +47,11 @@ type InstallerConfig struct {
 	// `java` being installed on the node host.
 	JavaImage  string `json:"javaImage,omitempty"`
 	ServerUUID string `json:"serverUuid,omitempty"`
+	// WipePaths names what to CLEAR before installing, as tokens rather than
+	// paths - see installer_wipe.go. Empty means install on top of whatever is
+	// there, which is what every install did before this existed and is still
+	// the right answer for a plain jar swap.
+	WipePaths []string `json:"wipePaths,omitempty"`
 }
 
 // CleanServerJars removes server JARs and cached/generated directories while preserving
@@ -88,6 +93,13 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 	}
 
 	log.Printf("Starting Installation: %s (%s) -> %s", config.Type, config.Version, destDir)
+
+	// Clear first, install second. The other order would delete files the
+	// installer had just written - and on a failed install the operator would be
+	// left with neither the old server nor the new one.
+	if err := WipeBeforeInstall(destDir, config.WipePaths); err != nil {
+		return fmt.Errorf("preparing the directory failed: %w", err)
+	}
 
 	switch config.Type {
 	case "paper":

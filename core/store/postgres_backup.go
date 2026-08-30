@@ -11,55 +11,85 @@ import (
 
 // ───────────── Storages ─────────────
 
+// backupStorageCols is the read shape. owner_id is last so the existing scans
+// stay readable; every read goes through scanBackupStorage.
+const backupStorageCols = `id, name, provider, config, secret_enc, is_default, created_at, owner_id`
+
+func (s *PostgresStore) scanBackupStorage(row interface{ Scan(...interface{}) error }) (*models.BackupStorage, string, error) {
+	var bs models.BackupStorage
+	var cfg []byte
+	var secretEnc string
+	var owner sql.NullString
+	if err := row.Scan(&bs.ID, &bs.Name, &bs.Provider, &cfg, &secretEnc, &bs.IsDefault, &bs.CreatedAt, &owner); err != nil {
+		return nil, "", err
+	}
+	bs.Config = json.RawMessage(cfg)
+	if owner.Valid {
+		v := owner.String
+		bs.OwnerID = &v
+	}
+	return &bs, secretEnc, nil
+}
+
+// ListBackupStorages returns the PLATFORM's own storages, which is every row
+// that existed before tenants could bring their own.
+//
+// Deliberately not "all rows": this feeds the admin screen and the storage
+// dropdown, and a tenant's private bucket must not be offerable as a target for
+// somebody else's backups.
 func (s *PostgresStore) ListBackupStorages() ([]models.BackupStorage, error) {
-	rows, err := s.db.Query(`SELECT id, name, provider, config, secret_enc, is_default, created_at FROM backup_storages ORDER BY id`)
+	return s.listBackupStorages(`owner_id IS NULL`)
+}
+
+// ListBackupStoragesByOwner returns one tenant's own storages, and only theirs.
+func (s *PostgresStore) ListBackupStoragesByOwner(ownerID string) ([]models.BackupStorage, error) {
+	return s.listBackupStorages(`owner_id = $1`, ownerID)
+}
+
+func (s *PostgresStore) listBackupStorages(where string, args ...interface{}) ([]models.BackupStorage, error) {
+	rows, err := s.db.Query(`SELECT `+backupStorageCols+` FROM backup_storages WHERE `+where+` ORDER BY id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []models.BackupStorage
 	for rows.Next() {
-		var bs models.BackupStorage
-		var cfg []byte
-		var secretEnc string
-		if err := rows.Scan(&bs.ID, &bs.Name, &bs.Provider, &cfg, &secretEnc, &bs.IsDefault, &bs.CreatedAt); err != nil {
+		bs, secretEnc, err := s.scanBackupStorage(rows)
+		if err != nil {
 			continue
 		}
-		bs.Config = json.RawMessage(cfg)
-		// List is a panel/enumeration path: strip the secret from config so it
-		// never leaves Core, even for a legacy row still carrying it in plaintext.
+		// List is an enumeration path: strip the secret from config so it never
+		// leaves Core, even for a legacy row still carrying it in plaintext.
 		cleaned, had := stripBackupStorageSecret(bs.Provider, bs.Config)
 		bs.Config = cleaned
 		bs.SecretSet = secretEnc != "" || had
-		out = append(out, bs)
+		out = append(out, *bs)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (s *PostgresStore) GetBackupStorage(id int) (*models.BackupStorage, error) {
-	var bs models.BackupStorage
-	var cfg []byte
-	var secretEnc string
-	err := s.db.QueryRow(`SELECT id, name, provider, config, secret_enc, is_default, created_at FROM backup_storages WHERE id = $1`, id).
-		Scan(&bs.ID, &bs.Name, &bs.Provider, &cfg, &secretEnc, &bs.IsDefault, &bs.CreatedAt)
+	bs, secretEnc, err := s.scanBackupStorage(
+		s.db.QueryRow(`SELECT `+backupStorageCols+` FROM backup_storages WHERE id = $1`, id))
 	if err != nil {
 		return nil, err
 	}
-	bs.Config = json.RawMessage(cfg)
-	s.hydrateBackupStorageForBuild(&bs, secretEnc)
-	return &bs, nil
+	s.hydrateBackupStorageForBuild(bs, secretEnc)
+	return bs, nil
 }
 
+// GetDefaultBackupStorage is the PLATFORM default: the last step of the chain,
+// used for anyone who has not set one of their own.
 func (s *PostgresStore) GetDefaultBackupStorage() (*models.BackupStorage, error) {
-	var bs models.BackupStorage
-	var cfg []byte
-	var secretEnc string
-	err := s.db.QueryRow(`SELECT id, name, provider, config, secret_enc, is_default, created_at FROM backup_storages WHERE is_default = TRUE LIMIT 1`).
-		Scan(&bs.ID, &bs.Name, &bs.Provider, &cfg, &secretEnc, &bs.IsDefault, &bs.CreatedAt)
+	bs, secretEnc, err := s.scanBackupStorage(s.db.QueryRow(
+		`SELECT ` + backupStorageCols + ` FROM backup_storages WHERE is_default = TRUE AND owner_id IS NULL LIMIT 1`))
 	if err == sql.ErrNoRows {
-		// Fall back to the first configured storage when no default is set.
-		err = s.db.QueryRow(`SELECT id, name, provider, config, secret_enc, is_default, created_at FROM backup_storages ORDER BY id LIMIT 1`).
-			Scan(&bs.ID, &bs.Name, &bs.Provider, &cfg, &secretEnc, &bs.IsDefault, &bs.CreatedAt)
+		// Fall back to the first configured PLATFORM storage when no default is
+		// set. Scoped, or an install with no platform default would start
+		// writing everybody's backups into whichever tenant happened to hold
+		// the lowest-id bucket.
+		bs, secretEnc, err = s.scanBackupStorage(s.db.QueryRow(
+			`SELECT ` + backupStorageCols + ` FROM backup_storages WHERE owner_id IS NULL ORDER BY id LIMIT 1`))
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -67,9 +97,26 @@ func (s *PostgresStore) GetDefaultBackupStorage() (*models.BackupStorage, error)
 	if err != nil {
 		return nil, err
 	}
-	bs.Config = json.RawMessage(cfg)
-	s.hydrateBackupStorageForBuild(&bs, secretEnc)
-	return &bs, nil
+	s.hydrateBackupStorageForBuild(bs, secretEnc)
+	return bs, nil
+}
+
+// GetUserDefaultBackupStorage is a tenant's own default, or nil when they have
+// not connected one. nil is not an error: it means "ask the next scope".
+func (s *PostgresStore) GetUserDefaultBackupStorage(ownerID string) (*models.BackupStorage, error) {
+	if ownerID == "" {
+		return nil, nil
+	}
+	bs, secretEnc, err := s.scanBackupStorage(s.db.QueryRow(
+		`SELECT `+backupStorageCols+` FROM backup_storages WHERE owner_id = $1 AND is_default = TRUE LIMIT 1`, ownerID))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.hydrateBackupStorageForBuild(bs, secretEnc)
+	return bs, nil
 }
 
 // hydrateBackupStorageForBuild prepares a storage read for a provider build:
@@ -112,14 +159,14 @@ func (s *PostgresStore) CreateBackupStorage(bs *models.BackupStorage) (int, erro
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
 	if bs.IsDefault {
-		if _, err = tx.Exec(`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE`); err != nil {
+		if err = clearOtherDefaults(tx, bs.OwnerID, 0); err != nil {
 			return 0, err
 		}
 	}
 	var id int
 	err = tx.QueryRow(
-		`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default) VALUES ($1, $2, $3::jsonb, $4, $5) RETURNING id`,
-		bs.Name, bs.Provider, cfg, enc, bs.IsDefault,
+		`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default, owner_id) VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id`,
+		bs.Name, bs.Provider, cfg, enc, bs.IsDefault, nullableString(bs.OwnerID),
 	).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -151,10 +198,14 @@ func (s *PostgresStore) UpdateBackupStorage(bs *models.BackupStorage) error {
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
 	if bs.IsDefault {
-		if _, err = tx.Exec(`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE AND id != $1`, bs.ID); err != nil {
+		if err = clearOtherDefaults(tx, bs.OwnerID, bs.ID); err != nil {
 			return err
 		}
 	}
+	// owner_id is NOT in the SET list: ownership is decided once, at creation.
+	// Moving a storage between scopes would either hand a tenant's credentials
+	// to the platform or the platform's to a tenant, and neither is a thing an
+	// edit form should be able to do.
 	res, err := tx.Exec(
 		`UPDATE backup_storages SET name = $1, provider = $2, config = $3::jsonb, secret_enc = $4, is_default = $5 WHERE id = $6`,
 		bs.Name, bs.Provider, cfg, enc, bs.IsDefault, bs.ID,
@@ -169,6 +220,24 @@ func (s *PostgresStore) UpdateBackupStorage(bs *models.BackupStorage) error {
 		return sql.ErrNoRows
 	}
 	return tx.Commit()
+}
+
+// clearOtherDefaults clears the default flag WITHIN one scope: the platform's
+// rows when ownerID is nil, one tenant's rows otherwise. excludeID is the row
+// about to become the default, and 0 on an insert where there is no row yet.
+//
+// The scoping is the point. Without it a tenant marking their own bucket as
+// their default would clear the PLATFORM default, and every other tenant would
+// silently fall through to whichever storage happened to have the lowest id.
+func clearOtherDefaults(tx *sql.Tx, ownerID *string, excludeID int) error {
+	if ownerID == nil {
+		_, err := tx.Exec(
+			`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE AND owner_id IS NULL AND id != $1`, excludeID)
+		return err
+	}
+	_, err := tx.Exec(
+		`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE AND owner_id = $1 AND id != $2`, *ownerID, excludeID)
+	return err
 }
 
 func (s *PostgresStore) DeleteBackupStorage(id int) error {
@@ -301,7 +370,8 @@ func (s *PostgresStore) SetBackupJobScheduled(jobID int, lastRun, nextRun time.T
 func (s *PostgresStore) scanRun(row interface{ Scan(...interface{}) error }) (*models.BackupRun, error) {
 	var r models.BackupRun
 	var completed sql.NullTime
-	err := row.Scan(&r.ID, &r.JobID, &r.StartedAt, &completed, &r.Status, &r.SizeBytes, &r.StorageKey, &r.ErrorMessage)
+	var storageID sql.NullInt64
+	err := row.Scan(&r.ID, &r.JobID, &r.StartedAt, &completed, &r.Status, &r.SizeBytes, &r.StorageKey, &r.ErrorMessage, &r.InstallSnapshot, &storageID)
 	if err != nil {
 		return nil, err
 	}
@@ -309,10 +379,14 @@ func (s *PostgresStore) scanRun(row interface{ Scan(...interface{}) error }) (*m
 		t := completed.Time
 		r.CompletedAt = &t
 	}
+	if storageID.Valid {
+		id := int(storageID.Int64)
+		r.StorageID = &id
+	}
 	return &r, nil
 }
 
-const backupRunCols = `id, job_id, started_at, completed_at, status, size_bytes, storage_key, error_message`
+const backupRunCols = `id, job_id, started_at, completed_at, status, size_bytes, storage_key, error_message, install_snapshot, storage_id`
 
 func (s *PostgresStore) ListBackupRuns(jobID, limit int) ([]models.BackupRun, error) {
 	if limit <= 0 {
@@ -342,8 +416,8 @@ func (s *PostgresStore) GetBackupRun(id int) (*models.BackupRun, error) {
 func (s *PostgresStore) CreateBackupRun(r *models.BackupRun) (int, error) {
 	var id int
 	err := s.db.QueryRow(
-		`INSERT INTO backup_runs (job_id, status, storage_key) VALUES ($1, $2, $3) RETURNING id`,
-		r.JobID, r.Status, r.StorageKey,
+		`INSERT INTO backup_runs (job_id, status, storage_key, storage_id) VALUES ($1, $2, $3, $4) RETURNING id`,
+		r.JobID, r.Status, r.StorageKey, nullableInt(r.StorageID),
 	).Scan(&id)
 	return id, err
 }
@@ -552,4 +626,16 @@ func textArray(v []string) interface{} {
 		return pq.Array([]string{})
 	}
 	return pq.Array(v)
+}
+
+// SetBackupRunInstallSnapshot records how the archived sub-servers were
+// installed, so a restore can put the records back.
+//
+// Its own narrow writer rather than a field on UpdateBackupRunStatus: that one
+// is called on the failure paths too, and a failed run has nothing to snapshot -
+// widening it would mean every caller deciding what to pass for a column it does
+// not care about.
+func (s *PostgresStore) SetBackupRunInstallSnapshot(runID int, snapshot string) error {
+	_, err := s.db.Exec(`UPDATE backup_runs SET install_snapshot = $1 WHERE id = $2`, snapshot, runID)
+	return err
 }

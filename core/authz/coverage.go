@@ -69,6 +69,9 @@ var ExemptRoutes = map[string]bool{
 	"/api/store/verify-user": true,
 	"/api/store/usage":       true,
 	"/api/store/provision":   true,
+	// Platform defaults, no tenant in the request: what ONE unit includes, so
+	// the storefront can print the number without holding a copy of it.
+	"/api/store/backup-defaults": true,
 
 	// External API surface: Authorization: Bearer dyl_<key>, not session authz.
 	// These are NOT ungated - each declares its capability at

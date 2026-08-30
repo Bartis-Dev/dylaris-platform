@@ -83,5 +83,43 @@ func applyTrafficSchema(db *sql.DB) error {
 	)`); err != nil {
 		return fmt.Errorf("traffic: create traffic_limits: %w", err)
 	}
+
+	// Fold the retired "global" scope into the tenant default.
+	//
+	// It answered nothing "user_default" could not - every byte counted here
+	// belongs to a tenant - and two scopes doing one job is a screen where the
+	// value an operator typed stops applying the day somebody fills in the other.
+	// A global row is only carried over where the default has NO row, because a
+	// default row already answered and was already winning.
+	if _, err := db.Exec(`
+		INSERT INTO traffic_limits (scope, region, kind, included_gb, max_purchase_gb)
+		SELECT 'user_default', region, kind, included_gb, max_purchase_gb
+		FROM traffic_limits WHERE scope = 'global'
+		ON CONFLICT (scope, region, kind) DO NOTHING`); err != nil {
+		return fmt.Errorf("traffic: fold global scope: %w", err)
+	}
+	if _, err := db.Exec(`DELETE FROM traffic_limits WHERE scope = 'global'`); err != nil {
+		return fmt.Errorf("traffic: drop global scope: %w", err)
+	}
+
+	// Move every NON-regional kind onto the single '*' region.
+	//
+	// File transfers are carried by relays that all sit in eu-central, so a
+	// per-region cap for them was a row per region answering one question. The
+	// delete keeps the lowest id per (scope, kind), which is arbitrary only where
+	// an operator had configured the same kind in two regions - and there the
+	// alternative is inventing a merge rule for numbers that meant "per region".
+	if _, err := db.Exec(`
+		DELETE FROM traffic_limits t
+		WHERE t.kind <> 'edge' AND t.region <> '*'
+		  AND EXISTS (
+			SELECT 1 FROM traffic_limits k
+			WHERE k.scope = t.scope AND k.kind = t.kind
+			  AND (k.region = '*' OR k.id < t.id))`); err != nil {
+		return fmt.Errorf("traffic: dedupe non-regional limits: %w", err)
+	}
+	if _, err := db.Exec(`UPDATE traffic_limits SET region = '*' WHERE kind <> 'edge' AND region <> '*'`); err != nil {
+		return fmt.Errorf("traffic: move non-regional limits: %w", err)
+	}
 	return nil
 }

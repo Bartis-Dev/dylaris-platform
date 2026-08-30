@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import CopyText from '@/components/ui/CopyText';
 import {
     getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability,
     GatewayRoute, CreateRouteRequest,
@@ -188,7 +189,10 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                                     <div className="flex items-center gap-2.5">
                                         <Globe size={12} className="text-(--accent-light) shrink-0" />
                                         <div>
-                                            <div className="text-sm font-medium text-(--base-09)">{route.domain}</div>
+                                            <CopyText
+                                                value={route.domain}
+                                                className="text-sm font-medium text-(--base-09) max-w-full"
+                                            />
                                             <div className="mono-label">
                                                 Port {route.target_port}
                                                 {route.link_name && <> &middot; Link: {route.link_name}</>}

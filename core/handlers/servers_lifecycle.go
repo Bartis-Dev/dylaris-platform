@@ -408,6 +408,14 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, msg, 400)
 		return
 	}
+	// Refused here rather than dropped, and refused BEFORE anything is written or
+	// queued: a wipe target the node will not recognise means the operator asked
+	// for a clean install and would otherwise get a dirty one reported as a
+	// success.
+	if err := validateWipePaths(req.Installer.WipePaths); err != nil {
+		sendJSONError(w, err.Error(), 400)
+		return
+	}
 
 	// Enforce sub-server limit (skip for first setup / admins).
 	//
@@ -510,6 +518,34 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			req.Installer.ModrinthProjectSlug = ""
 		}
 
+		// Record HOW this sub-server is being installed, now that the pack
+		// branch above has resolved a pack into its concrete versions.
+		//
+		// originalInstallerType, not req.Installer.Type: a pack was rewritten to
+		// "modpack" for the node's benefit, and the panel has to put the operator
+		// back on the Packs tab, not on Modrinth. Written wholesale so a reinstall
+		// away from a modpack CLEARS the old reference instead of leaving the
+		// panel prefilling a pack the directory no longer contains.
+		//
+		// Best-effort: a failure here must not fail an install that is about to be
+		// dispatched. The cost of losing it is a form that cannot prefill, which is
+		// exactly where this feature started.
+		if err := h.state.Store.UpsertSubServerInstall(models.SubServerInstall{
+			ServerID:            serverID,
+			SubServerName:       subName,
+			InstallerType:       originalInstallerType,
+			McVersion:           req.Installer.McVersion,
+			BuildVersion:        req.Installer.Version,
+			Loader:              req.Installer.Loader,
+			ModrinthProjectID:   req.Installer.ModrinthProjectID,
+			ModrinthVersionID:   req.Installer.ModrinthVersionID,
+			ModrinthProjectSlug: req.Installer.ModrinthProjectSlug,
+			PackID:              req.Installer.PackID,
+			PackBuildID:         req.Installer.BuildID,
+		}); err != nil {
+			log.Printf("sub-server install record failed for server %d/%s: %v", serverID, subName, err)
+		}
+
 		configPayload := map[string]interface{}{
 			"uuid":    srv.UUID,
 			"ownerId": srv.OwnerID,
@@ -533,6 +569,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			"modrinthProjectId":   req.Installer.ModrinthProjectID,
 			"modrinthVersionId":   req.Installer.ModrinthVersionID,
 			"modrinthProjectSlug": req.Installer.ModrinthProjectSlug,
+			// What to clear first. The node validates these again against its own
+			// copy of the vocabulary before it deletes anything.
+			"wipePaths": req.Installer.WipePaths,
 		}
 
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "setup", configPayload, installerPayload); err != nil {
@@ -1668,6 +1707,12 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 	// the just-deleted sub-server, so Docker auto-creates an empty
 	// bind dir and the user's deleted slot resurrects empty. Setting
 	// desired_state="stopped" tells the reconciler to leave it alone.
+	// The install record outlives the directory otherwise, and the panel would
+	// then prefill an edit form for a modpack that is no longer on disk.
+	if err := h.state.Store.DeleteSubServerInstall(serverID, subServerName); err != nil {
+		log.Printf("sub-server install record cleanup failed for server %d/%s: %v", serverID, subServerName, err)
+	}
+
 	wasActive := srv.ActiveSubServer == subServerName
 	if wasActive {
 		h.state.Store.UpdateServerStatus(serverID, "pending_setup")
@@ -1823,4 +1868,145 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 			dispatchWarning + "). Its container and files are still on the node and must be cleaned up there."
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+// SubServerInstalls GET /api/servers/{id}/installs - how each sub-server of this
+// server was installed.
+//
+// One call for all of them rather than one per sub-server: the setup screen
+// switches between them without a round trip, and a per-sub-server endpoint
+// would be N requests to fill one form.
+//
+// A sub-server with NO row is simply absent from the list. That is the honest
+// answer for everything installed before this was recorded, and the panel falls
+// back to the servers row rather than showing an empty form - "we never wrote
+// this down" is not "it was installed with nothing".
+func (h *ServerHandler) SubServerInstalls(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	serverID, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid server id", http.StatusBadRequest)
+		return
+	}
+	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	installs, err := h.state.Store.ListSubServerInstalls(serverID)
+	if err != nil {
+		sendJSONError(w, "Failed to read installs", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"installs": installs,
+	})
+}
+
+// UpdateServerRuntime PATCH /api/servers/{id}/runtime - change the Java image
+// and the JVM flags WITHOUT reinstalling.
+//
+// Every settings change used to go through SetupServer, because that was the
+// only path that could rebuild a start command. So editing a JVM flag re-ran the
+// installer over a live server directory: the operator was asked what to delete
+// first, and the answer to "I only wanted a different GC flag" was always
+// "nothing", which made the dialog noise in front of a reinstall nobody wanted.
+//
+// Nothing here touches a file. The node rebuilds the start command from what is
+// already on disk and recreates the container around it, leaving the server in
+// whatever run state it was in.
+func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	serverID, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid server id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		JavaImage     string `json:"javaImage"`
+		ExtraJvmFlags string `json:"extraJvmFlags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	if srv.Status == "pending_setup" {
+		sendJSONError(w, "Set the server up before changing its runtime", http.StatusBadRequest)
+		return
+	}
+	subName := srv.ActiveSubServer
+	if subName == "" {
+		sendJSONError(w, "No active sub-server", http.StatusBadRequest)
+		return
+	}
+
+	// The same resolver the install paths use, so an empty or unknown image
+	// falls back to what the server already runs rather than to nothing. An
+	// empty image is a container Docker builds with no entrypoint.
+	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
+	if javaImage == "" {
+		sendJSONError(w, "javaImage is required", http.StatusBadRequest)
+		return
+	}
+	extraFlags := strings.TrimSpace(req.ExtraJvmFlags)
+
+	// Persist BEFORE dispatching. The node's own saved config is rebuilt from
+	// what we send, but the reconciler reads the row - so a dispatch that landed
+	// against a row that did not would be undone the next time it ran.
+	if err := h.state.Store.UpdateServerRuntime(serverID, javaImage, extraFlags); err != nil {
+		sendJSONError(w, "Failed to save the runtime settings", http.StatusInternalServerError)
+		return
+	}
+
+	if h.state.Queue != nil {
+		node, nerr := h.state.Store.GetNodeByID(srv.NodeID)
+		if nerr != nil {
+			sendJSONError(w, "Node not found", http.StatusNotFound)
+			return
+		}
+		combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
+		payload := map[string]interface{}{
+			"uuid":            srv.UUID,
+			"ownerId":         srv.OwnerID,
+			"activeSubServer": subName,
+			"docker": map[string]interface{}{
+				"image":         javaImage,
+				"ram":           srv.Memory,
+				"cpuLimit":      srv.CPULimit,
+				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"extraJvmFlags": combinedJvmFlags,
+			},
+		}
+		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "reconfigure", payload, nil); err != nil {
+			// Saved but not dispatched. Said out loud rather than swallowed: the
+			// panel would otherwise show the new flags against a container still
+			// running the old ones, and the difference is invisible until the
+			// next restart happens to pick them up.
+			log.Printf("UpdateServerRuntime: dispatch failed for server %d: %v", serverID, err)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"warning": "The settings were saved, but the node was not reachable. They apply the next time the server starts.",
+			})
+			return
+		}
+	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventRuntimeChanged, actorID, "", map[string]interface{}{
+		"java_image": javaImage,
+		"jvm_flags":  extraFlags,
+	})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

@@ -9,6 +9,48 @@ import LibraryPicker from './LibraryPicker';
 import UploadSection from './UploadSection';
 import ModpackPicker from './ModpackPicker';
 import PackPicker from './PackPicker';
+import type { SubServerInstall } from '@/lib/api/subServerInstalls';
+
+/**
+ * What is installed right now, above the picker that would replace it.
+ *
+ * The picker shows what you are ABOUT to install and says nothing about what is
+ * there, so an operator opening the tab to change a Java version saw an empty
+ * search box and had to remember which pack they had chosen. Leaving the picker
+ * untouched keeps this install; picking something replaces it.
+ *
+ * Absent for anything set up before Core recorded installs, and for a
+ * sub-server whose record was written by an older Core. Silence is the honest
+ * answer there - inventing "unknown" would look like a failure rather than a
+ * gap.
+ */
+function InstalledNow({ install, kind }: { install?: SubServerInstall; kind: 'modpack' | 'pack' }) {
+    if (!install) return null;
+    const isModpack = kind === 'modpack' && !!install.modrinthProjectId;
+    const isPack = kind === 'pack' && !!install.packId;
+    if (!isModpack && !isPack) return null;
+
+    const name = isModpack
+        ? (install.modrinthProjectSlug || install.modrinthProjectId)
+        : `Pack #${install.packId}`;
+    const version = isModpack
+        ? install.modrinthVersionId
+        : `build ${install.packBuildId}`;
+
+    return (
+        <div className="mb-3 rounded-md border border-(--base-03) bg-(--base-02) px-3 py-2">
+            <div className="text-xs text-(--base-06)">Installed now</div>
+            <div className="text-sm text-(--base-09) mt-0.5 flex flex-wrap items-baseline gap-x-2">
+                <span className="font-medium break-all">{name}</span>
+                {version && <span className="font-mono text-xs text-(--base-07) break-all">{version}</span>}
+                {install.mcVersion && <span className="text-xs text-(--base-06)">MC {install.mcVersion}</span>}
+            </div>
+            <div className="text-xs text-(--base-06) mt-1">
+                Leave the search below untouched to keep it. Picking something replaces it.
+            </div>
+        </div>
+    );
+}
 
 interface SetupEditModeProps {
     subName: string;
@@ -26,6 +68,8 @@ interface SetupEditModeProps {
     onModpackSelect?: (s: import('@/views/setup/ModpackPicker').ModpackSelection | null) => void;
     packSelection?: import('@/views/setup/PackPicker').PackSelection | null;
     onPackSelect?: (s: import('@/views/setup/PackPicker').PackSelection | null) => void;
+    /** What is on disk right now, when Core recorded it. */
+    currentInstall?: SubServerInstall;
     libraryEnabled?: boolean;
     // Server type
     serverType?: 'game' | 'proxy';
@@ -147,11 +191,11 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                         </button>
                         <button type="button" onClick={() => props.onInstallTabChange('modpack')}
                             className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'modpack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            Modpack
+                            Modrinth modpacks
                         </button>
                         <button type="button" onClick={() => props.onInstallTabChange('pack')}
                             className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'pack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            Pack
+                            My modpacks
                         </button>
                     </div>
 
@@ -197,17 +241,23 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                     )}
 
                     {props.installTab === 'modpack' && (
-                        <ModpackPicker
-                            selection={props.modpackSelection ?? null}
-                            onSelect={(s) => props.onModpackSelect?.(s)}
-                        />
+                        <>
+                            <InstalledNow install={props.currentInstall} kind="modpack" />
+                            <ModpackPicker
+                                selection={props.modpackSelection ?? null}
+                                onSelect={(s) => props.onModpackSelect?.(s)}
+                            />
+                        </>
                     )}
 
                     {props.installTab === 'pack' && (
-                        <PackPicker
-                            selection={props.packSelection ?? null}
-                            onSelect={(s) => props.onPackSelect?.(s)}
-                        />
+                        <>
+                            <InstalledNow install={props.currentInstall} kind="pack" />
+                            <PackPicker
+                                selection={props.packSelection ?? null}
+                                onSelect={(s) => props.onPackSelect?.(s)}
+                            />
+                        </>
                     )}
                 </div>
 

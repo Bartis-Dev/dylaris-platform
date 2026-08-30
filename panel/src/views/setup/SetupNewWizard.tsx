@@ -209,11 +209,11 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                         </button>
                         <button type="button" onClick={() => props.onInstallTabChange('modpack')}
                             className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'modpack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            Modpack
+                            Modrinth modpacks
                         </button>
                         <button type="button" onClick={() => props.onInstallTabChange('pack')}
                             className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'pack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            Pack
+                            My modpacks
                         </button>
                     </div>
                 </div>

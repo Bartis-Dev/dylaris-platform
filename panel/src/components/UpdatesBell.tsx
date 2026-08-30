@@ -8,8 +8,8 @@ import {
     type Release, type UpdateComponent, type UpdateRequirement,
 } from '@/lib/api/updates';
 import {
-    groupInstances, serviceLabel, anythingOutdated, bellState, categories,
-    formatDeadline, type VersionGroup,
+    groupInstances, serviceLabel, anythingOutdated, bellState,
+    formatDeadline, mergeReleases, type VersionGroup, type MergedReleases,
 } from '@/lib/updateGroups';
 
 // ---------------------------------------------------------------------------
@@ -33,11 +33,15 @@ import {
 // anyway; the button next to it exists for the case where six hours is too long.
 const REFRESH_MS = 6 * 60 * 60 * 1000;
 
+// Fixes are orange rather than green. Green reads as "nothing to see", and a
+// fix is the category most likely to be the reason somebody opened this.
+// Breaking additionally gets a box and a "please read", because it is the only
+// category that can cost the reader something if they scroll past it.
 const CATEGORY_STYLES: Record<string, { color: string; dot: string }> = {
     breaking: { color: 'text-(--error-light)', dot: 'bg-(--error)' },
     security: { color: 'text-(--error-light)', dot: 'bg-(--error-light)' },
     features: { color: 'text-(--accent-light)', dot: 'bg-(--accent)' },
-    fixes: { color: 'text-(--success-light)', dot: 'bg-(--success-light)' },
+    fixes: { color: 'text-(--warning-light)', dot: 'bg-(--warning)' },
 };
 
 // One version row inside a component: "2/3 on 2026.08.28".
@@ -137,21 +141,41 @@ function RequirementBanner({ req }: { req: UpdateRequirement }) {
     );
 }
 
-function ReleaseBlock({ release }: { release: Release }) {
+// Everything the reader has not seen, as ONE block.
+//
+// It used to be a block per version, stacked. Four releases in a day meant four
+// headings, sixteen category labels and a dozen "Nothing this time." lines
+// between the reader and the two entries that mattered. Nobody opens a changelog
+// to learn how it was cut into blocks; they open it to find out what changed
+// since they last looked, which is one question with one answer.
+function MergedBlock({ merged }: { merged: MergedReleases }) {
     return (
         <section className="px-4 pt-4">
-            <div className="flex items-center gap-2 pb-1">
-                <h3 className="text-sm font-display font-semibold text-(--base-09) font-mono">{release.version}</h3>
-                {release.required && (
-                    <span className="badge badge-error">mandatory</span>
+            <div className="flex flex-wrap items-center gap-2 pb-1">
+                <h3 className="text-sm font-display font-semibold text-(--base-09) font-mono">{merged.range}</h3>
+                {merged.count > 1 && (
+                    <span className="badge badge-neutral">{merged.count} releases</span>
                 )}
+                {merged.required && <span className="badge badge-error">mandatory</span>}
             </div>
-            {categories(release).map(cat => {
+            {merged.categories.map(cat => {
                 const style = CATEGORY_STYLES[cat.key];
+                const isBreaking = cat.key === 'breaking';
+                // An empty Breaking section gets no box: a highlighted frame
+                // around "Nothing this time." shouts about the absence of news.
+                const framed = isBreaking && cat.entries.length > 0;
                 return (
-                    <div key={cat.key} className="mt-2">
-                        <div className={`font-mono text-[11px] font-semibold uppercase tracking-[0.06em] ${style.color}`}>
-                            {cat.label}
+                    <div
+                        key={cat.key}
+                        className={`mt-2 ${framed ? 'rounded-md border border-(--error)/40 bg-(--error)/5 p-3' : ''}`}
+                    >
+                        <div className="flex items-center gap-2">
+                            <div className={`font-mono text-[11px] font-semibold uppercase tracking-[0.06em] ${style.color}`}>
+                                {cat.label}
+                            </div>
+                            {framed && (
+                                <span className="badge badge-error text-[10px]">please read</span>
+                            )}
                         </div>
                         {cat.entries.length === 0 ? (
                             // Written out rather than omitted: an absent heading
@@ -338,7 +362,10 @@ export default function UpdatesBell() {
                                     No releases published yet.
                                 </div>
                             ) : (
-                                releases.map(r => <ReleaseBlock key={r.version} release={r} />)
+                                (() => {
+                                    const merged = mergeReleases(releases);
+                                    return merged ? <MergedBlock merged={merged} /> : null;
+                                })()
                             )}
                         </div>
                     </div>

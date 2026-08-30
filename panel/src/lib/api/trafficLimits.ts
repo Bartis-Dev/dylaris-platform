@@ -18,16 +18,46 @@ import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/c
  */
 export interface TrafficLimit {
     id: number;
-    scope: string;  // "global" | "user_default" | "user:<uuid>"
+    scope: string;  // "user_default" | "user:<uuid>"
     region: string;
     kind: string;   // "edge" (player traffic) | "relay" (file transfers)
     includedGb: number | null;
     maxPurchaseGb: number | null;
 }
 
-/** The three traffic kinds, in the order they are shown. */
+/** The traffic kinds, in the order they are shown. */
 export const TRAFFIC_KINDS = ['edge', 'relay'] as const;
 export type TrafficKind = (typeof TRAFFIC_KINDS)[number];
+
+/**
+ * The region a NON-regional kind stores its one row under.
+ *
+ * Must match services.TrafficRegionAny in Core, which is what actually resolves
+ * a limit. A mismatch would store the number under a region the resolver never
+ * asks about: a value an operator set, saw echoed back, and that enforces
+ * nothing.
+ */
+export const TRAFFIC_REGION_ANY = '*';
+
+/**
+ * Whether a kind is capped per region.
+ *
+ * Player traffic is: it is measured at the edge that served it, and a terabyte
+ * out of Singapore costs several times one out of Nuremberg. File transfers are
+ * not: every beam relay is in eu-central, so they hold a single allowance.
+ */
+export function isRegionalKind(kind: string): boolean {
+    // Must stay in step with services.RegionalKind in Core. Backups are
+    // deliberately not a traffic kind at all: R2 charges nothing for ingress and
+    // on a BYON node the bytes are the customer's own bandwidth, so there is
+    // nothing of ours to cap. Their cost is STORAGE, capped by the R2 quota.
+    return kind === 'edge';
+}
+
+/** Where a (region, kind) pair's limit actually lives. */
+export function limitRegionFor(region: string, kind: string): string {
+    return isRegionalKind(kind) ? region : TRAFFIC_REGION_ANY;
+}
 
 /**
  * What each kind means to an operator. The names in the database are the wire

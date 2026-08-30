@@ -2089,6 +2089,55 @@
     },
     {
       "method": "GET",
+      "path": "/api/me/backup-storages",
+      "auth": "session",
+      "authorization": "backupstorage.read",
+      "description": "the caller's own storages, with secrets stripped, and which of them is their default.",
+      "handler": "BackupHandler.ListOwnStorages",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/backup-storages",
+      "auth": "session",
+      "authorization": "backupstorage.write",
+      "description": "connects a bucket of the caller's own.",
+      "handler": "BackupHandler.CreateOwnStorage",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/me/backup-storages/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "backupstorage.delete",
+      "description": "The archives already written to it are NOT deleted: they are in a bucket the tenant controls, and this only removes our record of how to reach it.",
+      "handler": "BackupHandler.DeleteOwnStorage",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/me/backup-storages/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "backupstorage.write",
+      "handler": "BackupHandler.UpdateOwnStorage",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/backup-storages/{id:[0-9]+}/test",
+      "auth": "session",
+      "authorization": "backupstorage.write",
+      "description": "the same round trip the admin path runs, against the caller's own storage only.",
+      "handler": "BackupHandler.TestOwnStorage",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/me/billing",
       "auth": "session",
       "authorization": "no capability",
@@ -3136,6 +3185,16 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/installs",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "how each sub-server of this server was installed.",
+      "handler": "ServerHandler.SubServerInstalls",
+      "group": "servers",
+      "external": false
+    },
+    {
       "method": "PATCH",
       "path": "/api/servers/{id:[0-9]+}/loader-metadata",
       "auth": "session",
@@ -3441,6 +3500,16 @@
       "authorization": "network.write",
       "description": "queues removal of one of this server's routes.",
       "handler": "GatewayHandler.DeleteServerRoute",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/runtime",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "change the Java image and the JVM flags WITHOUT reinstalling.",
+      "handler": "ServerHandler.UpdateServerRuntime",
       "group": "servers",
       "external": false
     },
@@ -4194,6 +4263,16 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/store/backup-defaults",
+      "auth": "none",
+      "authorization": "public",
+      "description": "store-key.",
+      "handler": "StoreHandler.BackupDefaults",
+      "group": "store",
+      "external": false
+    },
+    {
       "method": "POST",
       "path": "/api/store/link/start",
       "auth": "session",
@@ -4765,10 +4844,10 @@
     }
   ],
   "counts": {
-    "total": 477,
+    "total": 485,
     "byAuth": {
-      "none": 33,
-      "session": 431,
+      "none": 34,
+      "session": 438,
       "user API key": 10,
       "warp key": 3
     },
@@ -4790,7 +4869,7 @@
       "infrastructure": 2,
       "library": 6,
       "maintenance": 1,
-      "me": 19,
+      "me": 24,
       "modrinth": 6,
       "modules": 6,
       "nodes": 17,
@@ -4800,7 +4879,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 72,
+      "servers": 74,
       "settings": 28,
       "setup": 2,
       "share": 1,
@@ -4809,7 +4888,7 @@
       "status": 1,
       "storage": 1,
       "storage-connections": 6,
-      "store": 6,
+      "store": 7,
       "system": 4,
       "tabproxy": 1,
       "ticket-canned-responses": 1,

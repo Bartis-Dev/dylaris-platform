@@ -4,11 +4,65 @@ import (
 	"dylaris-core/models"
 )
 
+// TrafficScopeDefault is the one platform-wide scope: what every tenant gets
+// unless a per-user override says otherwise.
+//
+// There used to be a third scope, "global", asked after this one. For traffic it
+// answered nothing the default could not: unlike gateway routes, where "global"
+// covers the platform's OWN routes, every byte counted here belongs to a tenant.
+// Two settings doing one job is a screen where an operator has to decide which
+// of two identical-looking fields to fill in, and a value that stops working the
+// day somebody fills in the other. The scope is gone and its rows were migrated.
+const TrafficScopeDefault = "user_default"
+
+// TrafficRegionAny is the region a NON-regional kind stores its limit under.
+//
+// Player traffic is measured where the edge that served it stands, so it is
+// capped per region: a terabyte out of Singapore costs 7.4x one out of
+// Nuremberg. File transfers are not like that - every beam relay is in
+// eu-central - so a per-region cap for them would be a screen full of regions
+// asking the same question with only one possible answer, plus one more place
+// for the real answer to be missing.
+const TrafficRegionAny = "*"
+
+// RegionalKind reports whether a traffic kind is capped per region.
+//
+// Deliberately a function over an explicit list rather than a column: adding a
+// kind should force this decision to be made, not default to whichever behaviour
+// the zero value happens to give.
+func RegionalKind(kind string) bool { return kind == TrafficKindEdge }
+
+// Traffic kinds as the producers write them.
+const (
+	TrafficKindEdge = "edge"
+	// TrafficKindRelay is beam file transfer, carried by a relay. Not regional:
+	// every relay is in eu-central.
+	TrafficKindRelay = "relay"
+)
+
+// There is deliberately NO backup traffic kind.
+//
+// Backups go from the node straight to object storage, and R2 charges nothing
+// for ingress - so on a BYON node the bytes are the customer's own bandwidth and
+// cost us nothing in either direction. A pool that capped and billed them would
+// be metering a resource we do not pay for. What backups actually cost is
+// STORAGE, which is r2_quota_gb and is counted and enforced separately.
+
+// TrafficLimitRegion maps a (region, kind) question onto the region its limit is
+// actually stored under. Non-regional kinds all resolve to TrafficRegionAny, so
+// usage recorded in any region is judged against the one global row.
+func TrafficLimitRegion(region, kind string) string {
+	if RegionalKind(kind) {
+		return region
+	}
+	return TrafficRegionAny
+}
+
 // TrafficLimitScopes is the order a (region, kind) question is asked in, most
 // specific first. Exported because the panel shows which scope answered, and a
 // screen that guessed the order would eventually disagree with the resolver.
 func TrafficLimitScopes(userID string) []string {
-	return []string{"user:" + userID, "user_default", "global"}
+	return []string{"user:" + userID, TrafficScopeDefault}
 }
 
 // TrafficLimitReader is the slice of the store this resolver needs. Narrow on
@@ -53,6 +107,7 @@ type ResolvedTrafficLimit struct {
 // would take servers down over a settings screen nobody opened. The panel is
 // where that gap has to be visible.
 func ResolveTrafficLimit(r TrafficLimitReader, userID, region, kind string) (ResolvedTrafficLimit, error) {
+	region = TrafficLimitRegion(region, kind)
 	for _, scope := range TrafficLimitScopes(userID) {
 		l, err := r.GetTrafficLimit(scope, region, kind)
 		if err != nil {

@@ -61,6 +61,17 @@ func (f *reaperFakeStore) UpdateBackupRunStatus(id int, status, message string, 
 
 func (f *reaperFakeStore) GetBackupJob(int) (*models.BackupJob, error) { return f.job, f.jobErr }
 
+// The reaper resolves a run's storage through the owner chain now, so it asks
+// who the server belongs to. A bare server with no owner is the platform case,
+// which is what these tests are about.
+func (f *reaperFakeStore) GetServerByID(id int) (*models.Server, error) {
+	return &models.Server{ID: id}, nil
+}
+
+func (f *reaperFakeStore) GetUserDefaultBackupStorage(string) (*models.BackupStorage, error) {
+	return nil, nil
+}
+
 func (f *reaperFakeStore) GetBackupStorage(int) (*models.BackupStorage, error) {
 	f.storageHit++
 	return f.storage, nil

@@ -49,14 +49,22 @@ type UserBilling struct {
 	// past it. Both are told to us by the store and are never decided here - Core
 	// only reads them to warn the tenant before the store stops them. Zero /
 	// false is what a self-hosted install with no store reads, and shows nothing.
-	TrafficCeilingGB      int64     `json:"trafficCeilingGb,omitempty"`
-	TrafficBillingEnabled bool      `json:"trafficBillingEnabled,omitempty"`
-	UpdatedAt             time.Time `json:"updatedAt"`
+	TrafficCeilingGB      int64 `json:"trafficCeilingGb,omitempty"`
+	TrafficBillingEnabled bool  `json:"trafficBillingEnabled,omitempty"`
+	// BackupBillingEnabled is the tenant's separate consent to be charged for
+	// backup STORAGE beyond what their purchase includes. Its own flag rather
+	// than riding on the traffic one: agreeing to pay for a terabyte of player
+	// traffic is not agreeing to pay for stored backups, and a single switch
+	// would enrol somebody in a charge they never saw.
+	//
+	// Told to us by the store, like the traffic flag, and never decided here.
+	BackupBillingEnabled bool      `json:"backupBillingEnabled,omitempty"`
+	UpdatedAt            time.Time `json:"updatedAt"`
 }
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, updated_at`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), updated_at`
 
 // SetUserOverLimitSince stamps (or clears, with nil) when a tenant was first seen
 // over a purchased cap. Touches ONLY that column: the row also carries the
@@ -101,7 +109,7 @@ func scanUserBilling(row interface {
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
 		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb,
 		&meKind, &meExp, &meAt, &meBy, &overLimit,
-		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.UpdatedAt); err != nil {
+		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if overLimit.Valid {
@@ -265,8 +273,12 @@ type BackupRunRef struct {
 // used by the billing retention cleanup to delete R2 objects + rows after the
 // r2_retention window.
 func (s *PostgresStore) ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, error) {
+	// The RUN's own storage where it has one, the job's only as a fallback: an
+	// archive written before the job was pointed elsewhere still lives where it
+	// was written, and deleting against the job's current storage would delete
+	// nothing while dropping the row that pointed at the real object.
 	rows, err := s.db.Query(`
-		SELECT br.id, br.storage_key, bj.storage_id
+		SELECT br.id, br.storage_key, COALESCE(br.storage_id, bj.storage_id)
 		FROM backup_runs br
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		JOIN servers s ON s.id = bj.server_id
@@ -291,7 +303,7 @@ func (s *PostgresStore) ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, e
 	return out, rows.Err()
 }
 
-// BackupBytesByOwner returns the storage a tenant's backups actually occupy.
+// BackupBytesByOwner returns the storage a tenant's backups occupy ON OURS.
 // Used by the R2 quota gate before a new backup.
 //
 // It counts successful runs AND any run carrying a nonzero size, which is how it
@@ -299,6 +311,17 @@ func (s *PostgresStore) ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, e
 // The node reports every failed backup with size 0 (node/backup_worker.go), so
 // the only failed rows with a size are those the reaper found an object for -
 // real bytes on the backend that would otherwise sit uncounted.
+//
+// Archives on a storage the TENANT connected are excluded: the quota exists
+// because we pay for the space, and we pay nothing for their bucket. Billing
+// them for it would charge them for storage they already bought.
+//
+// The exclusion keys off the run's OWN storage_id, not the job's. A job with no
+// storage set resolves through a chain whose answer changes - connect a bucket
+// today and yesterday's archives would retroactively stop counting, or worse,
+// disconnect one and archives that are physically gone would start counting
+// again. A run records where it actually went. NULL is read as ours, which is
+// the safe direction: it counts rather than silently exempting.
 func (s *PostgresStore) BackupBytesByOwner(ownerID string) (int64, error) {
 	var total sql.NullInt64
 	err := s.db.QueryRow(`
@@ -306,7 +329,29 @@ func (s *PostgresStore) BackupBytesByOwner(ownerID string) (int64, error) {
 		FROM backup_runs br
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		JOIN servers s ON s.id = bj.server_id
-		WHERE s.owner_id = $1 AND (br.status = 'success' OR br.size_bytes > 0)`, ownerID).Scan(&total)
+		LEFT JOIN backup_storages bst ON bst.id = br.storage_id
+		WHERE s.owner_id = $1 AND (br.status = 'success' OR br.size_bytes > 0)
+		  AND bst.owner_id IS NULL`, ownerID).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total.Int64, nil
+}
+
+// BackupBytesByOwnerOnOwnStorage is the counterpart: what the tenant keeps on a
+// bucket of their own. Not billed and not capped, but shown, because "you are
+// storing 400 GB" is a different sentence from "you are storing 400 GB that we
+// charge you for" and a screen that omitted the first would look wrong.
+func (s *PostgresStore) BackupBytesByOwnerOnOwnStorage(ownerID string) (int64, error) {
+	var total sql.NullInt64
+	err := s.db.QueryRow(`
+		SELECT COALESCE(SUM(br.size_bytes), 0)
+		FROM backup_runs br
+		JOIN backup_jobs bj ON bj.id = br.job_id
+		JOIN servers s ON s.id = bj.server_id
+		JOIN backup_storages bst ON bst.id = br.storage_id
+		WHERE s.owner_id = $1 AND (br.status = 'success' OR br.size_bytes > 0)
+		  AND bst.owner_id IS NOT NULL`, ownerID).Scan(&total)
 	if err != nil {
 		return 0, err
 	}

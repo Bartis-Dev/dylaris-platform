@@ -1351,6 +1351,49 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Notify Core that installation is complete
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 
+	case "reconfigure":
+		// Change the Java image or the JVM flags WITHOUT reinstalling.
+		//
+		// Every settings change used to go through "setup", because that was the
+		// only command that could rebuild a start command - so editing a JVM flag
+		// re-ran the installer over a live server directory. Nothing here touches
+		// a file: the start command is rebuilt from what is already on disk and
+		// the container is recreated around it, in whatever run state it was in.
+		subName := cmd.Config.ActiveSubServer
+		if subName == "" {
+			log.Printf("reconfigure for %s: ActiveSubServer is empty, aborting", cmd.Config.UUID)
+			return
+		}
+		// Same interlock the install paths take. A recreate is a stop + remove +
+		// create, and without it the reconciler can see the gap and start a
+		// second container into the same directory.
+		if !commandsInFlight.enter("reconfigure:" + cmd.Config.UUID) {
+			log.Printf("reconfigure: one is already running for %s, ignoring the duplicate", cmd.Config.UUID)
+			return
+		}
+		defer commandsInFlight.leave("reconfigure:" + cmd.Config.UUID)
+
+		log.Printf("Reconfiguring server %s (sub-server: %s)...", cmd.Config.UUID, subName)
+		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		reconfDir := filepath.Join(serverPath, subName)
+		startCmd, err := buildStartCommand(reconfDir, cmd.Config.Docker.RAM, cmd.Config.Docker.ExtraJvmFlags, cmd.Config.Docker.Image)
+		if err != nil {
+			// The directory is untouched, so this is a refusal rather than a
+			// half-applied change: the old container is still there and still
+			// correct until the recreate below runs.
+			log.Printf("buildStartCommand failed for reconfigure %s/%s: %v", cmd.Config.UUID, subName, err)
+			return
+		}
+		cmd.Config.Docker.Command = startCmd
+
+		if err := dm.RecreateKeepingRunState(cmd.Config); err != nil {
+			log.Printf("Failed to reconfigure server %s: %v", cmd.Config.UUID, err)
+			return
+		}
+		saveNodeConfig(serverPath, cmd.Config)
+		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
+		log.Printf("Server %s reconfigured", cmd.Config.UUID)
+
 	case "switch_server":
 		// Update active sub-server on disk, then recreate container with new command.
 		subName := cmd.Config.ActiveSubServer

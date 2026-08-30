@@ -28,7 +28,12 @@ const (
 	// ON DELETE CASCADE, so a row written while the server is being deleted is
 	// removed by the same statement. Recording a server deletion needs a log
 	// that outlives the server, not this one.
-	ServerAuditEventDeleted                = "deleted"
+	ServerAuditEventDeleted = "deleted"
+	// The Java image or the JVM flags, changed WITHOUT reinstalling. Its own
+	// event rather than resources_changed: that one means RAM, CPU and disk, and
+	// an audit trail that answers "what happened to this server" with the wrong
+	// noun is worse than one that says nothing.
+	ServerAuditEventRuntimeChanged         = "runtime_changed"
 	ServerAuditEventForceOnChanged         = "audit_force_on_changed"
 	ServerAuditEventLoaderMetadataDeclared = "loader_metadata_declared"
 )

@@ -45,6 +45,7 @@ var requiredCaps = map[string]string{
 	// (Rule R5) rather than RequireCap-gated at the route.
 	"/api/servers/{id:[0-9]+}/install-cooldown":            "overview.read",
 	"/api/servers/{id:[0-9]+}/setup":                       "server.settings.write",
+	"/api/servers/{id:[0-9]+}/runtime":                     "server.settings.write",
 	"/api/servers/{id:[0-9]+}/reinstall":                   "server.settings.write",
 	"/api/servers/{id:[0-9]+}/version-update":              "server.settings.write",
 	"/api/servers/{id:[0-9]+}/copy-sub-server":             "server.settings.write",
@@ -94,6 +95,7 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/mods/unmanaged":                 "mods.read",
 	"/api/servers/{id:[0-9]+}/mods/identify":                  "mods.write",
 	"/api/servers/{id:[0-9]+}/modpack-contents":               "mods.read",
+	"/api/servers/{id:[0-9]+}/installs":                       "server.settings.write",
 	"/api/servers/{id:[0-9]+}/tabs":                           "tabs.read",
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}":            "tabs.write",
 	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link": "tabs.write",
@@ -162,6 +164,12 @@ var requiredCaps = map[string]string{
 	"/api/backup-storages":                  "settings.read",
 	"/api/backup-storages/{id:[0-9]+}":      "settings.write",
 	"/api/backup-storages/{id:[0-9]+}/test": "settings.write",
+	// A TENANT's own bucket, which is a different thing from the platform's:
+	// owner-scoped capabilities, and every handler is anchored to the caller's
+	// own id rather than filtering an all-rows read.
+	"/api/me/backup-storages":                  "backupstorage.read",
+	"/api/me/backup-storages/{id:[0-9]+}":      "backupstorage.write",
+	"/api/me/backup-storages/{id:[0-9]+}/test": "backupstorage.write",
 	// storage-connections are the named, shared storage-provider configs that
 	// generalize backup-storages -> same PANEL settings.read/write treatment.
 	"/api/storage-connections":                  "settings.read",
@@ -798,6 +806,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/copy-sub-server", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverModsHandler.CopySubServer))).Methods("POST")
 	// Read-only modpack snapshot backing the Content-tab cross-check.
 	api.HandleFunc("/servers/{id:[0-9]+}/modpack-contents", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.ModpackContents))).Methods("GET")
+	// How each sub-server was installed. Gated with the SETUP capability rather
+	// than a read one: this exists to prefill the setup form, and there is no
+	// server.settings.read - the whole tab is a write surface, so anyone who may
+	// not change the setup has no screen to show this on.
+	api.HandleFunc("/servers/{id:[0-9]+}/installs", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SubServerInstalls))).Methods("GET")
 
 	// --- Spark profiles ---
 	api.HandleFunc("/servers/{id:[0-9]+}/spark/profiles", authHandler.AuthMiddleware(appState.Authz.RequireCap("spark.use")(sparkHandler.List))).Methods("GET")
@@ -1277,6 +1290,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/power", authHandler.AuthMiddleware(serverHandler.ServerPowerHandler)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/install-cooldown", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetInstallCooldown))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/setup", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SetupServer))).Methods("POST")
+	// Java image and JVM flags WITHOUT reinstalling. Same capability as setup:
+	// it is the same screen and the same decision, only the non-destructive half.
+	api.HandleFunc("/servers/{id:[0-9]+}/runtime", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerRuntime))).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/reinstall", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.ReinstallServer))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SwitchSubServer))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/name", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerName))).Methods("PATCH")
@@ -1482,6 +1498,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/store/link/verify", authLimiter.Limit(20, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.LinkVerify))).Methods("POST")
 	api.HandleFunc("/store/verify-user", authLimiter.Limit(60, storeHandler.VerifyUser)).Methods("GET")
 	api.HandleFunc("/store/usage", authLimiter.Limit(60, storeHandler.GetUsage)).Methods("GET")
+	// What one unit includes, so the store can print it on the pricing page
+	// without keeping a second copy of a number edited here.
+	api.HandleFunc("/store/backup-defaults", authLimiter.Limit(60, storeHandler.BackupDefaults)).Methods("GET")
 	api.HandleFunc("/store/provision", authLimiter.Limit(60, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.Provision))).Methods("POST")
 	// Migration progress poll - owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetMigrationStatus))).Methods("GET")
@@ -1610,6 +1629,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.UpdateStorage))).Methods("PATCH")
 	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.DeleteStorage))).Methods("DELETE")
 	api.HandleFunc("/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.TestStorage))).Methods("POST")
+
+	// A tenant's own backup storage. Owner-scoped capabilities, granted
+	// deliberately rather than by any preset: connecting arbitrary S3 endpoints
+	// makes Core talk to hosts the operator did not choose.
+	api.HandleFunc("/me/backup-storages", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.read")(backupHandler.ListOwnStorages))).Methods("GET")
+	api.HandleFunc("/me/backup-storages", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.CreateOwnStorage))).Methods("POST")
+	api.HandleFunc("/me/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.UpdateOwnStorage))).Methods("PATCH")
+	api.HandleFunc("/me/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.delete")(backupHandler.DeleteOwnStorage))).Methods("DELETE")
+	api.HandleFunc("/me/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.TestOwnStorage))).Methods("POST")
 
 	// storage-connections: named, shared, at-rest-encrypted storage configs that
 	// generalize backup-storages. Same PANEL settings.read/write gating.

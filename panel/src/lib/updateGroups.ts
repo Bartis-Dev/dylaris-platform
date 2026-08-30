@@ -1,4 +1,4 @@
-import type { UpdateComponent, UpdateInstance, Release, ReleaseEntry } from '@/lib/api/updates';
+import type { UpdateComponent, UpdateInstance, Release, ReleaseEntry, ReleaseRequired } from '@/lib/api/updates';
 
 // Presentation helpers for the updates view. Pure functions, so the grouping
 // rules can be tested without rendering anything.
@@ -138,6 +138,58 @@ export function categories(r: Release): Category[] {
         { key: 'features', label: 'Features', entries: r.features ?? [] },
         { key: 'fixes', label: 'Fixes', entries: r.fixes ?? [] },
     ];
+}
+
+// MergedReleases is several releases read as one.
+//
+// The bell used to draw a block per version, stacked. With four releases in a
+// day that is four headings, sixteen category labels and a dozen "Nothing this
+// time." lines between the reader and the two entries that matter. Nobody reads
+// a changelog to find out how it was cut into blocks - they read it to find out
+// what changed since they last looked, which is one question with one answer.
+export interface MergedReleases {
+    /** "2026.08.30.4" for one, "2026.08.30.1 - 2026.08.30.4" for several. */
+    range: string;
+    /** How many releases were folded in. 1 renders as a plain version. */
+    count: number;
+    /** The most urgent mandatory-update line among them, if any. */
+    required: ReleaseRequired | null;
+    categories: Category[];
+}
+
+// mergeReleases folds a list into one block, newest first within each category.
+//
+// The list arrives newest-first, which is the order the entries keep: within
+// Breaking, the newest release's breaking changes are read before an older
+// one's. Duplicates are NOT collapsed - two releases fixing "the same" thing
+// wrote two sentences, and deciding they are the same sentence is a judgement
+// this cannot make from the text.
+export function mergeReleases(releases: Release[]): MergedReleases | null {
+    if (releases.length === 0) return null;
+
+    const versions = releases.map(r => r.version).filter(Boolean);
+    // The list is newest-first, so the range reads oldest to newest - the
+    // direction a person reads a span, not the direction the array is in.
+    const range = versions.length > 1
+        ? `${versions[versions.length - 1]} - ${versions[0]}`
+        : (versions[0] ?? '');
+
+    // The requirement that binds is the most urgent one: an immediate beats any
+    // date, and otherwise the EARLIEST deadline wins. A reader shown the latest
+    // would plan for a date another release has already passed.
+    let required: ReleaseRequired | null = null;
+    for (const r of releases) {
+        if (!r.required) continue;
+        if (!required) { required = r.required; continue; }
+        if (required.immediate) continue;
+        if (r.required.immediate || r.required.deadline < required.deadline) required = r.required;
+    }
+
+    const merged: Category[] = categories(releases[0]).map(c => ({ ...c, entries: [] }));
+    for (const r of releases) {
+        categories(r).forEach((c, i) => { merged[i].entries.push(...c.entries); });
+    }
+    return { range, count: releases.length, required, categories: merged };
 }
 
 // formatDeadline renders a mandatory-update deadline in the reader's own zone.

@@ -4,6 +4,7 @@ import (
 	"dylaris-core/services"
 	"dylaris-core/store"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,20 +36,41 @@ const trafficGB = int64(1_000_000_000)
 // (a non-zero ceiling); a self-hosted install meters nothing and gets nil, which
 // is what keeps the banner off screens it means nothing on.
 type myTrafficStatus struct {
-	UsedGB int64 `json:"usedGb"`
-	// CeilingGB is where free traffic ends: the included allowance plus the
-	// fair-use buffer, as computed by the store.
+	// UsedGB, CeilingGB and Pct describe the pool the tenant is CLOSEST to
+	// losing, not a sum. A total is the one number that cannot stop anybody:
+	// somebody comfortably inside three allowances and past the fourth is stopped
+	// by the fourth, and a banner reading 40% next to a halted server is worse
+	// than no banner.
+	UsedGB    int64 `json:"usedGb"`
 	CeilingGB int64 `json:"ceilingGb"`
 	// Pct is uncapped on the way up on purpose - someone at 300% should see 300%,
 	// not a reassuring 100%.
 	Pct int `json:"pct"`
 	// BillingEnabled is whether the tenant has agreed to be charged past the
-	// ceiling. When false, reaching it STOPS their services instead of billing
+	// allowance. When false, reaching it STOPS their services instead of billing
 	// them, which is the thing the banner has to say out loud.
 	BillingEnabled bool `json:"billingEnabled"`
+	// Warn is the highest threshold ANY pool has reached: 0, 80, 90 or 100.
+	Warn int `json:"warn"`
+	// Pools is every allowance the tenant is judged against, so the screen can
+	// show player traffic per region beside file transfers rather than one bar
+	// standing in for all of them.
+	Pools []trafficPool `json:"pools"`
 }
 
-// GetMyBilling GET /api/me/billing — the caller's lifecycle state for the banner.
+// trafficPool is one allowance as the panel draws it.
+type trafficPool struct {
+	Kind   string `json:"kind"`   // edge (player traffic) | relay (file transfers)
+	Region string `json:"region"` // "*" for a pool that is not per region
+	UsedGB int64  `json:"usedGb"`
+	// IncludedGB is nil when nothing is configured for this pool. Nil is not
+	// zero: zero would draw a full bar for a tenant nobody has limited.
+	IncludedGB *int64 `json:"includedGb"`
+	Pct        int    `json:"pct"`
+	Warn       int    `json:"warn"`
+}
+
+// GetMyBilling GET /api/me/billing - the caller's lifecycle state for the banner.
 // Always succeeds (zero = active).
 func (h *BillingHandler) GetMyBilling(w http.ResponseWriter, r *http.Request) {
 	userID := byonCallerID(r)
@@ -74,27 +96,122 @@ func (h *BillingHandler) GetMyBilling(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// trafficStatusFor reads this month's usage against the ceiling the store set.
+// trafficWarnLevel is the one answer every surface gives about the same number.
+// Must stay in step with billing.WarnLevel in the store API, which decides the
+// same thing for the account page.
+func trafficWarnLevel(usedGB int64, includedGB *int64) int {
+	if includedGB == nil || *includedGB <= 0 {
+		return 0
+	}
+	switch pct := usedGB * 100 / *includedGB; {
+	case pct >= 100:
+		return 100
+	case pct >= 90:
+		return 90
+	case pct >= 80:
+		return 80
+	default:
+		return 0
+	}
+}
+
+// trafficUnits is how many countable products the tenant holds, which is how
+// many times the per-unit allowance is granted.
+//
+// nil and 0 both count as none. In user_billing a stored 0 means UNLIMITED for a
+// CAP, but this is not a cap - it is a quantity - and the store never writes 0
+// here anyway (it clears the override instead). An admin granting unlimited
+// nodes is not the same as buying one.
+func trafficUnits(b *store.UserBilling) int64 {
+	var n int64
+	if b.MaxNodes != nil && *b.MaxNodes > 0 {
+		n += *b.MaxNodes
+	}
+	if b.MaxLinks != nil && *b.MaxLinks > 0 {
+		n += *b.MaxLinks
+	}
+	return n
+}
+
+// trafficStatusFor builds the tenant's pools from this month's usage and the
+// limits configured in the panel.
+//
+// The allowance is Core's own, resolved per (region, kind). The store used to
+// push one summed ceiling here, which meant the number the tenant saw and the
+// number that stopped them came from two places that drifted apart - the
+// pricing page promised a second allowance for file transfers that nothing
+// measured. Core owns it now; the store owns only the consent to be billed.
+//
+// Deliberately the INCLUDED allowance, not the fair-use ceiling. The buffer is
+// grace, not allowance: a warning that only fires past it arrives after the
+// tenant could still have acted on it.
+//
 // A usage read that fails is reported as nil rather than as zero usage: "we
-// could not tell" must not render as a comfortable empty bar right before the
-// store stops the tenant.
+// could not tell" must not render as a comfortable empty bar.
 func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *myTrafficStatus {
-	if b == nil || b.TrafficCeilingGB <= 0 {
+	if b == nil {
 		return nil
 	}
 	now := time.Now().UTC()
 	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	u, err := h.state.Store.GetTrafficUsage(userID, period)
-	if err != nil || u == nil {
+	cells, err := h.state.Store.GetTrafficUsageRegions(userID, period)
+	if err != nil {
 		return nil
 	}
-	usedGB := u.EdgeBytes / trafficGB
-	return &myTrafficStatus{
-		UsedGB:         usedGB,
-		CeilingGB:      b.TrafficCeilingGB,
-		Pct:            int(usedGB * 100 / b.TrafficCeilingGB),
-		BillingEnabled: b.TrafficBillingEnabled,
+	units := trafficUnits(b)
+
+	// Non-regional kinds are folded onto one pool BEFORE limits are resolved, or
+	// a tenant whose transfers were attributed to two regions would be shown the
+	// whole allowance in each of them.
+	type key struct{ region, kind string }
+	used := map[key]int64{}
+	order := make([]key, 0, len(cells))
+	for _, c := range cells {
+		k := key{services.TrafficLimitRegion(c.Region, c.Kind), c.Kind}
+		if _, seen := used[k]; !seen {
+			order = append(order, k)
+		}
+		used[k] += c.Bytes
 	}
+
+	out := &myTrafficStatus{BillingEnabled: b.TrafficBillingEnabled}
+	limited := false
+	for _, k := range order {
+		lim, err := services.ResolveTrafficLimit(h.state.Store, userID, k.region, k.kind)
+		if err != nil {
+			return nil
+		}
+		usedGB := used[k] / trafficGB
+		p := trafficPool{Kind: k.kind, Region: k.region, UsedGB: usedGB}
+		if lim.IncludedGB != nil {
+			limited = true
+			total := *lim.IncludedGB * units
+			p.IncludedGB = &total
+			if total > 0 {
+				p.Pct = int(usedGB * 100 / total)
+			} else {
+				// No allowance at all is not 0% of one: a tenant who holds
+				// nothing is already past it.
+				p.Pct = 100
+			}
+			p.Warn = trafficWarnLevel(usedGB, &total)
+		}
+		if p.Warn > out.Warn {
+			out.Warn = p.Warn
+		}
+		// The pool closest to stopping them is the one the banner speaks for.
+		if p.IncludedGB != nil && p.Pct >= out.Pct {
+			out.Pct, out.UsedGB, out.CeilingGB = p.Pct, p.UsedGB, *p.IncludedGB
+		}
+		out.Pools = append(out.Pools, p)
+	}
+	// Nothing configured anywhere means nothing is metered against a limit, which
+	// is what a self-hosted install reads - and what keeps the banner off screens
+	// it would mean nothing on.
+	if !limited {
+		return nil
+	}
+	return out
 }
 
 // SetBillingStatus PATCH /api/admin/users/{id}/billing - RequireCap("plans.write")
@@ -149,11 +266,22 @@ func (h *BillingHandler) GetBillingSettings(w http.ResponseWriter, r *http.Reque
 		return def
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":           true,
-		"gracePeriod":       get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
-		"r2Retention":       get(services.BillingR2RetentionKey, services.DefaultR2Retention),
-		"nodeRetention":     get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
-		"r2QuotaGb":         get(services.BillingR2QuotaKey, "0"),
+		"success":       true,
+		"gracePeriod":   get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
+		"r2Retention":   get(services.BillingR2RetentionKey, services.DefaultR2Retention),
+		"nodeRetention": get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
+		// Raw, with no default: "" is "never saved" and means no cap, which is
+		// not the same answer as a cap of 0 and must not read back as one. It
+		// used to default to "0" here, and the panel sent that straight back on
+		// the next save - so opening this screen and pressing Save stored a cap
+		// of NONE for every tenant.
+		"r2QuotaGb": get(services.BillingR2QuotaKey, ""),
+		// These two are plain quantities rather than tri-state limits, so they
+		// do carry their built-in default: a blank "included" field would read
+		// as "this product includes no backup storage", which is a different
+		// statement from "nobody has edited this".
+		"r2IncludedGb":      get(services.BillingR2IncludedKey, strconv.FormatInt(services.DefaultR2IncludedGB, 10)),
+		"r2BookableGb":      get(services.BillingR2BookableKey, strconv.FormatInt(services.DefaultR2BookableGB, 10)),
 		"presignTtlNodeMin": get(services.PresignTTLNodeKey, strconv.Itoa(services.DefaultPresignTTLNodeMin)),
 		"presignTtlByonMin": get(services.PresignTTLBYONKey, strconv.Itoa(services.DefaultPresignTTLBYONMin)),
 		"paymentUrl":        get(services.BillingPaymentURLKey, ""),
@@ -169,6 +297,8 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		R2Retention       string `json:"r2Retention"`
 		NodeRetention     string `json:"nodeRetention"`
 		R2QuotaGb         string `json:"r2QuotaGb"`
+		R2IncludedGb      string `json:"r2IncludedGb"`
+		R2BookableGb      string `json:"r2BookableGb"`
 		PresignTtlNodeMin string `json:"presignTtlNodeMin"`
 		PresignTtlByonMin string `json:"presignTtlByonMin"`
 		PaymentUrl        string `json:"paymentUrl"`
@@ -183,12 +313,37 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	if req.R2QuotaGb == "" {
-		req.R2QuotaGb = "0"
+	// Three states, all storable: "" is unset, "unlimited" is a decided no-cap,
+	// and a number is that cap including 0. Coercing "" to "0" here was how an
+	// unset quota became a cap of none on the first save anyone made.
+	req.R2QuotaGb = strings.TrimSpace(req.R2QuotaGb)
+	if req.R2QuotaGb != "" && req.R2QuotaGb != services.LimitUnlimited {
+		if n, err := strconv.ParseInt(req.R2QuotaGb, 10, 64); err != nil || n < 0 {
+			sendJSONError(w, "R2 quota must be a non-negative number of GB, \"unlimited\", or empty (0 means none)", http.StatusBadRequest)
+			return
+		}
 	}
-	if n, err := strconv.ParseInt(req.R2QuotaGb, 10, 64); err != nil || n < 0 {
-		sendJSONError(w, "R2 quota must be a non-negative number of GB (0 means none; leave it empty for no limit)", http.StatusBadRequest)
-		return
+	// The two allowances are quantities, not tri-state limits: an unlimited
+	// included allowance would be free infinite storage and an unlimited
+	// bookable one is the open bill the ceiling exists to prevent. Zero is
+	// meaningful for both and is stored as the number it is.
+	for _, f := range []struct {
+		label string
+		val   *string
+		def   int64
+	}{
+		{"Included backup storage", &req.R2IncludedGb, services.DefaultR2IncludedGB},
+		{"Bookable backup storage", &req.R2BookableGb, services.DefaultR2BookableGB},
+	} {
+		*f.val = strings.TrimSpace(*f.val)
+		if *f.val == "" {
+			*f.val = strconv.FormatInt(f.def, 10)
+			continue
+		}
+		if n, err := strconv.ParseInt(*f.val, 10, 64); err != nil || n < 0 {
+			sendJSONError(w, f.label+" must be a non-negative number of GB per purchased unit", http.StatusBadRequest)
+			return
+		}
 	}
 	for _, ttl := range []string{req.PresignTtlNodeMin, req.PresignTtlByonMin} {
 		if n, err := strconv.Atoi(ttl); err != nil || n <= 0 {
@@ -210,11 +365,18 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Read BEFORE the write: the tenants who agreed to be charged were shown the
+	// old ceiling, and they are told when it moves. Captured here rather than
+	// compared afterwards, when the old value is gone.
+	bookableBefore := services.R2BookablePerUnit(h.state.Store)
+
 	writes := map[string]string{
 		services.BillingGracePeriodKey:   req.GracePeriod,
 		services.BillingR2RetentionKey:   req.R2Retention,
 		services.BillingNodeRetentionKey: req.NodeRetention,
 		services.BillingR2QuotaKey:       req.R2QuotaGb,
+		services.BillingR2IncludedKey:    req.R2IncludedGb,
+		services.BillingR2BookableKey:    req.R2BookableGb,
 		services.PresignTTLNodeKey:       req.PresignTtlNodeMin,
 		services.PresignTTLBYONKey:       req.PresignTtlByonMin,
 		services.BillingPaymentURLKey:    req.PaymentUrl,
@@ -224,6 +386,10 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+	}
+	if n := services.NotifyBackupBookableChanged(h.state.Store, bookableBefore,
+		services.R2BookablePerUnit(h.state.Store)); n > 0 {
+		log.Printf("billing: bookable backup storage changed, notified %d tenant(s) with metered storage on", n)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

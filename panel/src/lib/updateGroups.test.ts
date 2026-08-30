@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
     groupInstances, compareVersions, serviceLabel, anythingOutdated,
-    bellState, categories, formatDeadline,
+    bellState, categories, formatDeadline, mergeReleases,
 } from './updateGroups';
-import type { UpdateInstance, Release } from './api/updates';
+import type { UpdateInstance, Release, ReleaseEntry } from './api/updates';
 
 const inst = (label: string, version: string, outdated = false): UpdateInstance =>
     ({ label, version: version || undefined, outdated });
@@ -153,5 +153,71 @@ describe('formatDeadline', () => {
         const out = formatDeadline('2026-09-05T14:00:00Z');
         expect(out).not.toBe('2026-09-05T14:00:00Z');
         expect(out).toContain('2026');
+    });
+});
+
+describe('mergeReleases', () => {
+    const rel = (version: string, over: Partial<Release> = {}): Release => ({
+        version,
+        features: null, breaking: null, security: null, fixes: null,
+        ...over,
+    });
+    const entry = (text: string): ReleaseEntry => ({ text });
+
+    it('returns null for nothing to show', () => {
+        expect(mergeReleases([])).toBeNull();
+    });
+
+    it('renders a single release as a plain version, not a range', () => {
+        const m = mergeReleases([rel('2026.08.30')])!;
+        expect(m.range).toBe('2026.08.30');
+        expect(m.count).toBe(1);
+    });
+
+    it('spans oldest to newest, the direction a person reads a range', () => {
+        // The list arrives newest-first. Printing it in array order would read
+        // "2026.08.30.4 - 2026.08.30.1", which is backwards to everyone.
+        const m = mergeReleases([
+            rel('2026.08.30.4'), rel('2026.08.30.3'), rel('2026.08.30.2'), rel('2026.08.30.1'),
+        ])!;
+        expect(m.range).toBe('2026.08.30.1 - 2026.08.30.4');
+        expect(m.count).toBe(4);
+    });
+
+    it('pools each category across every release, newest entries first', () => {
+        const m = mergeReleases([
+            rel('2026.08.30.2', { breaking: [entry('newer break')], fixes: [entry('newer fix')] }),
+            rel('2026.08.30.1', { breaking: [entry('older break')] }),
+        ])!;
+        const breaking = m.categories.find(c => c.key === 'breaking')!;
+        expect(breaking.entries.map(e => e.text)).toEqual(['newer break', 'older break']);
+        const fixes = m.categories.find(c => c.key === 'fixes')!;
+        expect(fixes.entries.map(e => e.text)).toEqual(['newer fix']);
+    });
+
+    it('keeps all four categories so an empty one still reads as empty', () => {
+        // "No security fixes this time" and "nobody filled this in" must not
+        // look the same, which is why an empty category is kept rather than
+        // dropped during the fold.
+        const m = mergeReleases([rel('2026.08.30')])!;
+        expect(m.categories.map(c => c.key)).toEqual(['breaking', 'security', 'features', 'fixes']);
+    });
+
+    it('carries the most urgent requirement, not the newest', () => {
+        // A reader told about the later deadline would plan for a date the
+        // earlier release has already passed.
+        const m = mergeReleases([
+            rel('2026.08.30.2', { required: { deadline: '2026-09-30', immediate: false } }),
+            rel('2026.08.30.1', { required: { deadline: '2026-09-05', immediate: false } }),
+        ])!;
+        expect(m.required?.deadline).toBe('2026-09-05');
+    });
+
+    it('lets an immediate requirement outrank any date', () => {
+        const m = mergeReleases([
+            rel('2026.08.30.2', { required: { deadline: '2026-09-30', immediate: true } }),
+            rel('2026.08.30.1', { required: { deadline: '2026-09-05', immediate: false } }),
+        ])!;
+        expect(m.required?.immediate).toBe(true);
     });
 });

@@ -23,6 +23,16 @@ type pruneFakeStore struct {
 
 func (f *pruneFakeStore) GetBackupJob(int) (*models.BackupJob, error) { return f.job, nil }
 
+// Retention resolves each archive through the owner chain now. A server with no
+// owner is the platform case these tests describe.
+func (f *pruneFakeStore) GetServerByID(id int) (*models.Server, error) {
+	return &models.Server{ID: id}, nil
+}
+
+func (f *pruneFakeStore) GetUserDefaultBackupStorage(string) (*models.BackupStorage, error) {
+	return nil, nil
+}
+
 func (f *pruneFakeStore) PruneOldBackupRuns(int, int) ([]models.BackupRun, error) {
 	return f.pruned, nil
 }

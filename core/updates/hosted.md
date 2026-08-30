@@ -11,6 +11,36 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.30.5
+
+### Features
+- Backups now come with 50 GB of storage per subscription, and metered storage is
+  there if you need more: off until you turn it on, stopping at a ceiling shown
+  before you agree, and we tell you if that ceiling ever changes.
+- Your panel shows this month's traffic under My infrastructure, one bar per
+  allowance, and your account page shows how much more you may book on each.
+  Player traffic and file transfers are separate, and you are warned at 80% and 90%.
+- You can connect an S3 bucket of your own for backups, under Account, Backup
+  storage. What lands there is not counted against your allowance and never
+  billed, and we never delete from it - not on suspension, not ever.
+- Changing your Java version or JVM flags no longer reinstalls the server. Your
+  files stay exactly as they are and the change applies straight away.
+- Setting up a server remembers which modpack you installed and puts it back when
+  you edit it. Changing a version or a modpack asks what to clear first and ticks
+  the usual answers for you; your world is never on that list.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A domain you add while setting a server up now appears straight away. It used
+  to look like the name was already taken until you reloaded the page.
+- The menu bar no longer loses entries when the window is made narrower, and its
+  overflow menu opens properly.
+
 ## 2026.08.30.4
 
 ### Features

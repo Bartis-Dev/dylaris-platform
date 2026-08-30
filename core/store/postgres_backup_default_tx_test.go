@@ -25,10 +25,12 @@ import (
 // driver's message (500), which spelled out the table and the constraint.
 
 var (
-	clearAllDefaults   = regexp.QuoteMeta(`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE`)
-	clearOtherDefaults = regexp.QuoteMeta(`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE AND id != $1`)
-	insertStorage      = regexp.QuoteMeta(`INSERT INTO backup_storages`)
-	updateStorage      = regexp.QuoteMeta(`UPDATE backup_storages SET name = $1`)
+	// One shape for both writers now: the insert passes 0 as the excluded id,
+	// which no SERIAL ever is. Scoped to owner_id IS NULL because a tenant
+	// marking their own storage as their default must not clear the platform's.
+	clearDefaultsSQL = regexp.QuoteMeta(`UPDATE backup_storages SET is_default = FALSE WHERE is_default = TRUE AND owner_id IS NULL AND id != $1`)
+	insertStorage    = regexp.QuoteMeta(`INSERT INTO backup_storages`)
+	updateStorage    = regexp.QuoteMeta(`UPDATE backup_storages SET name = $1`)
 )
 
 func defaultNodeLocalStorage() *models.BackupStorage {
@@ -55,7 +57,7 @@ func TestCreateBackupStorageRollsBackTheClearedDefaultOnDuplicateName(t *testing
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(clearAllDefaults).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(clearDefaultsSQL).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(insertStorage).WillReturnError(&pq.Error{Code: "23505"})
 	// The whole point: without this the clear above would have been committed
 	// on its own and the platform would be left with no default.
@@ -75,7 +77,7 @@ func TestUpdateBackupStorageRollsBackTheClearedDefaultOnDuplicateName(t *testing
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(clearOtherDefaults).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(clearDefaultsSQL).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(updateStorage).WillReturnError(&pq.Error{Code: "23505"})
 	mock.ExpectRollback()
 
@@ -97,7 +99,7 @@ func TestUpdateBackupStorageReportsNotFoundAndKeepsTheDefault(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(clearOtherDefaults).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(clearDefaultsSQL).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(updateStorage).WillReturnResult(sqlmock.NewResult(0, 0)) // ghost id
 	mock.ExpectRollback()
 
@@ -117,7 +119,7 @@ func TestCreateBackupStorageCommitsOnSuccess(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(clearAllDefaults).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(clearDefaultsSQL).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(insertStorage).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
 	mock.ExpectCommit()
 
@@ -138,7 +140,7 @@ func TestUpdateBackupStorageCommitsOnSuccess(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(clearOtherDefaults).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(clearDefaultsSQL).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(updateStorage).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

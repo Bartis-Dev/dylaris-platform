@@ -54,6 +54,13 @@ func (s *PostgresStore) TenantServerOwners() (map[string]string, error) {
 // Like BackupBytesByOwner it counts successful runs plus any run with a nonzero
 // size, so an abandoned run whose archive the reaper confirmed present is
 // included. Failed runs are size 0 unless the reaper found a real object.
+//
+// And like BackupBytesByOwner it counts only what sits on OUR storage. This is
+// the gauge the bill is computed from, so it has to agree with the gate that
+// refuses a backup - a tenant whose own bucket counted here but not there would
+// be billed for storage nothing was enforcing, which is the worse of the two
+// directions to disagree in. LEFT JOIN, so a run with no storage recorded still
+// counts: NULL means "before this column", and those archives are ours.
 func (s *PostgresStore) TenantBackupBytes() (map[string]int64, error) {
 	rows, err := s.db.Query(`
 		SELECT n.owner_id, COALESCE(SUM(br.size_bytes), 0)
@@ -61,7 +68,9 @@ func (s *PostgresStore) TenantBackupBytes() (map[string]int64, error) {
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		JOIN servers s ON s.id = bj.server_id
 		JOIN nodes n ON n.id = s.node_id
+		LEFT JOIN backup_storages bst ON bst.id = br.storage_id
 		WHERE n.owner_id IS NOT NULL AND (br.status = 'success' OR br.size_bytes > 0)
+		  AND bst.owner_id IS NULL
 		GROUP BY n.owner_id`)
 	if err != nil {
 		return nil, err

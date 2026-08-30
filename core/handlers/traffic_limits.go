@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -12,9 +13,10 @@ import (
 // TrafficLimitHandler exposes the per-(region, kind) traffic limits.
 //
 // The limits live in Core rather than in the store because the per-user
-// override does: users are Core's, and the three-scope walk
-// (user:<id> -> user_default -> global) already exists here for route limits.
-// Stripe keeps the price IDs; Core keeps who may use how much.
+// override does: users are Core's. Two scopes, most specific first:
+// "user:<id>" then "user_default". Stripe keeps the price IDs; Core keeps who
+// may use how much, and Core is the ONLY place that number exists - the store
+// used to hold a second copy for the pricing page and the two drifted apart.
 type TrafficLimitHandler struct {
 	state *AppState
 }
@@ -32,8 +34,8 @@ func NewTrafficLimitHandler(state *AppState) *TrafficLimitHandler {
 // apart, and that ambiguity is what made a stored 0 mean two different things
 // depending on which row it sat in.
 type trafficLimitBody struct {
-	Scope  string `json:"scope"`  // user:<id> | user_default | global
-	Region string `json:"region"` // e.g. eu-central
+	Scope  string `json:"scope"`  // user:<id> | user_default
+	Region string `json:"region"` // e.g. eu-central; ignored for non-regional kinds
 	Kind   string `json:"kind"`   // edge | relay | warp
 
 	IncludedMode string `json:"includedMode"` // default | unlimited | custom
@@ -115,14 +117,20 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !validTrafficScope(req.Scope) {
-		http.Error(w, "scope must be global, user_default or user:<id>", http.StatusBadRequest)
+		http.Error(w, "scope must be user_default or user:<id>", http.StatusBadRequest)
 		return
 	}
+	// Non-regional kinds are folded onto the one row BEFORE validation, so a
+	// client that sends a concrete region for file transfers still writes the
+	// row that gets read. Accepting it as typed would store a limit under a
+	// region the resolver never asks about: a number an operator set, on a
+	// screen that showed it back, that nothing enforces.
+	req.Region = services.TrafficLimitRegion(req.Region, req.Kind)
 	// A region or kind nobody writes is a limit that limits nothing, and it
 	// looks identical to a working one on the settings screen. The producers
 	// normalise to [a-z0-9-] (meterRegion, on the edge and the relay), so
 	// anything else here could never match a counter.
-	if !validTrafficLabel(req.Region) {
+	if req.Region != services.TrafficRegionAny && !validTrafficLabel(req.Region) {
 		http.Error(w, "region must be lowercase letters, digits and dashes", http.StatusBadRequest)
 		return
 	}
@@ -159,11 +167,24 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// What the affected tenants were shown before this write. Read now, because
+	// after it the old ceiling is gone and there is nothing left to compare.
+	// A missing row deliberately reads as nil, "no purchase cap", which is what
+	// the resolver would have answered.
+	var before *int64
+	if row, err := h.state.Store.GetTrafficLimit(req.Scope, req.Region, req.Kind); err == nil && row != nil {
+		before = row.MaxPurchaseGB
+	}
+
 	if req.IncludedMode == "default" && req.PurchaseMode == "default" {
 		if err := h.state.Store.DeleteTrafficLimit(req.Scope, req.Region, req.Kind); err != nil {
 			http.Error(w, "Failed to clear traffic limit", http.StatusInternalServerError)
 			return
 		}
+		// Clearing a row is a change like any other: the scope stops answering,
+		// so the tenants it covered fall through to whatever the next one says.
+		// Their ceiling moved even though nobody typed a number.
+		h.notifyPurchaseChange(req.Scope, req.Region, req.Kind, before)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "cleared": true})
 		return
 	}
@@ -172,7 +193,27 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Failed to save traffic limit", http.StatusInternalServerError)
 		return
 	}
+	h.notifyPurchaseChange(req.Scope, req.Region, req.Kind, before)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// notifyPurchaseChange tells the tenants who agreed to be charged that the most
+// they may book has moved.
+//
+// The AFTER value is re-resolved rather than taken from the request, so a
+// cleared row is compared against what now answers instead of against nothing.
+// Never fails the operator's save: the limit is already stored, and a
+// notification that did not go out is a tenant who was not told rather than a
+// change that did not happen.
+func (h *TrafficLimitHandler) notifyPurchaseChange(scope, region, kind string, before *int64) {
+	var after *int64
+	if row, err := h.state.Store.GetTrafficLimit(scope, region, kind); err == nil && row != nil {
+		after = row.MaxPurchaseGB
+	}
+	if n := services.NotifyTrafficPurchaseChanged(h.state.Store, scope, region, kind, before, after); n > 0 {
+		log.Printf("traffic-limits: %s/%s/%s purchase cap changed, notified %d tenant(s) with metered traffic on",
+			scope, region, kind, n)
+	}
 }
 
 // limitFromMode turns the three operator-facing modes into the stored value.
@@ -197,8 +238,16 @@ func limitFromMode(mode string, gb int64) (*int64, error) {
 	}
 }
 
+// validTrafficScope no longer accepts "global".
+//
+// It was asked after user_default and could answer nothing user_default could
+// not - every byte counted here belongs to a tenant. Two settings doing one job
+// is a screen where the value an operator typed stops applying the day somebody
+// fills in the other one. Existing rows were folded into user_default by the
+// migration in db_traffic.go, and writing a new one is refused rather than
+// stored somewhere nothing reads.
 func validTrafficScope(scope string) bool {
-	if scope == "global" || scope == "user_default" {
+	if scope == services.TrafficScopeDefault {
 		return true
 	}
 	// A bare "user:" is a scope for nobody: it stores, it never resolves for any

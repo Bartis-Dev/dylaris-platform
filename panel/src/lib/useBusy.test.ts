@@ -38,6 +38,7 @@ const LOCAL_ONLY = new Set([
     'dismissDeleteWarning', // clears a banner and navigates
     'startEdit',            // seeds an edit form
     'addHoster',            // appends an empty row to a form array
+    'startCreate',          // opens an empty form dialog; the SAVE inside it is guarded
 ]);
 
 describe('a mutating button cannot be fired twice', () => {

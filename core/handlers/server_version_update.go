@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"path"
 	"strconv"
@@ -673,6 +674,34 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		copied.ID = 0
 		copied.SubServerName = req.TargetName
 		_, _ = h.state.Store.UpsertServerMod(&copied)
+	}
+
+	// Same argument as the mods above, for how it was INSTALLED. Without this the
+	// copy has no record, so the setup screen falls back to the servers row -
+	// which describes whichever sub-server is active, not this one - and every
+	// save on the copy is classified as an installer change, putting the "what
+	// should I clear" dialog in front of an operator who only wanted to edit a
+	// JVM flag.
+	if rec, err := h.state.Store.GetSubServerInstall(serverID, srv.ActiveSubServer); err == nil && rec != nil {
+		copied := *rec
+		copied.SubServerName = req.TargetName
+		if err := h.state.Store.UpsertSubServerInstall(copied); err != nil {
+			log.Printf("CopySubServer: could not copy the install record for server %d/%s: %v",
+				serverID, req.TargetName, err)
+		}
+	}
+
+	// And the modpack snapshot, for the same reason again: it backs the Content
+	// tab's cross-check, so a copy without it shows "no modpack members" next to
+	// a directory full of the pack's jars.
+	if contents, cerr := h.state.Store.ListServerModpackContents(serverID, srv.ActiveSubServer); cerr == nil && len(contents) > 0 {
+		for i := range contents {
+			contents[i].SubServerName = req.TargetName
+		}
+		if err := h.state.Store.ReplaceServerModpackContents(serverID, req.TargetName, contents); err != nil {
+			log.Printf("CopySubServer: could not copy the modpack snapshot for server %d/%s: %v",
+				serverID, req.TargetName, err)
+		}
 	}
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)

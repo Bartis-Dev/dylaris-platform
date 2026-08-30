@@ -96,7 +96,11 @@ type Store interface {
 	SetUserOverLimitSince(userID string, at *time.Time) error
 	ListServersByOwner(ownerID string) ([]models.Server, error)
 	ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, error)
+	// BackupBytesByOwner is what the tenant stores ON OURS, which is what the
+	// quota is about. Archives on a bucket they connected themselves are
+	// counted separately, because we do not pay for those.
 	BackupBytesByOwner(ownerID string) (int64, error)
+	BackupBytesByOwnerOnOwnStorage(ownerID string) (int64, error)
 	// --- BYON plans + limits ---
 	ListPlans() ([]Plan, error)
 	GetPlan(id int) (*Plan, error)
@@ -212,9 +216,17 @@ type Store interface {
 	ListGrantsByOwner(ownerUserID string) ([]OwnerGrant, error)
 
 	// --- Backups ---
+	// ListBackupStorages returns the PLATFORM's own storages only. A tenant's
+	// private bucket must never appear in an admin dropdown as a target for
+	// somebody else's backups; ListBackupStoragesByOwner is the other half.
 	ListBackupStorages() ([]models.BackupStorage, error)
+	ListBackupStoragesByOwner(ownerID string) ([]models.BackupStorage, error)
 	GetBackupStorage(id int) (*models.BackupStorage, error)
 	GetDefaultBackupStorage() (*models.BackupStorage, error)
+	// GetUserDefaultBackupStorage is the middle step of the resolution chain.
+	// nil is not an error: it means "this tenant has not set one, ask the
+	// platform".
+	GetUserDefaultBackupStorage(ownerID string) (*models.BackupStorage, error)
 	CreateBackupStorage(s *models.BackupStorage) (int, error)
 	UpdateBackupStorage(s *models.BackupStorage) error
 	DeleteBackupStorage(id int) error
@@ -626,6 +638,28 @@ type Store interface {
 	UpsertServerMod(m *models.ServerMod) (int, error)
 	ListServerMods(serverID int, subServerName string) ([]models.ServerMod, error)
 	DeleteServerMod(id, serverID int) error
+
+	// SetUserBillingConsent records what a tenant agreed to be charged for.
+	// A nil argument leaves that flag alone.
+	SetUserBillingConsent(userID string, traffic, backup *bool) error
+
+	// UpdateServerRuntime changes ONLY the Java image and the JVM flags, for a
+	// settings edit that must not rewrite the installer metadata alongside them.
+	UpdateServerRuntime(serverID int, javaImage, extraJvmFlags string) error
+
+	// SetBackupRunInstallSnapshot records how the archived sub-servers were
+	// installed, so a restore can put those records back.
+	SetBackupRunInstallSnapshot(runID int, snapshot string) error
+
+	// --- Sub-server installs ---
+	// How each sub-server was installed, per (server, sub-server): installer,
+	// versions, and the exact modpack or pack it came from. Written on every
+	// install; read by the panel so an edit can put the same choices back on
+	// screen instead of asking the operator to remember them.
+	UpsertSubServerInstall(in models.SubServerInstall) error
+	GetSubServerInstall(serverID int, subServer string) (*models.SubServerInstall, error)
+	ListSubServerInstalls(serverID int) ([]models.SubServerInstall, error)
+	DeleteSubServerInstall(serverID int, subServer string) error
 
 	// --- Modpack contents snapshot ---
 	// Per-server-per-sub-server snapshot of the modpack's Modrinth-identified

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dylaris-core/services"
+	"dylaris-core/store"
 )
 
 // Store-linking: the bridge between the platform Core (source of truth for the
@@ -209,31 +210,73 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to read usage", http.StatusInternalServerError)
 		return
 	}
-	regions := make([]map[string]interface{}, 0, len(cells))
+	// Non-regional kinds are folded into ONE cell BEFORE limits are resolved.
+	//
+	// File transfers have a single global allowance, so leaving them per region
+	// would hand the store several cells that all resolve to the same row - and
+	// each would then be judged against the FULL allowance, letting a tenant have
+	// that allowance once per region it happened to move bytes in. Folding here
+	// rather than in the store keeps the wire honest: one pool, one cell.
+	type aggKey struct{ region, kind string }
+	agg := map[aggKey]int64{}
+	order := make([]aggKey, 0, len(cells))
 	for _, c := range cells {
-		lim, err := services.ResolveTrafficLimit(h.state.Store, uuid, c.Region, c.Kind)
+		k := aggKey{services.TrafficLimitRegion(c.Region, c.Kind), c.Kind}
+		if _, seen := agg[k]; !seen {
+			order = append(order, k)
+		}
+		agg[k] += c.Bytes
+	}
+	regions := make([]map[string]interface{}, 0, len(order))
+	for _, k := range order {
+		lim, err := services.ResolveTrafficLimit(h.state.Store, uuid, k.region, k.kind)
 		if err != nil {
 			sendJSONError(w, "Failed to resolve traffic limits", http.StatusInternalServerError)
 			return
 		}
 		regions = append(regions, map[string]interface{}{
-			"region":        c.Region,
-			"kind":          c.Kind,
-			"bytes":         c.Bytes,
+			"region":        k.region,
+			"kind":          k.kind,
+			"bytes":         agg[k],
 			"includedGb":    lim.IncludedGB,    // per UNIT held; null = no limit
 			"maxPurchaseGb": lim.MaxPurchaseGB, // per UNIT held; null = no limit, 0 = not for sale
 			"decidedBy":     lim.Scope,         // "" = nothing configured anywhere
 		})
 	}
 
+	// The backup allowance, resolved HERE. The store owns the money and the
+	// consent; Core owns what a purchase includes and what may be booked on top,
+	// and hands both over rather than letting the store keep a second copy of a
+	// number an operator edits on a Core screen. That second copy is exactly how
+	// the pricing page came to promise a traffic allowance nothing enforced.
+	billing, _ := h.state.Store.GetUserBilling(uuid)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":     true,
-		"period":      period.Format("2006-01-02"),
-		"edgeBytes":   usage.EdgeBytes,
-		"relayBytes":  usage.RelayBytes,
-		"backupBytes": usage.BackupBytes,
-		"regions":     regions,
+		"success":          true,
+		"period":           period.Format("2006-01-02"),
+		"backupIncludedGb": services.R2IncludedGB(h.state.Store, billing),
+		"backupBookableGb": services.R2BookableGB(h.state.Store, billing),
+		"edgeBytes":        usage.EdgeBytes,
+		"relayBytes":       usage.RelayBytes,
+		"backupBytes":      usage.BackupBytes,
+		// What they keep on a bucket of their OWN. Reported separately and never
+		// added to backupBytes: it is not billed and not capped, but leaving it
+		// off the response entirely would make a tenant storing 400 GB read as
+		// storing nothing on a screen that says "backup storage".
+		"backupBytesOwnStorage": backupBytesOnOwnStorage(h.state.Store, uuid),
+		"regions":               regions,
 	})
+}
+
+// backupBytesOnOwnStorage is a read that must never fail the usage response: it
+// is informational, and the numbers beside it decide whether a tenant is billed.
+// A failure reports zero and is not distinguished from "none", which is the one
+// place that conflation is harmless - nothing acts on it.
+func backupBytesOnOwnStorage(st store.Store, uuid string) int64 {
+	n, err := st.BackupBytesByOwnerOnOwnStorage(uuid)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // userRouteScope is the per-tenant key in gateway_route_limits. Kept in one place
@@ -357,6 +400,10 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// that stops things rather than billing them.
 		TrafficCeilingGB      *int64 `json:"trafficCeilingGb,omitempty"`
 		TrafficBillingEnabled *bool  `json:"trafficBillingEnabled,omitempty"`
+		// BackupBillingEnabled is the SEPARATE consent for backup storage beyond
+		// what the purchase includes. Its own flag: agreeing to pay for player
+		// traffic is not agreeing to pay for stored backups.
+		BackupBillingEnabled *bool `json:"backupBillingEnabled,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		sendJSONError(w, "Invalid request", http.StatusBadRequest)
@@ -387,15 +434,15 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		// Both or neither: a ceiling without the consent flag (or the reverse)
-		// would have the panel describe a deal that is only half known.
-		if req.TrafficCeilingGB != nil && req.TrafficBillingEnabled != nil {
-			ceiling := *req.TrafficCeilingGB
-			if ceiling < 0 {
-				ceiling = 0
-			}
-			if err := h.state.Store.SetUserTrafficBilling(req.UUID, ceiling, *req.TrafficBillingEnabled); err != nil {
-				sendJSONError(w, "Activated but failed to record the traffic deal", http.StatusInternalServerError)
+		// The consent flags, each on its own. This used to require the ceiling to
+		// be present alongside the traffic flag - "both or neither", which was
+		// right while the store computed the ceiling and became silently wrong
+		// the day it stopped sending one: the condition never fired again, so a
+		// tenant who switched metered billing ON stayed recorded as having
+		// refused it, and the guard kept them stopped instead of billed.
+		if req.TrafficBillingEnabled != nil || req.BackupBillingEnabled != nil {
+			if err := h.state.Store.SetUserBillingConsent(req.UUID, req.TrafficBillingEnabled, req.BackupBillingEnabled); err != nil {
+				sendJSONError(w, "Activated but failed to record the billing consent", http.StatusInternalServerError)
 				return
 			}
 		}
@@ -523,3 +570,32 @@ func (s *AppState) probeStoreLink(ctx context.Context, uuid string) (bool, strin
 	}
 	return parsed.Linked, parsed.Email, nil
 }
+
+// BackupDefaults GET /api/store/backup-defaults - store-key. What ONE purchased
+// unit brings in backup storage, and how much more may be booked on top.
+//
+// It exists so the public pricing page can print a real number without keeping
+// a copy of it. The allowance is edited on a Core settings screen; a second copy
+// in the store would be a second thing to change, and the one that gets
+// forgotten is the one customers read. That is not hypothetical here - the
+// pricing page promised a traffic allowance nothing enforced for exactly that
+// reason, from exactly that shape.
+//
+// Per UNIT, not per tenant: this endpoint has no tenant. The store multiplies by
+// what a plan sells.
+func (h *StoreHandler) BackupDefaults(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	// A nil billing row means "no purchase", which is what per-unit asks for:
+	// the setting itself, unmultiplied.
+	one := &store.UserBilling{MaxNodes: ptrInt64(1)}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":           true,
+		"includedGbPerUnit": services.R2IncludedGB(h.state.Store, one),
+		"bookableGbPerUnit": services.R2BookableGB(h.state.Store, one),
+	})
+}
+
+func ptrInt64(n int64) *int64 { return &n }
