@@ -4485,6 +4485,36 @@
     },
     {
       "method": "GET",
+      "path": "/api/traffic-limits",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "every configured row.",
+      "handler": "TrafficLimitHandler.ListTrafficLimits",
+      "group": "traffic-limits",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/traffic-limits",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "\"default\" for BOTH values deletes the row, because a row that says nothing about either question is a row that should not exist - leaving it would make the scope answer with two NULLs, which means \"no limit\", the opposite of deferring.",
+      "handler": "TrafficLimitHandler.SetTrafficLimit",
+      "group": "traffic-limits",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/traffic-limits/resolve",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "answers what actually applies, and says which scope decided it.",
+      "handler": "TrafficLimitHandler.ResolveTrafficLimit",
+      "group": "traffic-limits",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/updates",
       "auth": "session",
       "authorization": "no capability",
@@ -4735,10 +4765,10 @@
     }
   ],
   "counts": {
-    "total": 474,
+    "total": 477,
     "byAuth": {
       "none": 33,
-      "session": 428,
+      "session": 431,
       "user API key": 10,
       "warp key": 3
     },
@@ -4786,6 +4816,7 @@
       "ticket-categories": 1,
       "tickets": 15,
       "tools": 1,
+      "traffic-limits": 3,
       "updates": 1,
       "users": 7,
       "versions": 2,

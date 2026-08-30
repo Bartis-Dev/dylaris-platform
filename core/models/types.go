@@ -520,6 +520,21 @@ type Module struct {
 // granted zero addresses had that zero rewritten into "no override", which fell
 // through to a scope nobody had set - and that is unlimited. Making the absence
 // its own value is what stops a computed zero from being mistaken for one.
+// TrafficLimit is what one scope says about one (region, kind): how much is
+// included, and how much may be bought on top.
+//
+// Both are pointers because both follow the platform-wide limit convention -
+// nil is no limit, 0 is none, n is the cap (CLAUDE.md, "Limits"). Read them
+// through services.Exceeds / services.AtOrOver rather than by hand.
+type TrafficLimit struct {
+	ID            int    `json:"id"`
+	Scope         string `json:"scope"`
+	Region        string `json:"region"`
+	Kind          string `json:"kind"`
+	IncludedGB    *int64 `json:"includedGb"`
+	MaxPurchaseGB *int64 `json:"maxPurchaseGb"`
+}
+
 type GatewayRouteLimit struct {
 	ID        int    `json:"id"`
 	Scope     string `json:"scope"`

@@ -52,5 +52,36 @@ func applyTrafficSchema(db *sql.DB) error {
 		return fmt.Errorf("traffic: create traffic_usage_region: %w", err)
 	}
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_traffic_usage_region_period ON traffic_usage_region(period)`)
+
+	// What a tenant may use, and may buy, per (region, kind).
+	//
+	// Same three-scope shape as gateway_route_limits, deliberately: "user:<id>",
+	// then "user_default", then "global". A scope with NO ROW says nothing and
+	// the next one is asked; a scope WITH a row has answered, including with
+	// NULL. That is why both numbers live in ONE row - a row is one complete
+	// answer, so a user override cannot set half a policy and silently inherit
+	// the other half from a scope the operator was not looking at.
+	//
+	// Both columns are NULLABLE and follow the platform-wide convention
+	// (CLAUDE.md, "Limits"): NULL is no limit at all, 0 is none - they may hold
+	// zero of this - and n is the cap. For max_purchase_gb the difference is the
+	// whole feature: 0 means a region where extra traffic cannot be bought at
+	// any price, which is the honest answer where a TB costs us more than the
+	// subscription (Singapore is 7.4x Nuremberg), and NULL would mean the
+	// opposite.
+	//
+	// GB, not TB: the enforcement already works in GB (billing.CeilingGB), and
+	// a 500 GB allowance is not expressible in whole TB.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS traffic_limits (
+		id              SERIAL PRIMARY KEY,
+		scope           TEXT NOT NULL,   -- user:<id> | user_default | global
+		region          TEXT NOT NULL,   -- e.g. eu-central
+		kind            TEXT NOT NULL,   -- edge | relay | warp
+		included_gb     BIGINT,          -- NULL = no cap, 0 = none, n = the cap
+		max_purchase_gb BIGINT,          -- NULL = unlimited, 0 = cannot buy any, n = the cap
+		UNIQUE (scope, region, kind)
+	)`); err != nil {
+		return fmt.Errorf("traffic: create traffic_limits: %w", err)
+	}
 	return nil
 }

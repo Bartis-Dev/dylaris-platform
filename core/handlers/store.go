@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"dylaris-core/services"
 )
 
 // Store-linking: the bridge between the platform Core (source of truth for the
@@ -191,12 +193,46 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to read usage", http.StatusInternalServerError)
 		return
 	}
+	// The per-(region, kind) breakdown, each cell carrying the limit that
+	// applies to it. Sent WITH the totals rather than behind a second endpoint:
+	// the store asks this question hourly for every tenant, and a ceiling
+	// assembled from two calls can be assembled from two different moments.
+	//
+	// Cells with no usage are omitted. They cannot be over a ceiling, and the
+	// question "may this tenant buy more here" is asked at checkout, not here.
+	//
+	// A cell whose limit resolves to nil has no ceiling and is reported that
+	// way. nil is not zero: zero would stop a tenant the operator never
+	// configured a limit for.
+	cells, err := h.state.Store.GetTrafficUsageRegions(uuid, period)
+	if err != nil {
+		sendJSONError(w, "Failed to read usage", http.StatusInternalServerError)
+		return
+	}
+	regions := make([]map[string]interface{}, 0, len(cells))
+	for _, c := range cells {
+		lim, err := services.ResolveTrafficLimit(h.state.Store, uuid, c.Region, c.Kind)
+		if err != nil {
+			sendJSONError(w, "Failed to resolve traffic limits", http.StatusInternalServerError)
+			return
+		}
+		regions = append(regions, map[string]interface{}{
+			"region":        c.Region,
+			"kind":          c.Kind,
+			"bytes":         c.Bytes,
+			"includedGb":    lim.IncludedGB,    // per UNIT held; null = no limit
+			"maxPurchaseGb": lim.MaxPurchaseGB, // per UNIT held; null = no limit, 0 = not for sale
+			"decidedBy":     lim.Scope,         // "" = nothing configured anywhere
+		})
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":     true,
 		"period":      period.Format("2006-01-02"),
 		"edgeBytes":   usage.EdgeBytes,
 		"relayBytes":  usage.RelayBytes,
 		"backupBytes": usage.BackupBytes,
+		"regions":     regions,
 	})
 }
 

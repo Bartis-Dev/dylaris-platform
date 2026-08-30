@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **473 routes** in 49 sections: 212 GET, 140 POST, 36 PUT, 34 PATCH, 52 DELETE.
+- **476 routes** in 50 sections: 214 GET, 140 POST, 37 PUT, 34 PATCH, 52 DELETE.
 - **33** accept no credential at all; read the Gates column before assuming any of them is open.
-- **324** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **33** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **327** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **33** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **7** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -184,6 +184,7 @@ can still show what exists.
 - [/api/ticket-categories](#apiticket-categories) (1)
 - [/api/tickets](#apitickets) (15)
 - [/api/tools](#apitools) (1)
+- [/api/traffic-limits](#apitraffic-limits) (3)
 - [/api/updates](#apiupdates) (1)
 - [/api/users](#apiusers) (7)
 - [/api/versions](#apiversions) (2)
@@ -842,6 +843,14 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/tools/beam` | **none** | _public_ | - | `beamToolsRedirect` | the public, session-less "download Beam" link. |
+
+## /api/traffic-limits
+
+| Method | Path | Auth | Capability | Gates | Handler | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| GET | `/api/traffic-limits` | session | `settings.write` | - | `TrafficLimitHandler.ListTrafficLimits` | every configured row. |
+| PUT | `/api/traffic-limits` | session | `settings.write` | - | `TrafficLimitHandler.SetTrafficLimit` | "default" for BOTH values deletes the row, because a row that says nothing about either question is a row that should not exist - leaving it would make the scope answer with two NULLs, which means "no limit", the opposite of deferring. |
+| GET | `/api/traffic-limits/resolve` | session | `settings.read` | - | `TrafficLimitHandler.ResolveTrafficLimit` | answers what actually applies, and says which scope decided it. |
 
 ## /api/updates
 

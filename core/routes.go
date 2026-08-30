@@ -119,6 +119,8 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/stats/stream":  "stats.read",
 	"/api/servers/{id:[0-9]+}/stats/history": "stats.read",
 	"/api/servers/{id:[0-9]+}/stats/disk":    "stats.read",
+	"/api/traffic-limits":                    "settings.write",
+	"/api/traffic-limits/resolve":            "settings.read",
 	"/api/gateway-bandwidth/overview":        "settings.read",
 	"/api/gateway-bandwidth/history":         "settings.read",
 	"/api/gateway-bandwidth/rebalance":       "settings.read",
@@ -1309,6 +1311,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- Gateway Endpoints ---
 	gatewayHandler := handlers.NewGatewayHandler(appState)
 	dnsHandler := handlers.NewDNSHandler(appState)
+	trafficLimitHandler := handlers.NewTrafficLimitHandler(appState)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
 
 	// Admin endpoints (PANEL topology.* - global gateway oversight; Phase 4 Task 18)
@@ -1356,6 +1359,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")
 
 	// Infrastructure overview + migration status (PANEL topology.read; Phase 4 Task 18)
+	// Traffic limits: what a tenant may use and buy, per (region, kind). The
+	// list and the write share one path and therefore one capability entry, so
+	// the read is gated on settings.write too - deliberate: the rows are policy,
+	// and there is no reason to show them to someone who may not change them.
+	api.HandleFunc("/traffic-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(trafficLimitHandler.ListTrafficLimits))).Methods("GET")
+	api.HandleFunc("/traffic-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(trafficLimitHandler.SetTrafficLimit))).Methods("PUT")
+	api.HandleFunc("/traffic-limits/resolve", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(trafficLimitHandler.ResolveTrafficLimit))).Methods("GET")
+
 	api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetOverview))).Methods("GET")
 	api.HandleFunc("/infrastructure/routing-migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetRoutingMigrationStatus))).Methods("GET")
 

@@ -367,6 +367,15 @@ type Store interface {
 	ListDisabledLibraryPaths() ([]string, error)
 	SetLibraryPathDisabled(path string, disabled bool) error
 
+	// --- Traffic limits: what a tenant may use and buy, per (region, kind) ---
+	// Same three-scope shape as the route limits below. nil from Get means the
+	// scope says nothing, not that there is no limit - see
+	// services.ResolveTrafficLimit.
+	GetTrafficLimit(scope, region, kind string) (*models.TrafficLimit, error)
+	SetTrafficLimit(scope, region, kind string, includedGB, maxPurchaseGB *int64) error
+	ListTrafficLimits() ([]models.TrafficLimit, error)
+	DeleteTrafficLimit(scope, region, kind string) error
+
 	// --- Gateway Route Limits (still managed by Core, not Hub) ---
 	GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error)
 	SetGatewayRouteLimit(scope string, max *int) error

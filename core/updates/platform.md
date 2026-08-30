@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.30.2
+
+### Features
+- Traffic allowances can be set per region and per kind, with a purchase cap
+  beside each one, and overridden per user. A cap of zero is a region where
+  extra traffic cannot be bought at all, which is a different thing from no cap
+  and is now expressible. `core`
+- `/store/usage` returns the per-region breakdown with the allowance that
+  applies to each cell, so the store can judge a ceiling per region instead of
+  against one summed number. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.30
 
 ### Features
