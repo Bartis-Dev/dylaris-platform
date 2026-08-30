@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.30.3
+
+### Features
+- Settings has a Traffic limits tab: the included allowance and the purchase cap
+  per region, for player traffic and for file transfers separately. It lists
+  every region an edge reports, including the ones nothing limits yet, because
+  "no row" and "no limit" look the same from the database and only one of them
+  is something an operator meant. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.30.2
 
 ### Features

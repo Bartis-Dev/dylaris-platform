@@ -109,6 +109,10 @@ const TAB_GROUPS: SettingsGroup[] = [
         tabs: [
             // Traffic metering is useful on any BYON install, store or not.
             { slug: 'usage', label: 'Usage', always: true },
+            // What that metering is measured against. Beside Usage on purpose:
+            // the number and the limit it is judged by are one question, and
+            // they used to live in two different products.
+            { slug: 'traffic-limits', label: 'Traffic limits', always: true },
             // Both act on Stripe subscriptions: hidden without the store.
             { slug: 'billing', label: 'Billing', always: true, requiresStore: true },
         ],

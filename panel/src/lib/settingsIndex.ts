@@ -86,6 +86,7 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
 
     // BYON
     { page: 'usage', label: 'Traffic usage', where: 'BYON', keywords: ['traffic', 'usage', 'bandwidth', 'meter', 'tb'] },
+    { page: 'traffic-limits', label: 'Traffic limits per region', where: 'BYON', keywords: ['traffic', 'limit', 'included', 'allowance', 'region', 'quota', 'gb', 'tb', 'cap', 'overage'] },
     { page: 'billing', label: 'Billing defaults', where: 'BYON', keywords: ['billing', 'stripe', 'subscription', 'suspend', 'grace'] },
 ];
 
