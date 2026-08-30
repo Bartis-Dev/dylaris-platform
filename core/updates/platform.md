@@ -8,6 +8,34 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.30.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Deleting a user now removes their protected addresses. Those rows had no
+  constraint tying them to the account, and the republisher wrote every stored
+  row back into Redis each minute, so a deleted user's address kept routing
+  players indefinitely - and came back within a minute if the key was cleared
+  by hand. `core`
+
+### Fixes
+- A region that starts carrying traffic on a server already being metered is now
+  counted. Its first reading was mistaken for history and skipped, so the
+  per-region breakdown fell permanently short of the total it breaks down.
+  `core`
+- Setting one half of a traffic limit to "default" is refused instead of stored
+  as "no limit". An override meant to cap purchases alone silently granted
+  unlimited included traffic. `core`
+- Region and kind are validated when a limit is written. A misspelt one saved
+  fine and limited nothing, which looks identical to a working limit. `core`
+- The Errors tab no longer leaves an empty panel when the last error ages out
+  while it is open. `panel`
+
 ## 2026.08.30.3
 
 ### Features

@@ -776,6 +776,13 @@ export default function InfrastructureView({
     if ((tab === 'edges' || tab === 'routes') && !gatewayDeployed) setTab('nodes');
   }, [tab, gatewayDeployed]);
 
+  // The errors tab only exists while something has reported. The streams are
+  // capped and age out, so it can vanish under a reader who is looking at it -
+  // leaving no tab selected and an empty panel with no way back.
+  useEffect(() => {
+    if (tab === 'errors' && serviceErrors.length === 0) setTab('nodes');
+  }, [tab, serviceErrors.length]);
+
   if (loading) {
     return (
       <div className="h-full flex flex-col gap-4 overflow-y-auto">

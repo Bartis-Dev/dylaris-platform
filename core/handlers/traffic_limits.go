@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"dylaris-core/models"
 	"dylaris-core/services"
 )
 
@@ -56,7 +57,10 @@ func (h *TrafficLimitHandler) ListTrafficLimits(w http.ResponseWriter, r *http.R
 		return
 	}
 	if rows == nil {
-		rows = nil // keep the empty array shape below rather than null
+		// An explicit empty array, not null: the panel maps over this, and a
+		// null would have to be defended against at every call site instead of
+		// once here.
+		rows = []models.TrafficLimit{}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -114,6 +118,18 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 		http.Error(w, "scope must be global, user_default or user:<id>", http.StatusBadRequest)
 		return
 	}
+	// A region or kind nobody writes is a limit that limits nothing, and it
+	// looks identical to a working one on the settings screen. The producers
+	// normalise to [a-z0-9-] (meterRegion, on the edge and the relay), so
+	// anything else here could never match a counter.
+	if !validTrafficLabel(req.Region) {
+		http.Error(w, "region must be lowercase letters, digits and dashes", http.StatusBadRequest)
+		return
+	}
+	if !validTrafficLabel(req.Kind) {
+		http.Error(w, "kind must be lowercase letters, digits and dashes", http.StatusBadRequest)
+		return
+	}
 
 	included, err := limitFromMode(req.IncludedMode, req.IncludedGB)
 	if err != nil {
@@ -123,6 +139,23 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 	purchase, err := limitFromMode(req.PurchaseMode, req.PurchaseGB)
 	if err != nil {
 		http.Error(w, "purchaseMode: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// A row is one COMPLETE answer - that is the whole reason both numbers live
+	// in one row (see the traffic_limits schema). "default" means this scope
+	// says nothing, and a scope cannot say nothing about half a row: storing the
+	// deferred side as NULL would make the resolver read it as "decided here, no
+	// limit" and stop the walk, so an override meant to cap purchases alone
+	// would silently grant unlimited included traffic.
+	//
+	// Refused rather than guessed: "unlimited" is right there for the operator
+	// who does mean no limit, and picking one of the two for them is exactly the
+	// ambiguity the mode field exists to remove.
+	if (req.IncludedMode == "default") != (req.PurchaseMode == "default") {
+		http.Error(w,
+			"includedMode and purchaseMode must both be \"default\" or neither: a scope answers a whole row. Use \"unlimited\" for a decided no-limit.",
+			http.StatusBadRequest)
 		return
 	}
 
@@ -165,7 +198,31 @@ func limitFromMode(mode string, gb int64) (*int64, error) {
 }
 
 func validTrafficScope(scope string) bool {
-	return scope == "global" || scope == "user_default" || strings.HasPrefix(scope, "user:")
+	if scope == "global" || scope == "user_default" {
+		return true
+	}
+	// A bare "user:" is a scope for nobody: it stores, it never resolves for any
+	// user, and it shows on the overrides list as an override of nothing.
+	return strings.HasPrefix(scope, "user:") && len(scope) > len("user:")
+}
+
+// validTrafficLabel accepts what the producers can actually emit. Both
+// meterRegion implementations (edge and beam relay) strip everything outside
+// [a-z0-9-], so a label with anything else can never match a counter - and a
+// limit that can never match is indistinguishable, on screen, from one that
+// works.
+func validTrafficLabel(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 var (

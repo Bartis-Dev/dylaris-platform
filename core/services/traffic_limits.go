@@ -26,7 +26,11 @@ type TrafficLimitReader interface {
 // AtOrOver rather than comparing by hand, so no call site can forget the nil
 // check and so a 0 compares like any other number.
 type ResolvedTrafficLimit struct {
-	IncludedGB    *int64
+	IncludedGB *int64
+	// MaxPurchaseGB is carried, not enforced here. The stop lives in the store
+	// (billing.RegionCeilings), because stopping is a money decision and the
+	// store is what knows whether the tenant agreed to be billed at all. Core
+	// hands the number over through /store/usage.
 	MaxPurchaseGB *int64
 	// Scope that answered, "" when nothing did. "" therefore means no limit of
 	// any kind for this (region, kind) - which is a real state and the reason
@@ -64,22 +68,4 @@ func ResolveTrafficLimit(r TrafficLimitReader, userID, region, kind string) (Res
 		}, nil
 	}
 	return ResolvedTrafficLimit{}, nil
-}
-
-// PurchasableGB is how much extra traffic a tenant may still buy in a
-// (region, kind), given what they have already bought.
-//
-// Returns nil for "no cap". A cap of 0 - a region where extra traffic is not
-// for sale at any price - returns 0, never nil, which is exactly the
-// distinction the pointer convention exists to keep: the number an operator
-// types to mean "none" must not be the number that switches the check off.
-func PurchasableGB(limit ResolvedTrafficLimit, alreadyBoughtGB int64) *int64 {
-	if limit.MaxPurchaseGB == nil {
-		return nil
-	}
-	left := *limit.MaxPurchaseGB - alreadyBoughtGB
-	if left < 0 {
-		left = 0
-	}
-	return &left
 }

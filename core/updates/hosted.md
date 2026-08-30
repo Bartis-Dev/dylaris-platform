@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.30.4
+
+### Features
+- Nothing.
+
+### Breaking
+- If you have agreed to be billed for extra traffic, there is now a ceiling on
+  how much may be bought in a region. Past it your servers stop rather than
+  keep billing. Nothing changes until your provider sets one, and nothing on
+  your side needs updating.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.30
 
 ### Features

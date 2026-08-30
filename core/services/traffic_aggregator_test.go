@@ -705,3 +705,59 @@ func TestTrafficAggregator_SeenMarkersDoNotCollideAcrossKinds(t *testing.T) {
 		t.Errorf("second tick = %v, want edge 500 / relay 2", second)
 	}
 }
+
+// A region that starts carrying traffic on a subject that was ALREADY being
+// counted. Its marker is missing for the ordinary reason - the traffic is new -
+// and it must be billed, not seeded away.
+//
+// This used to ask a per-SUBJECT question ("was this counted before regions?")
+// once per region, so every region that appeared later lost its first delta and
+// the breakdown fell permanently short of the total it breaks down.
+func TestTrafficAggregator_ARegionAppearingLaterIsBilled(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 1000})
+	agg.runOnce(context.Background())
+
+	fs.addUsageCalls = nil
+	fs.addRegionCalls = nil
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:ap-southeast": 500})
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 500 {
+		t.Fatalf("total should have moved by 500: %+v", fs.addUsageCalls)
+	}
+	var regionSum int64
+	for _, c := range fs.addRegionCalls {
+		regionSum += c.bytes
+		if c.region != "ap-southeast" {
+			t.Errorf("unexpected region billed: %+v", c)
+		}
+	}
+	if regionSum != fs.addUsageCalls[0].edge {
+		t.Errorf("breakdown = %d but the billed total moved by %d", regionSum, fs.addUsageCalls[0].edge)
+	}
+}
+
+// The seeding it replaces still has to happen exactly once, for a subject the
+// aggregator was already counting before it knew about regions.
+func TestTrafficAggregator_SeedsOnlyOnce(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 1000})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1", "950") // counted before regions existed
+
+	agg.runOnce(context.Background())
+	if len(fs.addRegionCalls) != 0 {
+		t.Fatalf("the historical counter must be seeded, not billed: %+v", fs.addRegionCalls)
+	}
+
+	// From here on the subject is initialised, so a NEW region bills normally.
+	fs.addUsageCalls = nil
+	fs.addRegionCalls = nil
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:us-east": 300})
+	agg.runOnce(context.Background())
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].region != "us-east" || fs.addRegionCalls[0].bytes != 300 {
+		t.Fatalf("a region appearing after seeding must be billed: %+v", fs.addRegionCalls)
+	}
+}

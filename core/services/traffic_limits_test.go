@@ -149,27 +149,6 @@ func TestResolveTrafficLimit_StoreErrorSurfaces(t *testing.T) {
 	}
 }
 
-func TestPurchasableGB(t *testing.T) {
-	tests := []struct {
-		name   string
-		cap    *int64
-		bought int64
-		want   *int64
-	}{
-		{"no cap stays no cap", nil, 9999, nil},
-		{"cap of zero sells nothing, and says 0 rather than nil", gbPtr(0), 0, gbPtr(0)},
-		{"headroom is what is left", gbPtr(5000), 1200, gbPtr(3800)},
-		{"exhausted is zero", gbPtr(5000), 5000, gbPtr(0)},
-		{"over-bought never goes negative", gbPtr(5000), 6000, gbPtr(0)},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := PurchasableGB(ResolvedTrafficLimit{MaxPurchaseGB: tt.cap}, tt.bought)
-			assertPtr(t, "purchasable", got, tt.want)
-		})
-	}
-}
-
 func assertPtr(t *testing.T, what string, got, want *int64) {
 	t.Helper()
 	switch {

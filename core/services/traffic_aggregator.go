@@ -43,6 +43,17 @@ const (
 	// see meterRegion on the edge, which strips everything outside [a-z0-9-].
 	trafficRegionSeenSep = "#"
 
+	// Marks that a subject has been through region initialisation once.
+	//
+	// Without it "this region has no marker" cannot be told apart from "this
+	// SUBJECT has no markers", and the two need opposite handling: the first is
+	// a region that has just started carrying traffic and must be billed, the
+	// second is a subject that predates region tracking and must be seeded.
+	// Asking the subject-level question per region silently dropped the first
+	// delta of every region that appeared later - the breakdown then under-counts
+	// the total it is supposed to break down, permanently.
+	trafficRegionInitPrefix = "dylaris:traffic:agg:rinit:"
+
 	// Where bytes go when the edge that wrote them did not say. It is a named
 	// region rather than a dropped one: they are real bytes, they are in the
 	// billing total, and a breakdown that quietly omitted them would not add up
@@ -215,12 +226,17 @@ func (a *TrafficAggregator) snapshotBackupStorage(owners map[string]string, peri
 // A subject that resolves to nothing is skipped by collect, which is what keeps
 // a stale counter for a deleted server or a removed route from inventing a row.
 func (a *TrafficAggregator) subjectOwners() (map[string]string, error) {
-	owners, err := a.store.TenantServerOwners()
+	servers, err := a.store.TenantServerOwners()
 	if err != nil {
 		return nil, err
 	}
-	if owners == nil {
-		owners = map[string]string{}
+	// COPIED, never extended in place. runOnce asks TenantServerOwners a second
+	// time for the backup snapshot precisely because that one must see servers
+	// only; writing the route-only subjects into the map it returned would hand
+	// them to it anyway the moment the store hands back a shared or cached map.
+	owners := make(map[string]string, len(servers))
+	for k, v := range servers {
+		owners[k] = v
 	}
 	routes, err := a.store.ListCoreLinkRoutes()
 	if err != nil {
@@ -314,19 +330,27 @@ func regionBytes(fields map[string]string) map[string]int64 {
 	return out
 }
 
-// collectRegions computes the per-region deltas for one edge counter.
+// collectRegions computes the per-region deltas for one counter.
 //
-// hadTotalSeen says the subject was ALREADY being counted before this Core knew
-// about regions. Its region seen keys are therefore missing not because the
-// bytes are new but because nobody was tracking them yet, and treating that as
-// a delta would post the whole historical counter into the breakdown in one
-// tick - a split that would not match the total it is supposed to break down.
-// Those subjects are seeded silently instead: the marker is set, nothing is
-// billed, and the region rows start accumulating from the next tick.
+// Two different absences look identical from a single region marker, and they
+// need opposite handling:
 //
-// A genuinely new subject has no total seen either, so it takes the normal path
-// and its first region delta is its full counter - which is correct, because
-// the total is doing exactly the same thing on the same tick.
+//	the SUBJECT has never been split      seed, do not bill
+//	this REGION has just started moving   bill it in full
+//
+// The first is a subject that was already being counted before this Core knew
+// about regions: its region markers are missing because nobody was tracking
+// them, and reading that as a delta would post the whole historical counter
+// into the breakdown in one tick. The second is ordinary new traffic, and
+// seeding it drops the first delta - which is what this used to do to every
+// region that appeared after a subject was already counted, leaving the
+// breakdown permanently short of the total it breaks down.
+//
+// trafficRegionInitPrefix is what separates them: it is per SUBJECT, so once a
+// subject has been initialised a missing region marker can only mean the second
+// case. hadTotalSeen only decides what initialisation DOES - seed a subject the
+// aggregator already knew, bill one it is meeting for the first time, which is
+// what the total does on the same tick.
 func (a *TrafficAggregator) collectRegions(
 	ctx context.Context,
 	subject, kind string,
@@ -336,13 +360,22 @@ func (a *TrafficAggregator) collectRegions(
 	tenantSeen map[string][]seenUpdate,
 	tenant string,
 ) {
+	initKey := trafficRegionInitPrefix + kind + ":" + subject
+	initialised, err := a.redis.Get(ctx, initKey).Result()
+	subjectKnown := err == nil && initialised != ""
+	if !subjectKnown {
+		// Deferred like every other marker, so a failed DB write leaves it
+		// unset and the whole initialisation is retried next tick.
+		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: initKey, val: 1})
+	}
+
 	for region, current := range regionBytes(fields) {
 		seenKey := trafficSeenPrefix + kind + ":" + subject + trafficRegionSeenSep + region
 		last, err := a.redis.Get(ctx, seenKey).Int64()
 		missing := err != nil
-		if missing && hadTotalSeen {
-			// Seed, do not bill. Deferred like every other marker so a failed
-			// DB write leaves it unset and the seeding is retried.
+		if missing && !subjectKnown && hadTotalSeen {
+			// Seeding this subject's history away, once. Only reachable while
+			// the subject has never been split before.
 			tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
 			continue
 		}
