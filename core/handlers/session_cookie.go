@@ -144,7 +144,33 @@ func requireSameOriginForCookieAuth(r *http.Request, frontendURL string) bool {
 	if origin == "" {
 		return false
 	}
-	return sameOrigin(origin, frontendURL) || originMatchesHost(origin, r)
+	return sameOrigin(origin, frontendURL) || originMatchesHost(origin, r) || isWailsWebviewOrigin(origin)
+}
+
+// isWailsWebviewOrigin accepts the Beam desktop client's own origin.
+//
+// It is a third rule because neither of the other two can reach that case. Beam
+// proxies the panel onto wails.localhost and then REWRITES the Host to the real
+// panel's - deliberately, because the panel's edge routes on Host. Core
+// therefore sees the panel as the Host and wails as the Origin, which matches
+// neither FRONTEND_URL nor the request host, and every mutation from the desktop
+// app was refused.
+//
+// The ORIGIN alone is enough here, and the reason is what this gate defends
+// against: a page in a browser used as a confused deputy. A browser sets Origin
+// itself, so no page can claim to be the webview unless it is one. A non-browser
+// caller can forge any origin - but one holding the session cookie holds the JWT
+// inside it, and would send it as a Bearer, where this gate does not apply at
+// all. It never stood between that caller and anything.
+//
+// Exact host, not a suffix: notwails.localhost and x.wails.localhost are other
+// people's origins.
+func isWailsWebviewOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), wailsHost)
 }
 
 // sameOrigin compares an Origin header against a configured URL by scheme, host

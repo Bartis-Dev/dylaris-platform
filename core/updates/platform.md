@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.4
+
+### Features
+- Nothing.
+
+### Breaking
+- `api.dylaris.com` and any second hostname for the API are retired. Core serves
+  the panel and `/api` on one host; point your reverse proxy there and drop the
+  other rule. The build-time `NEXT_PUBLIC_API_URL` is gone with it. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- The Beam desktop app was refused on every save, upload and power action. It
+  proxies the panel onto its own address, and the cross-site check did not
+  recognise that address as the panel's. `core`
+
 ## 2026.08.31.3
 
 ### Features

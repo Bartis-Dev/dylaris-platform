@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { handleResponse, handleError, coreOrigin } from './core';
 
 const mockResponse = (body: object, ok: boolean) =>
@@ -77,29 +77,42 @@ describe('handleResponse with a non-JSON body', () => {
 // is not a broken screen but a compose file the customer runs on their own
 // machine and that then fails somewhere else entirely.
 describe('coreOrigin', () => {
-    const saved = process.env.NEXT_PUBLIC_API_URL;
-    afterEach(() => {
-        if (saved === undefined) delete process.env.NEXT_PUBLIC_API_URL;
-        else process.env.NEXT_PUBLIC_API_URL = saved;
-    });
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    // The API base comes from what CORE injected, which is the only source left
+    // now that the build-time variable is gone.
+    const served = (apiUrl: string, origin = 'https://panel.example.com') => {
+        vi.stubGlobal('window', { __DYLARIS_CONFIG__: { apiUrl }, location: { origin } });
+    };
 
     // warp appends /api/warp/enroll itself, so the suffix has to come off.
     it('strips the /api suffix from the API base', () => {
-        process.env.NEXT_PUBLIC_API_URL = 'https://api.example.com/api';
+        served('https://api.example.com/api');
         expect(coreOrigin()).toBe('https://api.example.com');
     });
 
     // The regression: the snippet used to be filled from window.location.origin,
-    // which is the PANEL's host. On the split-host layout Core is a different
-    // machine and the panel host serves no /api/warp/enroll at all.
+    // which is the PANEL's host. On a split-host layout Core is a different
+    // machine and the panel host serves no /api/warp/enroll at all. That layout
+    // is not supported for browsers any more, but a configured API origin still
+    // has to win over the page's own.
     it('follows the API host, not the host serving the panel', () => {
-        process.env.NEXT_PUBLIC_API_URL = 'https://api.example.com/api';
+        served('https://api.example.com/api');
         expect(coreOrigin()).not.toContain('panel');
     });
 
-    // Same-origin installs are the case that made the old code look correct.
     it('stays on one host when the API is served beside the panel', () => {
-        process.env.NEXT_PUBLIC_API_URL = 'https://panel.example.com/api';
+        served('https://panel.example.com/api');
+        expect(coreOrigin()).toBe('https://panel.example.com');
+    });
+
+    // The normal case, and the one the deploy snippets are actually generated
+    // in: nothing injected, so the API base is relative and there is no origin
+    // in it to strip. The page's own is the answer, because that is where /api
+    // was just fetched from - and an empty string here would put a compose file
+    // in a customer's hands that enrolls against nothing.
+    it('uses the page origin when the API base is relative', () => {
+        vi.stubGlobal('window', { location: { origin: 'https://panel.example.com' } });
         expect(coreOrigin()).toBe('https://panel.example.com');
     });
 });

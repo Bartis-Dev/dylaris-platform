@@ -1,17 +1,21 @@
 import { handleUnauthorized } from "./session";
 
-// Resolve the Core API base URL. Order of precedence:
+// Resolve the Core API base URL. Two answers, and the second is almost always
+// the one:
 //   1. window.__DYLARIS_CONFIG__.apiUrl - injected by Core into each page it
-//      serves, from PANEL_API_URL. NOT baked into the build, so a self-hoster
-//      can point a prebuilt image at a second API hostname without rebuilding.
-//      NEXT_PUBLIC_* is inlined at build time and can't be changed afterwards.
-//   2. NEXT_PUBLIC_API_URL - build-time env, for people who build the panel
-//      themselves and for local dev (.env).
-//   3. Same-origin /api - the production default, and now the shape of the
-//      software: Core serves the panel and the API together, so there is one
-//      origin and nothing to configure. In development we instead fall back to
-//      localhost:25500 since the panel dev server and Core run on different
-//      ports.
+//      serves, from PANEL_API_URL. Empty unless an operator deliberately put the
+//      API on a second hostname, which Core warns about at boot because a
+//      host-only session cookie cannot follow it.
+//   2. Same-origin /api - the shape of the software: Core serves the panel and
+//      the API together, so there is one origin and nothing to configure. True
+//      in development too, where `next dev` proxies /api to Core rather than
+//      sending the browser to another port.
+//
+// There used to be a build-time NEXT_PUBLIC_API_URL between them. It is gone,
+// and its removal is the point: baked into the bundle, it could not be corrected
+// at runtime, it outranked the same-origin default, and every value it could
+// hold other than the panel's own origin produces a panel that loads and then
+// 401s. A stale one in a developer's .env is exactly how that gets discovered.
 function resolveApiUrl(): string {
     const trim = (u: string) => u.replace(/\/+$/, "");
 
@@ -20,12 +24,11 @@ function resolveApiUrl(): string {
         if (cfg?.apiUrl && cfg.apiUrl.trim() !== "") return trim(cfg.apiUrl.trim());
     }
 
-    if (process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL.trim() !== "") {
-        return trim(process.env.NEXT_PUBLIC_API_URL);
-    }
-
     if (typeof window !== "undefined") {
-        if (process.env.NODE_ENV !== "production") return "http://localhost:25500/api";
+        // Same origin, in development too. `next dev` proxies /api to Core (see
+        // next.config.ts) precisely so this stays true: the session is a
+        // host-only cookie, and a dev panel pointed at localhost:25500 would be
+        // a different origin, where the browser neither stores it nor sends it.
         return trim(`${window.location.origin}/api`);
     }
 
@@ -41,14 +44,22 @@ export const API_URL = resolveApiUrl();
  * This is what warp's ENROLL_URL and the link's CORE_URL want: both append
  * /api/warp/... themselves.
  *
- * Deliberately not window.location.origin. That is the PANEL's origin, and the
- * production layout puts Core on a host of its own (panel.example.com next to
- * api.example.com), so the panel origin produces a deploy kit that enrolls
- * against a host with no /api/warp/enroll on it. It only looks right on the
- * same-origin layout, which is exactly what a local test install uses.
+ * It follows the API base rather than window.location.origin. Those are the same
+ * host now - Core serves the panel - but they were not always, and a deploy kit
+ * that enrolls against a host with no /api/warp/enroll on it is a failure the
+ * operator debugs on the wrong machine. Following the API base is right in both
+ * worlds; following the page's origin was only ever right in one.
+ *
+ * A relative base (the same-origin default, and what dev now uses) has no origin
+ * to strip, so the page's own is the answer there - and correct, because it is
+ * where /api was just fetched from.
  */
 export function coreOrigin(): string {
-    return resolveApiUrl().replace(/\/api\/?$/, "");
+    const base = resolveApiUrl().replace(/\/api\/?$/, "");
+    if (base === "" || base.startsWith("/")) {
+        return typeof window !== "undefined" ? window.location.origin : "";
+    }
+    return base;
 }
 
 // fetch has NO default timeout. A host that accepts the connection and then

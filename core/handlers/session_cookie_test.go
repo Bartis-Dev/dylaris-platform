@@ -163,21 +163,63 @@ func TestCookieAuthRefusesAnotherOriginsMutation(t *testing.T) {
 }
 
 // FRONTEND_URL is one value, and a Core legitimately answers on several names:
-// the public host, localhost during setup, a LAN address, and the
-// wails.localhost the Beam client proxies onto. A page addressing the host it
-// was served from is the panel talking to its own origin.
+// the public host, localhost during setup, a LAN address. A page addressing the
+// host it was served from is the panel talking to its own origin.
 func TestCookieAuthAcceptsTheHostItWasAddressedTo(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "http://wails.localhost/api/servers/1/power", nil)
-	r.Host = "wails.localhost"
-	r.Header.Set("Origin", "http://wails.localhost")
+	r := httptest.NewRequest(http.MethodPost, "http://lan.internal/api/servers/1/power", nil)
+	r.Host = "lan.internal"
+	r.Header.Set("Origin", "http://lan.internal")
 	if !requireSameOriginForCookieAuth(r, "https://panel.example.com") {
-		t.Error("the Beam client's own origin was refused; the desktop app could not act")
+		t.Error("a page addressing the host it came from was refused")
 	}
 	// And that leniency is not a hole: a page elsewhere still cannot match,
 	// because Origin says where the PAGE came from, not where it is sending.
 	r.Header.Set("Origin", "https://evil.test")
 	if requireSameOriginForCookieAuth(r, "https://panel.example.com") {
 		t.Error("a foreign origin matched the request host")
+	}
+}
+
+// The Beam desktop client, which is the case neither of the two rules above can
+// reach - and it took a 403 on every mutation in the app to notice.
+//
+// Beam proxies the panel onto its own wails.localhost origin and then REWRITES
+// the Host to the real panel's, deliberately: the panel's edge routes on Host,
+// so it has to be the real one (gateway beam/app/proxy.go). Core therefore sees
+// Host = the panel and Origin = wails, and neither FRONTEND_URL nor the request
+// host matches. Every POST from the desktop app was refused.
+//
+// Accepting the origin ALONE is safe here, and only here, because of what this
+// gate is for: a page in a browser being used as a confused deputy. A browser
+// sets Origin itself, so no page can claim to be the webview unless it is. A
+// non-browser caller can forge any origin it likes - but one holding the session
+// cookie holds the JWT, and would simply send it as a Bearer, where this gate
+// does not apply at all. It never defended against them.
+func TestCookieAuthAcceptsTheBeamWebview(t *testing.T) {
+	tests := []struct {
+		name, origin string
+		want         bool
+	}{
+		{name: "windows webview", origin: "http://wails.localhost", want: true},
+		{name: "mac and linux scheme", origin: "wails://wails.localhost", want: true},
+		{name: "an attacker-registered lookalike", origin: "http://notwails.localhost", want: false},
+		{name: "a subdomain of it", origin: "http://x.wails.localhost", want: false},
+		{name: "an unrelated site", origin: "https://evil.test", want: false},
+		// The one the tab proxy exists to stop: same registrable domain as the
+		// panel, serving a tenant's own container output.
+		{name: "a tab content host", origin: "https://abc.share.example.com", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The Host beam actually sends: the real panel's, not the webview's.
+			r := httptest.NewRequest(http.MethodPost, "https://panel.example.com/api/servers/1/power", nil)
+			r.Host = "panel.example.com"
+			r.TLS = &tlsDummy
+			r.Header.Set("Origin", tt.origin)
+			if got := requireSameOriginForCookieAuth(r, "https://panel.example.com"); got != tt.want {
+				t.Errorf("allowed = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -17,9 +17,9 @@ import (
 // the configured Panel origin AND the configured Core API origin (each
 // scheme://host), space-prefixed and de-duplicated. The Panel is proxied on the
 // wails:// origin, so same-origin /api is already covered by 'self'; these entries
-// cover a Panel that fetches an ABSOLUTE API URL - including the official split
-// where panel.dylaris.com talks to api.dylaris.com, a different origin that 'self'
-// and the Panel origin alone would not permit. Both inputs are optional: an unset
+// cover a Panel that fetches an ABSOLUTE API URL - a deployment that still puts
+// the API on a second hostname, which 'self' and the Panel origin alone would
+// not permit. The stock configuration is same-origin and needs neither. Both inputs are optional: an unset
 // or unparseable URL is skipped, and "" is returned when neither yields an origin.
 // No vendor host is hardcoded - the origins come from the operator's configured /
 // build-time Panel and API URLs.
@@ -42,8 +42,9 @@ func beamConnectExtra(panelURL, apiURL string) string {
 }
 
 // beamPanelCSP is the Content-Security-Policy beam sets on proxied Panel
-// HTML. The Panel ships no CSP of its own, so this is the only policy in
-// force. It is pragmatic, not nonce-strict: 'unsafe-inline' on script-src
+// HTML, when the Panel sent none of its own. A current Core always sends a
+// nonce-strict policy and beamCSPForPanel carries that nonce through instead,
+// so this is the fallback for an older Core rather than the usual path. It is pragmatic, not nonce-strict: 'unsafe-inline' on script-src
 // is a deliberate concession so Next.js framework inline scripts (RSC
 // flight + hydration) run without a per-request nonce, which would break
 // statically-prerendered Panel pages. The RCE class is closed natively in

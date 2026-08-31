@@ -8,14 +8,14 @@ prose above this line lives in `core/apidoc/preamble.md`.
 
 ## Listeners
 
-Core serves this API on its main HTTP port. The panel's `PANEL_API_URL` must end
-in `/api`.
+Core serves this API, and the panel, on its main HTTP port. One origin, so a
+browser reaches the API at `/api` on whatever host the pages came from.
 
-When `TAB_PROXY_PORT` is set, Core binds a **second** listener serving only the
-four custom-tab proxy routes, with no CORS and no session auth. It exists so a
-proxied container's JavaScript runs on a different browser origin than the panel
-and can never read the panel's token out of `localStorage`. The endpoints that
-mint its ticket cookie stay on the main listener, behind a session.
+A proxied custom tab is served on a HOSTNAME of its own, under
+`TAB_PROXY_HOST_SUFFIX`, dispatched ahead of this router - so a tenant's
+container never shares an origin with the panel or with anything below. That
+host serves the container and one mint endpoint and nothing else; the ticket it
+stores is decided here, on the panel's origin, where the session cookie is.
 
 ## Credentials (the Auth column)
 

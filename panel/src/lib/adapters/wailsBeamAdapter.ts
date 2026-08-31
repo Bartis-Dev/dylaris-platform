@@ -142,8 +142,7 @@ export function syncSessionWithWails(): Promise<void> {
 // NOT that panel: the app proxies the panel onto wails.localhost on purpose, so
 // the webview never leaves that origin - which means the obvious expression
 // names a host the check can never match, and the handoff is refused every
-// time. NEXT_PUBLIC_API_URL is no rescue either; CI deliberately leaves it empty
-// so the published bundle resolves same-origin.
+// time.
 //
 // Asking the app which panel it is showing gives the one value that matches, and
 // it is correct by construction now that Core serves the panel and the API
@@ -158,7 +157,7 @@ export async function wailsAPIBase(app: WailsAppBindings): Promise<string> {
             // fall through to the build-time value
         }
     }
-    return process.env.NEXT_PUBLIC_API_URL || window.location.origin + '/api';
+    return window.location.origin + '/api';
 }
 
 async function doSyncSession(): Promise<void> {

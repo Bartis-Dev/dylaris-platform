@@ -33,13 +33,18 @@ var assets embed.FS
 //	                      -X main.defaultAPIURL=https://api.acme.com"
 //
 // (hence vars, not consts), or set the DYLARIS_PANEL_URL / DYLARIS_API_URL env
-// vars at launch. The API host feeds the proxied Panel's CSP connect-src so a
-// cross-origin API (the official panel.dylaris.com <-> api.dylaris.com split) is
-// reachable. Per-install overrides are saved to config.json via the Settings
-// page. Leave defaultAPIURL empty for a same-origin /api Panel.
+// vars at launch. Per-install overrides are saved to config.json via the
+// Settings page.
+//
+// defaultAPIURL is EMPTY, and that is the answer for every current deployment:
+// Core serves the panel and the API together, so the API is on the panel's own
+// origin and 'self' already covers it in the CSP. It used to name
+// api.dylaris.com, from when those were two hosts. A value here only widens the
+// proxied Panel's connect-src, so a wrong one is not an error you would see -
+// it is a permission nobody needs.
 var (
 	defaultPanelURL = "https://panel.dylaris.com"
-	defaultAPIURL   = "https://api.dylaris.com"
+	defaultAPIURL   = ""
 )
 
 func main() {

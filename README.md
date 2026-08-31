@@ -223,7 +223,7 @@ docker compose up -d
 
 That's it — Core, a Node, the Panel, TimescaleDB and Valkey are now running. Create your first server from the Panel.
 
-> **Production note:** put the Panel/Core behind a reverse proxy with TLS and set `PANEL_API_URL` to the **public** URL the browser will use to reach the Core API, including the `/api` path (e.g. `https://api.example.com/api`), because the browser — not the container — calls the API. Set `DB_SSLMODE=require` if the database is remote.
+> **Production note:** put Core behind a reverse proxy with TLS and point it at `core:25500`. Core serves the panel and the API on that one host, so there is nothing else to configure - leave `PANEL_API_URL` empty. Set `DB_SSLMODE=require` if the database is remote.
 
 ## Deployment
 
@@ -394,7 +394,7 @@ secrets:
 | `DYLARIS_CORE_ID` | *(hostname)* | No | Identifier for this Core instance; falls back to the OS hostname. |
 | `CORE_SERVICE_NAME` | `core` | No | The name Core answers to on its own Docker network. Core resolves it and hands the result to each machine's warp, which proxies Core's gRPC on a local port — so the machine gets the service address rather than whichever replica answered, and never holds it in a config file. Set it only if the service is not called `core`. |
 | `DYLARIS_REGION` | `default` | No | Region label stamped into heartbeat + system info. |
-| `FRONTEND_URL` | `http://localhost:25500` | No | Core's own public URL, since Core serves the panel. Used for absolute links in verify/reset emails, for the same-site check against `TAB_PROXY_HOST_SUFFIX`, and for CORS on the deployments that still put the API on a second hostname. **Must be externally reachable**: a Docker-internal name here makes every emailed link unreachable outside the network. Host-level config, kept as env. |
+| `FRONTEND_URL` | `http://localhost:25500` | No | Core's own public URL, since Core serves the panel. Used for absolute links in verify/reset emails, for the same-site check against `TAB_PROXY_HOST_SUFFIX`, and for CORS. **Must be externally reachable**: a Docker-internal name here makes every emailed link unreachable outside the network. Host-level config, kept as env. |
 | `TRUSTED_PROXY_CIDRS` | *(private ranges)* | No | Which reverse-proxy networks' `X-Forwarded-For` Core believes for rate limiting and the audit log. Unset trusts the private ranges (RFC1918, loopback, IPv6 ULA), correct for the reference proxy on the private Docker network. A CIDR/IP list trusts exactly those (proxy on a public IP); `none` ignores XFF entirely (Core exposed directly). |
 | `TAB_PROXY_HOST_SUFFIX` | *(empty)* | No | DNS suffix each proxied custom tab is served under, one hostname per tab (`<label>.tabs.example.com`). Needs a wildcard DNS record and a certificate covering BOTH the suffix and its wildcard; wildcards are DNS-01 only. Empty = proxied tabs unavailable (direct tabs unaffected). Full setup: [CUSTOM-TABS.md](CUSTOM-TABS.md). |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
@@ -530,13 +530,14 @@ owned node. Already-paired nodes keep reconnecting with their per-node secret.
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `PANEL_API_URL` | *(same origin)* | No | **Browser-reachable** Core API base URL, **including the `/api` path** (e.g. `https://api.example.com/api`) — the panel appends route paths to it verbatim, so a value without `/api` 404s every call. Runtime (not build-time): Core injects it into each page it serves, so it takes effect on restart without a rebuild. If unset, the panel defaults to the **same origin** it is served from (`https://<panel-host>/api`), the usual reverse-proxy layout where `/api` is routed to Core. See the shim details below. |
+| `PANEL_API_URL` | *(same origin — leave it empty)* | No | **Browser-reachable** Core API base URL, **including the `/api` path**. Empty is correct for every deployment: Core serves the panel, so the API is same-origin and is found without being told. A value here moves the API to a second origin, which a BROWSER cannot follow — the session is a host-only cookie — so Core warns at boot when it sees one. Runtime, not build-time: Core injects it into each page it serves. |
 
-The panel resolves its API URL in this order: `window.__DYLARIS_CONFIG__.apiUrl` (runtime) → `NEXT_PUBLIC_API_URL` (build-time) → same origin (`/api`). Core writes the runtime value into every HTML response it serves, as a nonced inline script directly after `<head>`, so it is set before the bundle runs. There is no `/config.js` file to mount or edit:
+The panel resolves its API URL in two steps: `window.__DYLARIS_CONFIG__.apiUrl` if Core injected one, else the same origin the page came from (`/api`). Core writes the runtime value into every HTML response as a nonced inline script directly after `<head>`, so it is set before the bundle runs. There is no `/config.js` file to mount or edit, and no build-time variable — a value baked into the bundle could not be corrected without rebuilding it:
 
 ```js
-// what Core injects when PANEL_API_URL=https://api.example.com/api
-window.__DYLARIS_CONFIG__ = { apiUrl: "https://api.example.com/api" };
+// what Core injects when PANEL_API_URL is set at all; empty leaves the
+// panel to resolve /api on the origin it was served from
+window.__DYLARIS_CONFIG__ = { apiUrl: "https://panel.example.com/api" };
 ```
 
 ### Log Shipper (inside the MC container)
@@ -576,7 +577,6 @@ Everything behind one IP, with a reverse proxy terminating TLS for the web surfa
 ```
 dylaris.com.        A    <ip>     ; landing + web
 panel.dylaris.com.  A    <ip>     ; panel + REST, both on core (25500)
-api.dylaris.com.    A    <ip>     ; same core; keep it, shipped Beam clients know this name
 play.dylaris.com.   A    <ip>     ; MC players
 
 ; lets players omit ":25565"
@@ -601,7 +601,7 @@ Keep Core, the Panel, Nodes, Postgres and Redis on a private network and put **o
 
 **Same-origin (the default, and now the shape of the software).** Point the host at `core:25500`. Core serves the panel and the API together, so the browser only ever talks to one origin: no `PANEL_API_URL`, no path rule, and **no CORS** to configure.
 
-**Cross-origin.** Only for NON-BROWSER clients, and Core warns at boot when it sees the split. The panel session is a host-only cookie: a browser will not carry it to a second hostname, so a panel configured this way loads and then answers 401 to everything. Set `PANEL_API_URL` to that hostname (Core renders it into the page's runtime config AND into the CSP's `connect-src`, so one value covers both) and set `FRONTEND_URL` to the panel origin so CORS accepts it.
+**A second hostname for the API is not a supported layout any more.** The session is a host-only cookie, so a browser cannot carry it across two names: the panel would load and then answer 401 to everything. Core warns at boot if `PANEL_API_URL` names another origin. There is one host, and `/api` lives on it.
 
 TLS is terminated at the proxy (Let's Encrypt). Core and the Panel speak plain HTTP behind it. For a remote database set `DB_SSLMODE=require` (or `verify-full`).
 
@@ -638,15 +638,6 @@ labels:
   - "traefik.http.routers.dylaris.rule=Host(`panel.example.com`)"
   - "traefik.http.routers.dylaris.tls.certresolver=le"
   - "traefik.http.services.dylaris.loadbalancer.server.port=25500"
-```
-
-A second hostname for the API is optional and points at the same service. Keep
-one if shipped clients already know it - the Beam desktop app has a default API
-host compiled in:
-
-```yaml
-  - "traefik.http.routers.dylaris-api.rule=Host(`api.example.com`)"
-  - "traefik.http.routers.dylaris-api.tls.certresolver=le"
 ```
 
 Traefik streams responses by default (no extra SSE buffering tweak needed).
