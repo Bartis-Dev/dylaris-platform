@@ -106,14 +106,14 @@ origin, the framed page could reach into the page framing it.
 
 ### Traefik
 
-On the panel service:
+On the Core service (it serves the panel bundle):
 
 ```yaml
 - "traefik.http.routers.dylaris-share.rule=Host(`tabs.example.com`)"
 - "traefik.http.routers.dylaris-share.entrypoints=websecure"
 - "traefik.http.routers.dylaris-share.tls=true"
 - "traefik.http.routers.dylaris-share.tls.certresolver=<your-dns01-resolver>"
-- "traefik.http.routers.dylaris-share.service=<your-panel-service>"
+- "traefik.http.routers.dylaris-share.service=<your-core-service>"
 ```
 
 On the Core service (no new service needed - the tabs are served on Core's
@@ -145,7 +145,7 @@ server {
     server_name tabs.example.com;
     ssl_certificate     /etc/letsencrypt/live/tabs.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/tabs.example.com/privkey.pem;
-    location / { proxy_pass http://panel:25510; }
+    location / { proxy_pass http://core:25500; }   # the wrapper IS the panel bundle, served by Core
 }
 
 server {
@@ -175,7 +175,7 @@ belongs to from the hostname, so a proxy that rewrites it makes every tab a 404.
 
 ```
 tabs.example.com {
-    reverse_proxy panel:25510
+    reverse_proxy core:25500   # the wrapper IS the panel bundle, served by Core
 }
 
 *.tabs.example.com {

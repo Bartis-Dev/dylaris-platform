@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31
+
+### Features
+- Nothing.
+
+### Breaking
+- Backups we hold for you are now kept for one week after a suspension instead
+  of three months. During that week you can still see and download them, and
+  your server files are untouched. Backups in a bucket you connected yourself
+  are never deleted by us, at any point.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.30.5
 
 ### Features

@@ -1,3 +1,48 @@
+# PANEL_STAGE selects whether the panel bundle is built at all.
+#
+# This file builds BOTH Core and the Node (ENTRY_PATH picks the binary), and
+# only Core carries the panel. Building it unconditionally would put an npm
+# install and a Next build on every node image for output nothing copies. Docker
+# only builds a stage something references, so the reference itself is what is
+# switched: Core passes PANEL_STAGE=panel-build, the node leaves it at the empty
+# default.
+#
+# Must sit above the first FROM to be usable in one, and be re-declared in any
+# stage that reads it.
+ARG PANEL_STAGE=panel-none
+
+# --- Panel Stage: the static export Core serves ---
+FROM node:22-alpine AS panel-build
+WORKDIR /app
+
+# Same workspace dance as the old panel/Dockerfile, and the lockfile is
+# deliberately not copied: it was generated on Windows and misses the
+# linux-musl native binaries for lightningcss/swc, so `npm install` has to
+# resolve the platform-specific optional deps fresh.
+COPY package.json ./
+COPY packages/ ./packages/
+COPY panel/package.json ./panel/
+RUN npm install --workspaces --include-workspace-root
+
+COPY panel/ ./panel/
+# Next treats a nested lockfile as a second workspace root and picks the wrong one.
+RUN rm -f /app/panel/package-lock.json
+
+WORKDIR /app/panel
+# `npm run build` is `next build` FOLLOWED BY scripts/stamp-nonce.mjs, which
+# writes the CSP nonce placeholder onto every script tag. Skipping the second
+# half produces a bundle whose scripts the browser blocks, so it is one script
+# rather than two RUN lines somebody can reorder.
+RUN npm run build
+RUN mkdir -p /panel && cp -a out/. /panel/
+
+# --- Panel Stage (none): an empty directory for every non-Core build ---
+FROM alpine:latest AS panel-none
+RUN mkdir -p /panel
+
+# The indirection that makes the choice a build arg.
+FROM ${PANEL_STAGE} AS panel
+
 # --- Build Stage ---
 FROM golang:1.26.7-alpine AS builder
 
@@ -11,6 +56,17 @@ WORKDIR /src
 
 # Copy everything
 COPY . .
+
+# The panel export goes where //go:embed can see it. An empty /panel (the node
+# build) leaves the committed placeholder in place, so the embed directive
+# always has something to read and the build never depends on which stage ran.
+COPY --from=panel /panel/ /panel/
+RUN if [ -n "$(ls -A /panel 2>/dev/null)" ]; then \
+      rm -rf ./core/panelfs/dist && cp -a /panel ./core/panelfs/dist && \
+      echo "panel: embedded $(find ./core/panelfs/dist -name '*.html' | wc -l) pages"; \
+    else \
+      echo "panel: no bundle for this build; keeping the placeholder"; \
+    fi
 
 # Arguments
 ARG ENTRY_PATH

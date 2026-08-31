@@ -41,8 +41,16 @@ const (
 	DefaultR2IncludedGB = 50
 	DefaultR2BookableGB = 500
 
-	DefaultGracePeriod   = "3d"
-	DefaultR2Retention   = "3m"
+	DefaultGracePeriod = "3d"
+	// DefaultR2Retention is how long a SUSPENDED tenant's backups stay on our
+	// storage before they are deleted. One week, deliberately short: the window
+	// exists so somebody who fixes their payment finds their data intact, not so
+	// we store it indefinitely for free. Their servers and backups stay readable
+	// throughout - suspension stops servers, it does not gate the backup routes.
+	//
+	// Backups on a storage the TENANT connected are never touched by this at any
+	// deadline; see deleteTenantBackups.
+	DefaultR2Retention   = "1w"
 	DefaultNodeRetention = "2w"
 )
 

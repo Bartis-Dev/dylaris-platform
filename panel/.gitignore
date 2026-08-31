@@ -1,0 +1,4 @@
+
+# `next build` output with output: "export". Copied into core/panelfs/dist at
+# image-build time; never committed, for the same reason .next never was.
+/out/

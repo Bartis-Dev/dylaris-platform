@@ -395,13 +395,21 @@ jobs:
               - 'proto/**'
               - 'pkg/**'
               - 'Dockerfile'
+              # The panel is compiled INTO the Core image, so a panel-only change
+              # has to rebuild Core or it never ships. There is no panel image to
+              # build any more.
+              - 'panel/**'
+              - 'packages/**'
             node:
               - 'node/**'
               - 'proto/**'
               - 'pkg/**'
               - 'Dockerfile'
+            # Still its own filter, but only to decide whether the vitest job
+            # needs to run. Nothing builds an image from it.
             panel:
               - 'panel/**'
+              - 'packages/**'
             log-shipper:
               - 'log-shipper/**'
               - 'docker/mc-server/**'
@@ -477,7 +485,10 @@ jobs:
             case "$svc" in
               core)        BUILT="${{ steps.filter.outputs.core }}" ;;
               node)        BUILT="${{ steps.filter.outputs.node }}" ;;
-              panel)       BUILT="${{ steps.filter.outputs.panel }}" ;;
+              # No panel case: the panel is not a component any more (it is
+              # compiled into Core), and release.Services no longer lists it, so
+              # a block naming it lands in the warning branch below - which is
+              # the right answer, because nothing can ship it.
               log-shipper) BUILT="${{ steps.filter.outputs.log-shipper }}" ;;
               # Gateway components are released from the other repo and are not
               # built here. Naming one in platform.md is a mistake, but it is a
@@ -563,23 +574,6 @@ jobs:
       release_version: ${{ needs.detect-changes.outputs.version }}
       entry_path: ./node/
       extra_build_args: "INSTALL_QUOTA=1"
-    secrets: inherit
-
-  build-panel:
-    needs: [go-tests, race-tests, panel-tests, db-tests, detect-changes]
-    if: needs.detect-changes.outputs.panel == 'true' || github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/build-service.yml
-    with:
-      component: panel
-      release_version: ${{ needs.detect-changes.outputs.version }}
-      dockerfile: ./panel/Dockerfile
-      context: .
-      # No baked API URL: NEXT_PUBLIC_API_URL stays empty so the published image
-      # resolves the Core API same-origin (/api) by default and never falls back
-      # to a vendor host. EVERY deployment - hosted included - points the panel at
-      # its Core by setting PANEL_API_URL at runtime (config.js shim), which also
-      # drives the CSP connect-src. Empty PANEL_API_URL = same-origin, so a
-      # self-hoster reaching the panel over localhost / a LAN IP just works.
     secrets: inherit
 
   build-log-shipper:
@@ -699,7 +693,7 @@ jobs:
   # so a re-run, a revert or a second push cannot announce the same release
   # twice - and that guarantee never depended on the timer.
   announce:
-    needs: [detect-changes, build-core, build-node, build-panel, build-log-shipper]
+    needs: [detect-changes, build-core, build-node, build-log-shipper]
     # always() so a SKIPPED build (nothing changed for that service) does not
     # take the announcement with it - but a failed or cancelled one must.
     if: >-

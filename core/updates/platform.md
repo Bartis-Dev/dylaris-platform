@@ -8,6 +8,42 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31
+
+**Update required now** - the panel is no longer a separate image.
+
+### Features
+- The panel is served by Core. It is compiled into the binary as a static
+  bundle, so there is one image, one port and one version instead of two, and
+  the API is on the same origin as the pages by construction. `core`
+- Backups on our storage are now kept for one week after suspension rather than
+  three months. Backups on a bucket a tenant connected themselves are never
+  deleted at any deadline. `core`
+
+### Breaking
+- The `panel` image and service are GONE. Remove the `panel` service from your
+  compose or stack file and point your reverse proxy at Core on `:25500`; it
+  serves the pages and `/api` together. Nothing else to configure - no path
+  rule, no CORS. `core`
+- `PANEL_API_URL` should now be EMPTY. Core serves the panel, so the API is
+  same-origin and is found without being told. Set it only if you terminate the
+  API on a second hostname; Core then renders it into both the page config and
+  the CSP. `core`
+- `FRONTEND_URL` is Core's own public URL now, not a separate panel host. It
+  still drives email links and the tab-proxy same-site check. `core`
+- `TAB_PROXY_HOST_SUFFIX` is set on Core ONLY. It used to be needed on the panel
+  container as well, because the panel wrote its own CSP - and nothing compared
+  the two values, so a mismatch broke every proxied tab silently. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- A local `docker build` no longer bakes a developer's `.env` into the image.
+  The ignore pattern matched the repository root only, so `panel/.env` was in
+  the build context and Next inlined its `NEXT_PUBLIC_*` values. CI never saw
+  it, which is why it went unnoticed. `core`
+
 ## 2026.08.30.5
 
 ### Features

@@ -21,7 +21,14 @@ panel/.next
 node/dylaris_data
 *.exe
 **/*.exe
+# Both patterns, because a leading-slash-free pattern here matches at the ROOT
+# only - ".env*" alone caught the repo-root file and left panel/.env in the
+# context. Next reads any .env it finds and INLINES NEXT_PUBLIC_* into the
+# bundle at build time, so a local `docker build` produced an image with the
+# developer's own API URL compiled into it. CI never saw it (fresh checkout, and
+# .env is gitignored), which is exactly why it could sit here unnoticed.
 .env*
+**/.env*
 .superpowers/
 
 # Documentation cannot change a build or a test, so it must not invalidate one.

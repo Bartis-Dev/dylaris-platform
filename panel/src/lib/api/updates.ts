@@ -72,11 +72,11 @@ export interface UpdatesResponse {
     required?: UpdateRequirement[] | null;
 }
 
-// The release THIS panel bundle was built from, stamped in by CI. Core cannot
-// see it any other way: the panel is a static bundle running in someone's
-// browser. Sent so Core can say whether the panel specifically is behind,
-// instead of assuming it moved whenever Core did.
-const PANEL_RELEASE_VERSION = process.env.NEXT_PUBLIC_RELEASE_VERSION || '';
+// No panel version is sent any more, and there is none to send: the bundle is
+// compiled into Core's binary, so its version IS Core's. It used to be stamped
+// in by CI and passed as ?panelVersion= so Core could say whether the panel
+// specifically was behind - a question that can no longer have a different
+// answer from "is Core behind".
 
 // getUpdates - available to every signed-in user, not just admins. An admin gets
 // the platform notes and every component; everyone else gets the customer notes
@@ -84,8 +84,7 @@ const PANEL_RELEASE_VERSION = process.env.NEXT_PUBLIC_RELEASE_VERSION || '';
 // fall back to the copy embedded in the build, which reads as "up to date".
 export async function getUpdates(): Promise<{ success: boolean; message?: string } & Partial<UpdatesResponse>> {
     try {
-        const qs = PANEL_RELEASE_VERSION ? `?panelVersion=${encodeURIComponent(PANEL_RELEASE_VERSION)}` : '';
-        const res = await fetch(`${API_URL}/updates${qs}`, { headers: getAuthHeader() });
+        const res = await fetch(`${API_URL}/updates`, { headers: getAuthHeader() });
         return handleResponse(res);
     } catch (err) { return handleError(err); }
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"dylaris-core/handlers"
 	"dylaris-core/services"
@@ -22,6 +23,9 @@ type routeCfg struct {
 	ClusterSecret      string
 	GatewayHubURL      string
 	ModrinthUA         string
+	// Panel is the embedded panel bundle, mounted as the router's fallback.
+	// Nil in tests, where nothing asks for a page.
+	Panel http.Handler
 }
 
 // routeExtras carries the handler/service instances main() still needs after
@@ -570,13 +574,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Set up router and API endpoints
 	r := mux.NewRouter()
 
-	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Core Error: Endpoint not found (" + req.URL.Path + ")",
-		})
-	})
+	r.NotFoundHandler = notFoundHandler(cfg.Panel)
 
 	r.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1668,4 +1666,35 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		warpService:     warpService,
 		proxyHandler:    proxyHandler,
 	}
+}
+
+// notFoundHandler decides what an unmatched request gets.
+//
+// Anything the router did not claim is a panel URL, because the panel is served
+// from this same process now: /servers/42 matches no route here and must reach
+// the bundle. /api is the exception and keeps its JSON 404 - a client that asked
+// for an endpoint wants to be told the endpoint is missing, not handed an HTML
+// page to parse, and an SDK that got HTML back would report a parse error
+// instead of a 404.
+//
+// A nil panel (tests, and any build that mounts no bundle) falls back to the
+// JSON answer for everything, which is what this did before the panel moved in.
+func notFoundHandler(panel http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if panel != nil && !isAPIPath(req.URL.Path) {
+			panel.ServeHTTP(w, req)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Core Error: Endpoint not found (" + req.URL.Path + ")",
+		})
+	}
+}
+
+// isAPIPath reports whether a path belongs to the API surface rather than the
+// panel. Bare "/api" counts: it is a request for the API root, not for a page.
+func isAPIPath(p string) bool {
+	return p == "/api" || strings.HasPrefix(p, "/api/")
 }

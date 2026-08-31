@@ -36,9 +36,28 @@ import (
 // against too. It is the one entry that is NOT an image - it ships as a systemd
 // binary - which changes nothing about naming it, since the tag answers "you
 // must update THIS to get the change" rather than "restart this container".
-var Services = []string{"core", "panel", "node", "log-shipper", "edge", "link", "hub", "warp", "beam-relay", "spine"}
+//
+// "panel" is deliberately absent. It is compiled into Core's binary, so it has
+// no version of its own to be behind - naming it in a release would produce a
+// component the panel shows as outdated forever, because nothing builds a panel
+// image any more. Say `core` instead; that is what the reader updates.
+var Services = []string{"core", "node", "log-shipper", "edge", "link", "hub", "warp", "beam-relay", "spine"}
 
-func knownService(s string) bool { return slices.Contains(Services, s) }
+// Retired names a service that USED to be its own component. Releases in the
+// history legitimately name these - they were true when written - so the parser
+// must keep accepting them or the whole file stops validating the day a
+// component is folded into another. They just produce no component row.
+//
+// "panel" was folded into Core: it is compiled into the binary now, so it has no
+// version of its own and nothing builds an image for it.
+var Retired = []string{"panel"}
+
+// knownService accepts anything a release may legally name. Services drives what
+// is REPORTED; this also lets the retired names through, which is the difference
+// between "can be written" and "can be behind".
+func knownService(s string) bool {
+	return slices.Contains(Services, s) || slices.Contains(Retired, s)
+}
 
 // Version is a CalVer release version: YYYY.MM.DD with an optional same-day
 // counter, e.g. 2026.08.28 and 2026.08.28.2.
@@ -389,7 +408,7 @@ func parseEntry(s string) (Entry, bool, error) {
 		for _, m := range codeTokenRe.FindAllStringSubmatch(s[loc[0]:], -1) {
 			name := strings.TrimSpace(m[1])
 			if !knownService(name) {
-				return Entry{}, false, fmt.Errorf("unknown service %q (known: %s)", name, strings.Join(Services, ", "))
+				return Entry{}, false, fmt.Errorf("unknown service %q (known: %s)", name, strings.Join(append(append([]string{}, Services...), Retired...), ", "))
 			}
 			services = append(services, name)
 		}

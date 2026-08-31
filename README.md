@@ -97,11 +97,12 @@ DYLARIS is a small set of independently deployable services that coordinate thro
 ```
    Browser
       |
+      |  pages AND REST, one origin
       v
-   +-----------+   REST    +--------------------------+
-   |   PANEL   | --------> |           CORE           |
-   |   :25510  |           |  :25500 API  :25501 gRPC |
-   +-----------+           +--------------------------+
+   +----------------------------------------+
+   |                  CORE                   |
+   |  :25500  panel bundle + /api  :25501 gRPC |
+   +----------------------------------------+
                              |          |          |
                     SQL      |          |          |   queues, pub/sub,
                              v          |          v   discovery, settings
@@ -132,7 +133,7 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
 |---|---|---|
 | **Core** | `core/` | REST API (`:25500`) + gRPC mesh endpoint (`:25501`). Auth/JWT, scheduler, RCON, SSE, library, Beam-ticket signing, DB migrations, Redis-based leader election. |
 | **Node** | `node/` | Per-host agent. Mounts `/var/run/docker.sock` to create/manage MC server containers; reads commands from its Redis queue and dials Core over gRPC; persists data to the `dylaris_data` volume. Hosts SFTP (`:25520`) and the Beam gRPC server (`:25521`). |
-| **Panel** | `panel/` | Next.js (App Router) web UI (`:25510`). |
+| **Panel** | `panel/` | Next.js (App Router) web UI. Built as a static export and compiled INTO Core, so it has no image, no port and no version of its own. |
 | **Log Shipper** | `log-shipper/` | Tiny wrapper binary that runs as **PID 1 inside each MC container**, wrapping the Java process and shipping stdout/stderr to a Redis stream. Built into the MC container image, not deployed as a standalone service. |
 | **Agent** | `agent/` | A Go **library** (not a service) imported by Node for host CPU/RAM/network stats collection. No `main.go`. |
 | TimescaleDB | (image) | `timescale/timescaledb:latest-pg16` — PostgreSQL 16 + TimescaleDB for relational data and time-series stats. The **source of truth**: users, servers, settings, audit. This is the thing to back up. |
@@ -217,7 +218,7 @@ mkdir -p valkey-acl && printf 'user default on nopass ~* &* +@all\n' > valkey-ac
 docker compose up -d
 
 # 4. Open the panel and run the first-run setup wizard
-#    http://localhost:25510   →   /setup  (creates the first admin)
+#    http://localhost:25500   →   /setup  (creates the first admin)
 ```
 
 That's it — Core, a Node, the Panel, TimescaleDB and Valkey are now running. Create your first server from the Panel.
@@ -271,7 +272,7 @@ docker swarm join-token worker                     # on the manager, get the tok
 
 # Scale:
 docker service scale dylaris_core=3                # more API replicas (leader election handles singletons)
-docker service scale dylaris_panel=2               # more panel replicas
+docker service scale dylaris_core=2                # panel and API scale together now
 ```
 
 In the stack, the `node` service is **global** — exactly one Node task runs on every swarm host, and its `NODE_ID` is templated from the hostname (`{{.Node.Hostname}}`), so every host becomes a distinct Node automatically.
@@ -286,7 +287,7 @@ The single-host `docker-compose.yml` declares all five services below. The Swarm
 |---|---|---|
 | **core** | `ghcr.io/bartis-dev/dylaris-platform-core` | REST API (`:25500`) + gRPC mesh endpoint (`:25501`). Auth, scheduler, RCON, SSE, library, leader election. |
 | **node** | `ghcr.io/bartis-dev/dylaris-platform-node` | Per-host agent. Mounts `/var/run/docker.sock` to create/manage MC server containers; persists data to the `dylaris_data` volume. |
-| **panel** | `ghcr.io/bartis-dev/dylaris-platform-panel` | Next.js web UI (`:25510`). |
+| ~~panel~~ | *(no image)* | Compiled into `-core`. See "Panel" in the layout table. |
 | **timescaledb** | `timescale/timescaledb:latest-pg16` | PostgreSQL 16 + TimescaleDB for relational data and time-series stats. Data on the `timescaledb_data` volume. |
 | **redis** | `valkey/valkey:8-alpine` | In-memory store for command queues, pub/sub, service discovery, settings mirroring and stats streams. **Valkey** is a drop-in, Redis-compatible fork; the service keeps the hostname `redis` so `REDIS_ADDR=redis:6379` works everywhere. |
 
@@ -393,7 +394,7 @@ secrets:
 | `DYLARIS_CORE_ID` | *(hostname)* | No | Identifier for this Core instance; falls back to the OS hostname. |
 | `CORE_SERVICE_NAME` | `core` | No | The name Core answers to on its own Docker network. Core resolves it and hands the result to each machine's warp, which proxies Core's gRPC on a local port — so the machine gets the service address rather than whichever replica answered, and never holds it in a config file. Set it only if the service is not called `core`. |
 | `DYLARIS_REGION` | `default` | No | Region label stamped into heartbeat + system info. |
-| `FRONTEND_URL` | `http://localhost:25510` | No | Panel origin Core trusts for CORS and uses to build email links (verify/reset). **Must be externally reachable**: the previous compose default (`http://panel:25510`, an internal Docker-only hostname) made every emailed link unreachable outside the Docker network. For a **cross-origin** deployment set it to the public panel URL (e.g. `https://panel.example.com`) so CORS accepts it; for a **same-origin** reverse-proxy layout it is not needed for CORS. Host-level config, kept as env. |
+| `FRONTEND_URL` | `http://localhost:25500` | No | Core's own public URL, since Core serves the panel. Used for absolute links in verify/reset emails, for the same-site check against `TAB_PROXY_HOST_SUFFIX`, and for CORS on the deployments that still put the API on a second hostname. **Must be externally reachable**: a Docker-internal name here makes every emailed link unreachable outside the network. Host-level config, kept as env. |
 | `TRUSTED_PROXY_CIDRS` | *(private ranges)* | No | Which reverse-proxy networks' `X-Forwarded-For` Core believes for rate limiting and the audit log. Unset trusts the private ranges (RFC1918, loopback, IPv6 ULA), correct for the reference proxy on the private Docker network. A CIDR/IP list trusts exactly those (proxy on a public IP); `none` ignores XFF entirely (Core exposed directly). |
 | `TAB_PROXY_HOST_SUFFIX` | *(empty)* | No | DNS suffix each proxied custom tab is served under, one hostname per tab (`<label>.tabs.example.com`). Needs a wildcard DNS record and a certificate covering BOTH the suffix and its wildcard; wildcards are DNS-01 only. Empty = proxied tabs unavailable (direct tabs unaffected). Full setup: [CUSTOM-TABS.md](CUSTOM-TABS.md). |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
@@ -557,7 +558,7 @@ These are set by the Node when it launches a container; they are listed for comp
 |---|---|---|
 | `25500` | core | REST API (`API_PORT`) |
 | `25501` | core | gRPC node mesh / Cluster-Sync (`DYLARIS_GRPC_PORT`) |
-| `25510` | panel | Web UI |
+| ~~`25510`~~ | *(retired)* | The panel is served by Core on `25500`. |
 | `25520` | node | SFTP (`SFTP_PORT`; file access = `sftp`/`both`) |
 | `25521` | node | Beam gRPC (`BEAM_GRPC_PORT`; overlay-only, JWT-gated) |
 | `25522` | node | Auto-move pull endpoint (`MIGRATION_PORT`; per-node-secret-HMAC) |
@@ -574,8 +575,8 @@ Everything behind one IP, with a reverse proxy terminating TLS for the web surfa
 
 ```
 dylaris.com.        A    <ip>     ; landing + web
-panel.dylaris.com.  A    <ip>     ; admin panel (25510)
-api.dylaris.com.    A    <ip>     ; core REST (25500)
+panel.dylaris.com.  A    <ip>     ; panel + REST, both on core (25500)
+api.dylaris.com.    A    <ip>     ; same core; keep it, shipped Beam clients know this name
 play.dylaris.com.   A    <ip>     ; MC players
 
 ; lets players omit ":25565"
@@ -598,15 +599,15 @@ warp.dylaris.com.   A    <ip>     ; Warp leader (UDP 25599), external/home nodes
 
 Keep Core, the Panel, Nodes, Postgres and Redis on a private network and put **one reverse proxy** in front for public TLS. Two layouts:
 
-**Same-origin (recommended).** The proxy serves the Panel at `https://panel.example.com` and routes `/api` (and `/api/system/events` for SSE) on that same host to `core:25500`. The Panel then talks to its own origin (`/api`) — no `NEXT_PUBLIC_API_URL`, no `config.js`, and **no CORS** to configure. Auth is Bearer-token, so there is no cookie/CSRF surface to widen.
+**Same-origin (the default, and now the shape of the software).** Point the host at `core:25500`. Core serves the panel and the API together, so the browser only ever talks to one origin: no `PANEL_API_URL`, no path rule, and **no CORS** to configure.
 
-**Cross-origin.** Panel and API on different hostnames (e.g. `panel.example.com` + `api.example.com`). Then point the Panel at the API (`config.js` `apiUrl` or build-time `NEXT_PUBLIC_API_URL`) **and** set Core's `FRONTEND_URL` to the panel origin so CORS accepts it.
+**Cross-origin.** Only if you terminate the API on a second hostname. Set `PANEL_API_URL` to it (Core renders it into the page's runtime config AND into the CSP's `connect-src`, so one value covers both) and set `FRONTEND_URL` to the panel origin so CORS accepts it.
 
 TLS is terminated at the proxy (Let's Encrypt). Core and the Panel speak plain HTTP behind it. For a remote database set `DB_SSLMODE=require` (or `verify-full`).
 
 ### Nginx Proxy Manager (the reference production setup)
 
-Add a **Proxy Host** for `panel.example.com` → `panel:25510`, request a Let's Encrypt cert, then under **Custom locations** add `/api` → `core:25500`. Enable **Websockets support** on the host: the Panel uses Server-Sent Events (system events, live console) which must not be buffered or short-timed out. In NPM's *Advanced* tab:
+Add a **Proxy Host** for `panel.example.com` → `core:25500`, request a Let's Encrypt cert, and that is the whole configuration: Core serves the pages and the API on that one host, so there is no second upstream and no `/api` custom location. Enable **Websockets support** on the host: the Panel uses Server-Sent Events (system events, live console) which must not be buffered or short-timed out. In NPM's *Advanced* tab:
 
 ```nginx
 location /api/ {
@@ -629,19 +630,23 @@ exposed directly with no proxy, set `TRUSTED_PROXY_CIDRS=none`. See
 
 ### Traefik (alternative)
 
-Terminate TLS with a cert resolver and route by host/path. Example labels on the Core/Panel services:
+Terminate TLS with a cert resolver and route the host to Core. One router, because Core serves the pages and the API together:
 
 ```yaml
 labels:
   - "traefik.enable=true"
-  # Panel
-  - "traefik.http.routers.dylaris-panel.rule=Host(`panel.example.com`)"
-  - "traefik.http.routers.dylaris-panel.tls.certresolver=le"
-  - "traefik.http.services.dylaris-panel.loadbalancer.server.port=25510"
-  # API on the same host under /api (same-origin)
-  - "traefik.http.routers.dylaris-api.rule=Host(`panel.example.com`) && PathPrefix(`/api`)"
+  - "traefik.http.routers.dylaris.rule=Host(`panel.example.com`)"
+  - "traefik.http.routers.dylaris.tls.certresolver=le"
+  - "traefik.http.services.dylaris.loadbalancer.server.port=25500"
+```
+
+A second hostname for the API is optional and points at the same service. Keep
+one if shipped clients already know it - the Beam desktop app has a default API
+host compiled in:
+
+```yaml
+  - "traefik.http.routers.dylaris-api.rule=Host(`api.example.com`)"
   - "traefik.http.routers.dylaris-api.tls.certresolver=le"
-  - "traefik.http.services.dylaris-api.loadbalancer.server.port=25500"
 ```
 
 Traefik streams responses by default (no extra SSE buffering tweak needed).

@@ -6,7 +6,7 @@
 #
 #   cp .env.example .env   # then edit JWT_SECRET, CLUSTER_SECRET, DB_PASSWORD
 #   docker compose up -d
-#   open http://localhost:25510  →  /setup
+#   open http://localhost:25500  →  /setup
 #
 # For a multi-host fleet, use docker-stack.yml (Docker Swarm) instead.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -22,7 +22,7 @@ services:
         condition: service_started
     environment:
       API_PORT: "25500"
-      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:25510}"
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:25500}"
       JWT_SECRET: "${JWT_SECRET}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       # The gateway Hub's internal URL, so the panel's DNS form can be forwarded
@@ -222,34 +222,6 @@ services:
       # router port-forward for 25523, or a gateway - direct connect cannot traverse
       # NAT. Never publish the plain overlay port 25521.
       - "25523:25523"   # Beam LAN fast-path (TLS, fingerprint-pinned)
-    networks:
-      - dylaris_net
-
-  panel:
-    image: ghcr.io/bartis-dev/dylaris-platform-panel:latest
-    restart: unless-stopped
-    environment:
-      # Browser-reachable Core API URL (NOT the internal service name). Written
-      # into /config.js by the panel's entrypoint at container START, so this
-      # takes effect without a rebuild. Empty = same-origin /api (the default
-      # self-host layout behind a reverse proxy that routes /api to Core).
-      # NEXT_PUBLIC_API_URL (build-time, baked into the JS bundle) is a
-      # different, SaaS-only mechanism - see the CI workflow.
-      PANEL_API_URL: "${PANEL_API_URL:-}"
-      # The SAME value Core reads. It has to be here as well because the panel
-      # writes its Content-Security-Policy in middleware, long before the browser
-      # could ask Core for it, and connect-src must allow the per-tab hosts or
-      # the browser blocks the ticket mint and every proxied tab fails to load.
-      # Empty is fine and simply adds nothing to the policy.
-      TAB_PROXY_HOST_SUFFIX: "${TAB_PROXY_HOST_SUFFIX:-}"
-    ports:
-      - "25510:25510"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:25510/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
     networks:
       - dylaris_net
 

@@ -1,6 +1,5 @@
 // ci: trigger full pipeline run (no-op, safe to remove)
 import type { Metadata } from "next";
-import Script from "next/script";
 import "./globals.css";
 
 import { Syne, Instrument_Sans, DM_Mono, VT323 } from "next/font/google";
@@ -34,12 +33,19 @@ export const metadata: Metadata = {
   description: "Dylaris MC Webinterface",
 };
 
-// Nonce-based CSP (proxy.ts) requires per-request rendering: statically
-// prerendered pages have no request nonce, so their inline hydration scripts
-// ship un-nonced and the browser blocks them under the strict script-src.
-// Forcing dynamic rendering here cascades to every route under this layout,
-// so Next stamps the per-request nonce onto every page's inline scripts.
-export const dynamic = "force-dynamic";
+// No force-dynamic, and no proxy.ts either: the panel is a STATIC EXPORT served
+// by Core, so there is no Next server left to render per request.
+//
+// The nonce-strict CSP those two used to carry is not gone, it moved. The
+// exported HTML is post-processed to carry a nonce PLACEHOLDER on every script
+// tag (scripts/stamp-nonce.mjs), and Core swaps a fresh value in on every
+// response along with the matching Content-Security-Policy header. Same policy,
+// same per-response nonce, one fewer process.
+//
+// It has to stay a nonce rather than becoming a set of hashes: the Beam desktop
+// client reads the nonce back out of the panel's CSP header and builds its own
+// nonce-strict policy from it, and falls back to 'unsafe-inline' when it finds
+// none. Hashes would downgrade the desktop app silently.
 
 export default function RootLayout({
   children,
@@ -48,10 +54,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${syne.variable} ${instrumentSans.variable} ${dmMono.variable} ${vt323.variable}`}>
-      {/* Runtime config shim (public/config.js). beforeInteractive guarantees
-          window.__DYLARIS_CONFIG__ is set before the app bundle resolves the
-          API URL, so self-hosters can override it without a rebuild. */}
-      <Script src="/config.js" strategy="beforeInteractive" />
+      {/* No runtime-config script here on purpose.
+
+          Anything in the React tree is ALSO serialised into Next's flight
+          payload, so a placeholder declared here appears twice in the HTML -
+          once as a tag and once inside a JSON string. Replacing both would put
+          unescaped quotes into that string and break hydration.
+
+          Core injects the tag directly after <head> instead, where it is
+          parser-inserted, nonced like every other script, and runs before the
+          app bundle resolves its API URL. See core/panelfs (injectConfig). */}
       <body>{children}</body>
     </html>
   );

@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -189,15 +188,15 @@ func (h *UpdatesHandler) components(r *http.Request, releases []release.Release,
 	byService := map[string][]instance{}
 
 	if isAdmin {
+		// The panel is no longer its own component. It is compiled into this
+		// binary, so its version IS Core's - there is nothing left that could
+		// drift, and a second row reporting the same number would only invite
+		// the question of what to do when they disagree.
+		//
+		// The ?panelVersion= query the panel used to send is gone with it, and
+		// unknown query parameters are ignored, so an older bundle asking is
+		// answered correctly rather than refused.
 		byService["core"] = h.cores(r.Context(), releases)
-		if pv := strings.TrimSpace(r.URL.Query().Get("panelVersion")); pv != "" {
-			// The panel is a static bundle in someone's browser, so Core has no
-			// other way to see which build it is. Spoofable, and harmless: it
-			// only changes what that one admin is shown about their own install.
-			if _, err := release.ParseVersion(pv); err == nil {
-				byService["panel"] = []instance{versioned("panel", pv, releases, "panel")}
-			}
-		}
 	}
 
 	for _, n := range h.nodes(r.Context(), userID, isAdmin) {

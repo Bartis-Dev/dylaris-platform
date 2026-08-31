@@ -30,7 +30,7 @@ services:
     image: ghcr.io/bartis-dev/dylaris-platform-core:latest
     environment:
       API_PORT: "25500"
-      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:25510}"
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:25500}"
       JWT_SECRET: "${JWT_SECRET}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       # The gateway Hub's internal URL, so the panel's DNS form can be forwarded
@@ -314,45 +314,6 @@ services:
     # `node.labels.dylaris_role == external` constraint + `NODE_EXTERNAL=true`.
     # See NODE_EXTERNAL / NODE_TAGS in README.md's Configuration reference.
 
-  panel:
-    image: ghcr.io/bartis-dev/dylaris-platform-panel:latest
-    environment:
-      # Browser-reachable Core API URL, written into /config.js by the panel's
-      # entrypoint at container start (runtime, no rebuild). Empty = same-origin
-      # /api. NEXT_PUBLIC_API_URL (build-time) is the separate SaaS-only path -
-      # see the CI workflow.
-      PANEL_API_URL: "${PANEL_API_URL:-}"
-      # The SAME value Core reads. It has to be here as well because the panel
-      # writes its Content-Security-Policy in middleware, long before the browser
-      # could ask Core for it, and connect-src must allow the per-tab hosts or
-      # the browser blocks the ticket mint and every proxied tab fails to load.
-      # Empty is fine and simply adds nothing to the policy.
-      TAB_PROXY_HOST_SUFFIX: "${TAB_PROXY_HOST_SUFFIX:-}"
-    ports:
-      - "25510:25510"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:25510/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    networks:
-      - dylaris_net
-    deploy:
-      replicas: 2
-      restart_policy:
-        condition: any
-      update_config:
-        order: start-first
-        parallelism: 1
-
-  # ── Bundled database — DISABLED for production ──────────────────────────────
-  # Production defaults to a managed/external Postgres (set DB_HOST/DB_PORT/
-  # DB_SSLMODE on core above). A single in-swarm DB on a node-local volume is not
-  # HA and pins the whole stack to one host. To run the bundled DB anyway (small
-  # single-region deploy), UNCOMMENT this block AND the timescaledb_data volume,
-  # label the DB host (docker node update --label-add dylaris.db=true <node>), and
-  # leave DB_HOST unset so it falls back to "timescaledb".
   # timescaledb:
   #   image: timescale/timescaledb:latest-pg16
   #   environment:

@@ -135,8 +135,13 @@ func TestParseGoodFile(t *testing.T) {
 	if top.Required.Note != "older nodes stop connecting." {
 		t.Errorf("note = %q", top.Required.Note)
 	}
-	if got := top.AllServices(); strings.Join(got, ",") != "core,panel,node" {
-		t.Errorf("AllServices = %v", got)
+	// "panel" is NOT in the result even though the fixture names it. CI uses
+	// AllServices to demand that everything a release claims was rebuilt, and
+	// nothing builds a panel image any more - it is compiled into Core. A
+	// retired name stays PARSEABLE, so the history keeps validating, but it can
+	// no longer put a build on the critical path.
+	if got := top.AllServices(); strings.Join(got, ",") != "core,node" {
+		t.Errorf("AllServices = %v, want core,node (panel is retired)", got)
 	}
 }
 

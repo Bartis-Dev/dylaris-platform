@@ -150,6 +150,8 @@ type Config struct {
 	// isolation on and pointed every iframe at a port nothing was listening on,
 	// silently. One variable cannot be half-set.
 	TabProxyHostSuffix string
+	// PanelAPIURL is empty for the same-origin default; see the read in Load.
+	PanelAPIURL string
 
 	// UpdatesURLPlatform / UpdatesURLHosted are the PUBLIC raw URLs of the two
 	// release-notes files the updates view fetches: platform.md for people who RUN
@@ -214,6 +216,13 @@ func LoadConfig() (Config, error) {
 	}
 
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:25510")
+	// PANEL_API_URL is the browser-reachable API base, and it is EMPTY for the
+	// normal deployment: Core serves the panel itself, so the API is on the same
+	// origin and the panel resolves /api without being told. It stays supported
+	// for the one case that still needs it - an operator who terminates the API
+	// on a separate hostname - and Core renders it into /config.js and into the
+	// CSP rather than a second container doing so from its own copy of the value.
+	panelAPIURL := strings.TrimSpace(getEnv("PANEL_API_URL", ""))
 	tabProxyHostSuffix := normalizeTabProxyHostSuffix(getEnv("TAB_PROXY_HOST_SUFFIX", ""))
 	warnTabProxySuffixNotSameSite(frontendURL, tabProxyHostSuffix)
 
@@ -266,6 +275,7 @@ func LoadConfig() (Config, error) {
 		SuspendGrace: suspendGrace,
 
 		TabProxyHostSuffix: tabProxyHostSuffix,
+		PanelAPIURL:        panelAPIURL,
 
 		// Platform defaults to its own public repo's raw feed (works once the repo
 		// is public + the feed is populated); gateway stays empty until the feed is

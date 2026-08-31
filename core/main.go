@@ -19,6 +19,7 @@ import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
 	"dylaris-core/models"
+	"dylaris-core/panelfs"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
@@ -525,7 +526,23 @@ func main() {
 		log.Printf("warp: region subnet backfill: list regions failed: %v", err)
 	}
 
+	// The panel bundle, served out of this binary. A failure here is fatal: a
+	// Core with no panel is an API nobody can reach a screen through, and a
+	// process that boots anyway would look healthy while every browser gets a
+	// 404.
+	panel, err := panelfs.New(cfg.PanelAPIURL, cfg.TabProxyHostSuffix)
+	if err != nil {
+		log.Fatalf("panel bundle: %v", err)
+	}
+	if !panel.Built {
+		log.Printf("panel: WARNING - this binary carries the placeholder bundle, not a real build. " +
+			"Every panel URL will answer with a page telling the operator so. The API is unaffected.")
+	} else {
+		log.Printf("panel: serving %d routes from the embedded bundle", panel.Routes())
+	}
+
 	root, extras := buildAPIRouter(appState, authHandler, routeCfg{
+		Panel:              panel,
 		JWTSecret:          cfg.JWTSecret,
 		Region:             cfg.Region,
 		CoreID:             cfg.CoreID,

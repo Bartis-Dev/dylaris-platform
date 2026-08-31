@@ -15,7 +15,7 @@ const NUM_RE = /^\d+$/;
 
 const DEFAULTS: BillingSettings = {
     gracePeriod: '3d',
-    r2Retention: '3m',
+    r2Retention: '1w',
     nodeRetention: '2w',
     // Empty, not "0": unset means no cap, and a "0" default here was what the
     // next save wrote back as a real cap of none for every tenant.

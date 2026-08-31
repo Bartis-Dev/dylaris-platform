@@ -28,3 +28,13 @@ yarn-error.log*
 Thumbs.db
 .idea/
 .vscode/
+# The panel's static export, copied in before `go build` (see core/Dockerfile).
+# Only the placeholder is committed: the real bundle is ~10 MB of build output
+# that would land in every diff, and a stale committed copy is worse than none -
+# it compiles, boots, and serves a panel from whenever it was last checked in.
+# The `dist/` rule above excludes this directory outright, and git does not look
+# inside an excluded directory - so the negation has to re-include the directory
+# before it can re-include a file in it.
+!panelfs/dist/
+panelfs/dist/*
+!panelfs/dist/index.html

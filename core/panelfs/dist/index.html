@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dylaris</title>
+<h1>Panel bundle not built into this binary</h1>
+<p>This Core was compiled without the panel's static export, so it is serving the
+placeholder that lives in the repository. The API on <code>/api</code> is
+unaffected.</p>
+<p>To build a real one: <code>npm run build</code> in <code>panel/</code>, then
+copy <code>panel/out</code> over <code>core/panelfs/dist</code> before
+<code>go build</code>. The Dockerfile and CI do exactly that.</p>
