@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+
 import {
     ArrowLeft, Send, Loader2, LifeBuoy, Lock, UserPlus, X as XIcon, History, CircleAlert, CircleCheckBig,
     Paperclip, Download, Trash2, MessageSquareQuote, Server as ServerIcon, ExternalLink,
@@ -22,13 +22,14 @@ import { SkeletonHeader, SkeletonText, SkeletonCard, Skeleton } from '@/componen
 import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
 import { useRouter } from 'next/navigation';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { useRouteId } from '@/lib/routeParams';
 
 const ALL_STATUSES: TicketStatus[] = ['open', 'in_progress', 'waiting_user', 'resolved', 'closed'];
 
 export default function TicketDetailPage() {
-    const params = useParams();
+    const paramId = useRouteId('tickets');
     const router = useRouter();
-    const ticketId = Number(params?.id);
+    const ticketId = Number(paramId);
     const { user, featureFlags } = useAppData();
     const [ticketSettings, setTicketSettings] = useState<TicketSettings | null>(null);
     const [confirmDelete, setConfirmDelete] = useState(false);

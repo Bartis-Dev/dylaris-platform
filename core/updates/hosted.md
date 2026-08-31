@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Opening a single server, modpack or ticket showed "not found". Every one of
+  those pages works again; nothing on your side needed changing.
+
 ## 2026.08.31.4
 
 ### Features

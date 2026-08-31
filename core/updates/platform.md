@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Every page for ONE thing was blank: a server, a modpack, a module, a ticket, a
+  proxied tab, a share link. They all reported "not found" while the list pages
+  and the API were fine. `core`
+- Creating the first admin left you at the login screen instead of signing you
+  in. `core`
+- Client-side navigation into any of those pages did a full page reload, because
+  the data Next fetches for a soft navigation was not being served. `core`
+
 ## 2026.08.31.4
 
 ### Features

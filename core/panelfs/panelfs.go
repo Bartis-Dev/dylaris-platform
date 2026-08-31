@@ -106,5 +106,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !found {
 		file = "404.html"
 	}
+	// A route can resolve to a segment PAYLOAD rather than a document - Next
+	// exports one beside every page and its client router fetches it on a soft
+	// navigation. It is not HTML: served as one it would be handed a CSP and the
+	// config script, and Next would fail to parse what came back.
+	if !strings.HasSuffix(file, ".html") {
+		if f, ok := h.openFile(file); ok {
+			defer f.Close()
+			h.serveAsset(w, r, file, f)
+			return
+		}
+		file = "404.html"
+		found = false
+	}
 	h.serveHTML(w, r, file, found)
 }

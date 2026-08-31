@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
-import { useParams } from 'next/navigation';
+
 import { AlertTriangle, RotateCcw, Code2, ListChecks, Search, ChevronDown, FileQuestion, Power } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { toast } from '@/components/ui/Toast';
@@ -13,6 +13,7 @@ import {
     type PropertyDef, type PropertyGroup,
 } from '@/lib/server-properties-schema';
 import { parseProperties, serializeProperties, type PropertiesDoc } from '@/lib/properties-codec';
+import { useRouteId } from '@/lib/routeParams';
 
 const CodeMirrorEditor = lazy(() => import('@dylaris/ui-filebrowser').then(m => ({ default: m.CodeMirrorEditor })));
 
@@ -146,9 +147,9 @@ function PropertyRow({ def, raw, onChange, edited }: PropertyRowProps) {
 }
 
 export default function ServerPropertiesView() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers } = useAppData();
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
 
     const [mode, setMode] = useState<Mode>('simple');

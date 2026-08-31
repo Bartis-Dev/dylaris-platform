@@ -30,8 +30,14 @@ func exportLike() fstest.MapFS {
 		"tickets/new.html":                                       page("ticket-new"),
 		"tickets/" + ExportParam + "/history.html":               page("ticket-history"),
 		"tickets/" + ExportParam + ".html":                       page("ticket"),
-		"_next/static/chunks/abc.js":                             {Data: []byte("chunk")},
-		"config.js":                                              {Data: []byte("window.__DYLARIS_CONFIG__={apiUrl:\"stale\"}")},
+		// Next writes an RSC segment payload beside every page, and asks for it
+		// during a client-side navigation. Under a dynamic route it lives beside
+		// the wildcard, so only the route tree can find it.
+		"servers/" + ExportParam + "/__next._tree.txt": {Data: []byte("tree-payload")},
+		"servers/" + ExportParam + "/console.txt":      {Data: []byte("console-payload")},
+		"servers.txt":                {Data: []byte("servers-payload")},
+		"_next/static/chunks/abc.js": {Data: []byte("chunk")},
+		"config.js":                  {Data: []byte("window.__DYLARIS_CONFIG__={apiUrl:\"stale\"}")},
 	}
 }
 
@@ -325,5 +331,55 @@ func TestScriptSrcIsNonceStrict(t *testing.T) {
 	// tab hosts that DO frame things never reach this handler.
 	if !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("frame-ancestors is missing: %q", csp)
+	}
+}
+
+// Next's client router fetches an RSC segment payload on every soft navigation,
+// and under a dynamic route that payload is exported beside the wildcard:
+// servers/__param__/console.txt answers /servers/7/console.txt.
+//
+// The route tree indexed only .html, so those 404'd - 232 files in a real
+// export. The app still worked, because Next falls back to a full document load
+// when the payload is missing, so the only symptom was a console 404 and every
+// navigation into a server behaving like a page reload. Exactly the kind of
+// thing that survives a green test suite and a working-looking click-through.
+func TestSegmentPayloadsResolveThroughTheWildcard(t *testing.T) {
+	h := testHandler(t, "", "")
+
+	cases := []struct{ path, want string }{
+		{"/servers/7/__next._tree.txt", "tree-payload"},
+		{"/servers/7/console.txt", "console-payload"},
+		// A static route's payload is a real file at its literal path and was
+		// always served; asserted so a change here cannot quietly break it.
+		{"/servers.txt", "servers-payload"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			rec := get(t, h, tc.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if body := rec.Body.String(); !strings.Contains(body, tc.want) {
+				t.Errorf("body = %q, want it to contain %q", body, tc.want)
+			}
+			// It is NOT an HTML document: served as HTML it would be handed the
+			// config script and a CSP, and Next would fail to parse it.
+			if ct := rec.Header().Get("Content-Type"); strings.HasPrefix(ct, "text/html") {
+				t.Errorf("Content-Type = %q; a segment payload is not a document", ct)
+			}
+			if strings.Contains(rec.Body.String(), "__DYLARIS_CONFIG__") {
+				t.Error("the config script was injected into a segment payload")
+			}
+		})
+	}
+}
+
+// And a miss is still a miss: an unknown .txt under a dynamic route must not be
+// answered by some other segment's payload.
+func TestUnknownSegmentPayloadIsNotSubstituted(t *testing.T) {
+	h := testHandler(t, "", "")
+	rec := get(t, h, "/servers/7/nosuchtab.txt")
+	if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "payload") {
+		t.Fatalf("an unknown segment was answered with %q", rec.Body.String())
 	}
 }

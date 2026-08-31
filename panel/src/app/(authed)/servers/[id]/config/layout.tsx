@@ -1,10 +1,11 @@
 "use client";
 
 import React from 'react';
-import { useParams, usePathname } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useAppData } from '@/lib/AppDataContext';
 import { Settings2, Image as ImageIcon, Activity, Clock, LayoutGrid, Network as NetworkIcon } from 'lucide-react';
+import { useRouteId } from '@/lib/routeParams';
 
 // Configuration sub-tab strip. Each sub-tab is a nested route under
 // /servers/{id}/config/<slug>; the strip lives in this layout so every page
@@ -16,11 +17,11 @@ import { Settings2, Image as ImageIcon, Activity, Clock, LayoutGrid, Network as 
 // area without inheriting that padding, then leave per-page padding to each
 // sub-tab page.
 export default function ServerConfigLayout({ children }: { children: React.ReactNode }) {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const pathname = usePathname();
     const { servers } = useAppData();
 
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
     const isProxy = server?.serverType === 'proxy';
 

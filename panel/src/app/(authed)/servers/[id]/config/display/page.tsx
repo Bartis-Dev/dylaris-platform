@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import { Image as ImageIcon, Upload, Trash2, MessageSquare, RotateCcw, Globe } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getFileContent, saveFile, getEdgeMotd, setEdgeMotd, type EdgeMotdMode } from '@/lib/api';
@@ -15,6 +15,7 @@ import {
     parseMotd, motdVisibleLengths, insertMotdCode,
     MOTD_COLORS, MOTD_STYLES, MOTD_MAX_LINES, MOTD_SOFT_LINE_LIMIT,
 } from '@/lib/motd';
+import { useRouteId } from '@/lib/routeParams';
 
 // Display sub-tab. Surgically edits motd= in server.properties so
 // the user gets a friendly multi-line editor without touching the rest of the
@@ -28,9 +29,9 @@ import {
 const ICON_PATH_NAME = 'server-icon.png';
 
 export default function ServerConfigDisplayPage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers, gatewayEnabled } = useAppData();
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
     const activeSubServer = server?.activeSubServer || '';
     const serverUuid = server?.uuid || '';

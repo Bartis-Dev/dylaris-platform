@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import { AlertTriangle } from 'lucide-react';
 import { resolveShareLink } from '@/lib/api/serverTabs';
 import { tabContentSrc } from '@/lib/tabProxy';
+import { useRouteId } from '@/lib/routeParams';
 
 // Standalone, Dylaris-branded page for a shared custom tab. Lives OUTSIDE the
 // (authed) group so a public link loads without the panel's auth redirect.
@@ -30,8 +31,8 @@ import { tabContentSrc } from '@/lib/tabProxy';
 type State = 'checking' | 'ready' | 'notfound' | 'expired';
 
 export default function StandaloneTabProxyPage() {
-    const params = useParams();
-    const token = String(params?.token || '');
+    const paramToken = useRouteId('c');
+    const token = String(paramToken || '');
     const [state, setState] = useState<State>('checking');
     const [contentOrigin, setContentOrigin] = useState('');
 

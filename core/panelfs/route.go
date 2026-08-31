@@ -39,25 +39,50 @@ type routeNode struct {
 
 func newNode() *routeNode { return &routeNode{children: map[string]*routeNode{}} }
 
-// buildRouteTree walks the export and indexes every .html file by the request
-// path it answers. dist/login.html answers /login; dist/index.html answers /.
+// buildRouteTree walks the export and indexes every file a request path can
+// reach through a WILDCARD. dist/login.html answers /login; dist/index.html
+// answers /.
+//
+// Two kinds, because Next writes two:
+//
+//   - .html, the document. The extension comes off: servers/__param__.html
+//     answers /servers/7.
+//   - .txt, the RSC segment payload the client router fetches on every soft
+//     navigation. The extension STAYS, because the request carries it:
+//     servers/__param__/console.txt answers /servers/7/console.txt.
+//
+// The second kind was missing, and the failure was almost invisible. A static
+// route's payload is a real file at its literal path, so it was already served;
+// only the ones beside a wildcard 404'd - 232 of them in a real export. Next
+// answers a missing payload by doing a full document load instead, so the app
+// worked and every navigation into a server was quietly a page reload.
 func buildRouteTree(fsys fs.FS) (*routeTree, error) {
 	t := &routeTree{root: newNode()}
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(p, ".html") {
+		if d.IsDir() {
 			return nil
 		}
-		route := strings.TrimSuffix(p, ".html")
-		// index.html is the root, and a nested index.html would be its
-		// directory - Next writes flat files today, but the rule costs nothing
-		// and stops a future output shape from serving "/x/index".
-		if route == "index" {
-			route = ""
-		} else {
-			route = strings.TrimSuffix(route, "/index")
+		var route string
+		switch {
+		case strings.HasSuffix(p, ".html"):
+			route = strings.TrimSuffix(p, ".html")
+			// index.html is the root, and a nested index.html would be its
+			// directory - Next writes flat files today, but the rule costs
+			// nothing and stops a future output shape from serving "/x/index".
+			if route == "index" {
+				route = ""
+			} else {
+				route = strings.TrimSuffix(route, "/index")
+			}
+		case strings.HasSuffix(p, ".txt"):
+			route = p
+		default:
+			// Chunks, fonts, icons. Those live at a literal path and are found
+			// by the file lookup, which runs first and never needs a wildcard.
+			return nil
 		}
 		t.insert(route, p)
 		return nil

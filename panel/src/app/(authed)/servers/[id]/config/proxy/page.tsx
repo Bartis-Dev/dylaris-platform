@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState, lazy, Suspense } from 'react';
-import { useParams } from 'next/navigation';
+
 import { AlertTriangle, Network, Copy, Info } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getFileContent, saveFile } from '@/lib/api';
 import { proxyConfigFilename, backendAddress, proxyPrereqHint } from '@/lib/proxyConfig';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { SettingsCardSave } from '@/components/settings/SettingsCard';
+import { useRouteId } from '@/lib/routeParams';
 
 // Proxy Config tab: a raw text editor for the proxy's own config file
 // (config.yml for BungeeCord/Waterfall, velocity.toml for Velocity) plus a
@@ -18,9 +19,9 @@ import { SettingsCardSave } from '@/components/settings/SettingsCard';
 const CodeMirrorEditor = lazy(() => import('@dylaris/ui-filebrowser').then(m => ({ default: m.CodeMirrorEditor })));
 
 export default function ServerConfigProxyPage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers } = useAppData();
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
 
     const serverUuid = server?.uuid ?? '';

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from 'react';
-import { useParams } from 'next/navigation';
+
 import { Server } from '../lib/api';
 import RegionBadge from '@/components/RegionBadge';
 import { ShieldCheck, Search, X, ChevronDown, ChevronRight, Network, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
@@ -11,6 +11,7 @@ import { useSidebarCollapse } from '@/lib/SidebarCollapse';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
 import CreateMenu from '@/components/CreateMenu';
+import { useRouteId } from '@/lib/routeParams';
 
 interface SidebarProps {
   onNewServer?: () => void;
@@ -60,8 +61,8 @@ function buildProxyHierarchy(servers: Server[]) {
 export default function Sidebar({ onNewServer }: SidebarProps) {
   const { collapsed, toggle, width } = useSidebarCollapse();
   const { servers, user: currentUser, proxiesEnabled, featureFlags } = useAppData();
-  const params = useParams();
-  const activeServerId = params?.id ? Number(params.id) : null;
+  const paramId = useRouteId('servers');
+  const activeServerId = paramId ? Number(paramId) : null;
   const now = useNow();
 
   const [isAdminMode, setIsAdminMode] = useState(false);

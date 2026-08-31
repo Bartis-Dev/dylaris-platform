@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import { Activity, Play, Square, Trash2, ExternalLink, RefreshCw, AlertTriangle, Download, Clock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { systemEvents } from '@/lib/systemEvents';
@@ -11,6 +11,7 @@ import { listSparkProfiles, recordSparkProfile, deleteSparkProfile, SPARK_URL_RE
 import { createEventSource } from '@/lib/sse';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
+import { useRouteId } from '@/lib/routeParams';
 
 // Spark profiler integration. UX:
 //   * "Not installed" → prompts user to add `spark` from the Content tab
@@ -34,9 +35,9 @@ interface ActiveProfile {
 }
 
 export default function ServerConfigProfilingPage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers } = useAppData();
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
 
     const [sparkInstalled, setSparkInstalled] = useState<boolean | null>(null);

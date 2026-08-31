@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { useParams, usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
     Pencil, SlidersHorizontal, Trash2, AlertTriangle, Play, Square, RotateCcw, Skull,
@@ -27,19 +27,20 @@ import { systemEvents } from '@/lib/systemEvents';
 import { useBusy } from '@/lib/useBusy';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
+import { useRouteId } from '@/lib/routeParams';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
 // layout.tsx can be a server component - generateStaticParams cannot be
 // exported from a client one, and the static export requires it.
 export default function ServerShell({ children }: { children: React.ReactNode }) {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const pathname = usePathname();
     const router = useRouter();
     const { servers, user, refreshServers, gatewayEnabled, routingMode, featureFlags } = useAppData();
     const now = useNow();
 
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const selectedServer = servers.find(s => s.id === serverId);
 
     const [isEditingName, setIsEditingName] = useState(false);

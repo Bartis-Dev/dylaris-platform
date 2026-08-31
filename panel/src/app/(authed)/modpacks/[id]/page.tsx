@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import Link from 'next/link';
 import { Package, ArrowLeft, Plus, Trash2, ExternalLink, RefreshCw, CircleAlert, X, Edit, ChevronRight, Layers, Settings, UserX, UserCheck, Lock } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
@@ -19,6 +19,7 @@ import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/componen
 import { Badge } from '@/components/ui/Badge';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
+import { useRouteId } from '@/lib/routeParams';
 
 // Pack detail. Shows pack metadata + its builds. Each build pins a
 // Minecraft version + loader and links to the per-build content editor at
@@ -35,8 +36,8 @@ interface SolderConfigForm {
 }
 
 export default function PackDetailPage() {
-    const params = useParams();
-    const packId = Number(params?.id);
+    const paramId = useRouteId('modpacks');
+    const packId = Number(paramId);
     const { featureFlags } = useAppData();
     const modpacksDisabled = !featureFlags.modpacks;
     const [pack, setPack] = useState<Pack | null>(null);

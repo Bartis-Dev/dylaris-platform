@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import { Users, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2, RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks, CircleCheck, X, ListPlus, MessageSquare, Terminal, Lock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
@@ -14,6 +14,7 @@ import {
 import RconConfigCard from '@/components/RconConfigCard';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
+import { useRouteId } from '@/lib/routeParams';
 
 // Player Management. Everything here goes through /servers/{id}/players,
 // which is gated on players.read (the roster + the three list files) and
@@ -41,9 +42,9 @@ const SECTIONS: { id: Section; label: string; Icon: React.ComponentType<{ size?:
 const RCON_DEPENDENT: Section[] = ['online', 'bans', 'whitelist', 'ops'];
 
 export default function ServerPlayersPage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers } = useAppData();
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
 
     const [section, setSection] = useState<Section>('online');

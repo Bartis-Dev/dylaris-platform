@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import { AlertTriangle, ExternalLink, Link2 } from 'lucide-react';
 import { listServerTabs, mintTabProxyAuth, type ServerTab } from '@/lib/api/serverTabs';
 import { systemEvents } from '@/lib/systemEvents';
 import { tabContentSrc } from '@/lib/tabProxy';
 import { useAppData } from '@/lib/AppDataContext';
 import { Skeleton } from '@/components/Skeleton';
+import { useRouteId } from '@/lib/routeParams';
 
 // dynamic renderer for custom tabs. Loads the tab metadata, then either:
 //  - direct: embeds the configured URL in an iframe (open_in_panel=true) or
@@ -32,9 +33,10 @@ const PROXY_AUTH_REFRESH_MS = 4 * 60 * 1000;
 type ProxyAuthState = 'pending' | 'ready' | 'error';
 
 export default function ServerCustomTabPage() {
-    const params = useParams();
-    const serverId = Number(params?.id);
-    const tabId = Number(params?.tabId);
+    const paramId = useRouteId('servers');
+    const paramTabId = useRouteId('t');
+    const serverId = Number(paramId);
+    const tabId = Number(paramTabId);
     // Each proxied tab carries its own content origin, computed by Core from
     // the tab's host label. There is no same-origin fallback: without one there
     // is nowhere safe to serve the container, and the page says so.

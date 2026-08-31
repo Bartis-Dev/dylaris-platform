@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import { LayoutGrid, Plus, Pencil, Trash2, Play, Square, ExternalLink, AlertTriangle, X, Link2, Copy, RotateCw, Clock } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -18,6 +18,7 @@ import { DynamicIcon, TAB_ICON_NAMES } from '@/lib/icons';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
+import { useRouteId } from '@/lib/routeParams';
 
 // Custom Tabs management.
 //
@@ -48,9 +49,9 @@ interface EditingTab extends Partial<ServerTab> {
 }
 
 export default function ServerConfigTabsPage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers, gatewayEnabled, coreInfo } = useAppData();
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
 
     const [tabs, setTabs] = useState<ServerTab[]>([]);

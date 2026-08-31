@@ -1,13 +1,13 @@
 "use client";
 
-import { useParams } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
 import ConsoleView from '@/views/ConsoleView';
+import { useRouteId } from '@/lib/routeParams';
 
 export default function ServerConsolePage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers } = useAppData();
-    const server = servers.find(s => s.id === Number(params?.id));
+    const server = servers.find(s => s.id === Number(paramId));
     if (!server) return null;
     return <ConsoleView server={server} />;
 }

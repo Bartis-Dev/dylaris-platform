@@ -91,10 +91,9 @@ export default function SetupWizard() {
             }
             return;
         }
-        if (res.token) {
-            // Nothing stored: creating the first admin logs you in through the
-            // same HttpOnly cookie a normal login sets.
-        }
+        // Nothing to store. Core signs the new admin in with the same HttpOnly
+        // cookie a login sets, so /servers is reachable straight away - the
+        // response still carries a token, and nothing reads it.
         router.replace('/servers');
     };
 

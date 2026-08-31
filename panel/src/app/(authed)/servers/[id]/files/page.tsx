@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import { Terminal, Globe, FolderOpen, Copy, Loader2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { API_URL } from '@/lib/api';
 import FileBrowserView from '@/views/FileBrowserView';
 import { toast } from '@/components/ui/Toast';
+import { useRouteId } from '@/lib/routeParams';
 
 // Platform slugs match gateway/beam/relay/binaries.go validPlatforms.
 type BeamPlatform = 'windows-amd64' | 'linux-amd64' | 'linux-arm64' | 'darwin-amd64' | 'darwin-arm64';
@@ -37,9 +38,9 @@ function filenameFor(platform: BeamPlatform, contentDisp: string): string {
 }
 
 export default function ServerFilesPage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers, user, fileAccessMode, beamSettings } = useAppData();
-    const server = servers.find(s => s.id === Number(params?.id));
+    const server = servers.find(s => s.id === Number(paramId));
 
     // Beam-download UI state: lives at page scope so the toast/spinner stay
     // mounted even if the file browser below re-renders.

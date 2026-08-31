@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import { FileText, Filter, Loader2, ShieldCheck, ShieldOff, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { listServerAudit, getServerAuditStatus, setServerAuditForce, ServerAuditEvent, ServerAuditState } from '@/lib/api/serverAudit';
 import { Skeleton, SkeletonText, SkeletonList } from '@/components/Skeleton';
+import { useRouteId } from '@/lib/routeParams';
 
 // Event-type → friendly label. Unknown types fall through verbatim, so a
 // later server-side addition shows up immediately without a panel deploy.
@@ -35,8 +36,8 @@ const EVENT_FILTERS: { id: string; label: string }[] = [
 ];
 
 export default function ServerAuditView() {
-    const params = useParams();
-    const serverId = Number(params?.id);
+    const paramId = useRouteId('servers');
+    const serverId = Number(paramId);
     const { user, servers } = useAppData();
     const isAdmin = !!user?.isAdmin;
     const server = servers.find(s => s.id === serverId);

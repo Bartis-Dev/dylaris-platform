@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import Link from 'next/link';
 import {
     Package, ArrowLeft, Trash2, Search,
@@ -24,6 +24,7 @@ import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser
 import ConfigEditorModal from '@/components/modpacks/ConfigEditorModal';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toast';
+import { useRouteId } from '@/lib/routeParams';
 
 // Build content editor. Two panels:
 //   left:  the build's content list (mods / resource-packs / plugins), with a
@@ -379,9 +380,10 @@ function UpdateModsDialog({ entry, build, packId, disabled, isFrozen, onClose, o
 // Main page
 // ---------------------------------------------------------------------------
 export default function BuildContentEditorPage() {
-    const params = useParams();
-    const packId = Number(params?.id);
-    const buildId = Number(params?.buildId);
+    const paramId = useRouteId('modpacks');
+    const paramBuildId = useRouteId('builds');
+    const packId = Number(paramId);
+    const buildId = Number(paramBuildId);
     const { featureFlags } = useAppData();
     const modpacksDisabled = !featureFlags.modpacks;
 

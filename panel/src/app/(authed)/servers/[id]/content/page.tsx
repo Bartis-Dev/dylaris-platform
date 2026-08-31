@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
-import { useParams } from 'next/navigation';
+
 import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -23,6 +23,7 @@ import { isMcVersion } from '@/lib/validation';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { declareServerLoaderMetadata } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
+import { useRouteId } from '@/lib/routeParams';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
 // sidebar (with the loader + MC-version filters below it, gated behind an
@@ -43,9 +44,9 @@ const PROJECT_TYPE_FOR_LOADER: Record<string, 'mod' | 'plugin'> = {
 };
 
 export default function ServerContentPage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers, refreshServers } = useAppData();
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
 
     const defaultLoader = (server?.installerType || '').toLowerCase();

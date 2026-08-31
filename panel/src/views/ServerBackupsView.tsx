@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+
 import { Plus, Play, Trash2, Pencil, X, Download, Clock, HardDrive, CircleAlert, Save, Undo2, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
@@ -14,6 +14,7 @@ import Spinner from '@/components/Spinner';
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
+import { useRouteId } from '@/lib/routeParams';
 
 function formatBytes(b: number): string {
     if (!b) return '—';
@@ -188,9 +189,9 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
 }
 
 export default function ServerBackupsView() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers } = useAppData();
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
 
     const [jobs, setJobs] = useState<BackupJob[]>([]);

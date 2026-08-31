@@ -205,6 +205,14 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sign them in, the same way a login does. This endpoint issues a session
+	// and every place that issues one has to install the cookie: the token in
+	// the body below is what the panel used to keep in localStorage, and with
+	// that gone it is read by nothing. Without this the wizard finishes, sends
+	// the new operator to /servers, and the authed layout bounces them to /login
+	// to type the password they chose ten seconds ago.
+	setSessionCookie(w, r, token, int(sessionTTL.Seconds()))
+
 	// SSE so other Cores' setup-lock middleware unlocks instantly + panels
 	// re-check setup status.
 	if h.state.Events != nil {

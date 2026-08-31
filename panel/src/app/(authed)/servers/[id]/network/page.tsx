@@ -1,16 +1,17 @@
 "use client";
 
-import { useParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
 import NetworkView from '@/views/NetworkView';
+import { useRouteId } from '@/lib/routeParams';
 
 // RCON configuration moved to the Players tab's RCON sub-section (it gates live
 // player management), so the Network tab is now purely proxy/endpoint wiring.
 export default function ServerNetworkPage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const router = useRouter();
     const { servers, refreshServers } = useAppData();
-    const server = servers.find(s => s.id === Number(params?.id));
+    const server = servers.find(s => s.id === Number(paramId));
     if (!server) return null;
     return (
         <div className="space-y-6">

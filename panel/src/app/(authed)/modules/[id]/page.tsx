@@ -1,13 +1,13 @@
 "use client";
 
-import { useParams } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
 import PlaceholderView from '@/views/PlaceholderView';
+import { useRouteId } from '@/lib/routeParams';
 
 export default function CustomModulePage() {
-    const params = useParams();
+    const paramId = useRouteId('modules');
     const { modules } = useAppData();
-    const m = modules.find(x => String(x.id) === String(params?.id));
+    const m = modules.find(x => String(x.id) === String(paramId));
 
     return (
         <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">

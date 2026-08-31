@@ -281,3 +281,66 @@ func TestCreateAdmin_CountErrorFailsClosed(t *testing.T) {
 		t.Fatalf("expected no user created, got %v", fs.created)
 	}
 }
+
+// Creating the first admin has to SIGN THEM IN, and for a while it did not.
+//
+// It issues a token and returns it in the body, which was the whole mechanism
+// while the panel kept a token in localStorage. The session is an HttpOnly
+// cookie now, and this endpoint was the one place that issues a session and was
+// never taught to set one - so the wizard finished, sent the new operator to
+// /servers, and the authed layout bounced them straight to /login to type the
+// password they had chosen ten seconds earlier.
+//
+// The panel even carried a comment saying it was signed in "through the same
+// HttpOnly cookie a normal login sets". Nothing set it.
+func TestCreateAdmin_SignsTheNewAdminIn(t *testing.T) {
+	fs := &setupFakeStore{}
+	h := newSetupTestHandlerWithSetup(fs, "", false)
+	rec := postCreateAdmin(h, map[string]interface{}{"username": "alice", "password": "password123"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	c := cookieByName(rec, sessionCookieName)
+	if c == nil {
+		t.Fatal("no session cookie: the new admin has to log in again immediately")
+	}
+	if !c.HttpOnly {
+		t.Error("the session cookie is readable by script")
+	}
+	if c.Value == "" {
+		t.Error("the session cookie is empty")
+	}
+	// The readable companion, or the panel renders the login screen anyway.
+	if h := cookieByName(rec, signedInHintName); h == nil {
+		t.Error("no signed-in hint; the panel cannot tell it is signed in")
+	}
+
+	// And it must be the SAME session the body advertises - two different ones
+	// would mean the cookie belongs to a session nothing else knows about.
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Token != "" && out.Token != c.Value {
+		t.Error("the cookie carries a different session than the response body")
+	}
+}
+
+// A REFUSED setup must not hand out a session. Obvious, and worth pinning:
+// the cookie is set near the end of a handler with several early returns, and
+// one of them landing after it would be a free admin session.
+func TestCreateAdmin_RefusalSetsNoCookie(t *testing.T) {
+	fs := &setupFakeStore{userCount: 3}
+	h := newSetupTestHandlerWithSetup(fs, "", false)
+	rec := postCreateAdmin(h, map[string]interface{}{"username": "alice", "password": "password123"})
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if c := cookieByName(rec, sessionCookieName); c != nil {
+		t.Fatalf("a refused setup set a session cookie: %q", c.Value)
+	}
+}

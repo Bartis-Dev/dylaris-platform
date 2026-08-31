@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+
 import { Clock, Plus, Pencil, Trash2, Play, Square, X, RotateCcw, AlertTriangle, CheckCircle2, MessageSquare, RefreshCw } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { systemEvents } from '@/lib/systemEvents';
@@ -12,6 +12,7 @@ import {
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
+import { useRouteId } from '@/lib/routeParams';
 
 // Scheduled Tasks sub-tab. Per-server cron jobs (restart, say).
 // Presets cover the 90% of operator wishes (daily restart at 4 AM, "10
@@ -66,9 +67,9 @@ function relativeFromNow(iso: string | undefined): string {
 }
 
 export default function ServerConfigScheduledPage() {
-    const params = useParams();
+    const paramId = useRouteId('servers');
     const { servers } = useAppData();
-    const serverId = Number(params?.id);
+    const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
 
     const [tasks, setTasks] = useState<ScheduledTask[]>([]);
