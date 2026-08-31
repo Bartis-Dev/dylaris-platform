@@ -1168,6 +1168,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "auth": "none",
+      "authorization": "public",
+      "description": "drops the session cookie.",
+      "handler": "AuthHandler.Logout",
+      "group": "auth",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/auth/profile",
       "auth": "session",
@@ -4844,16 +4854,16 @@
     }
   ],
   "counts": {
-    "total": 485,
+    "total": 486,
     "byAuth": {
-      "none": 34,
+      "none": 35,
       "session": 438,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
       "admin": 108,
-      "auth": 18,
+      "auth": 19,
       "authz": 3,
       "backup-jobs": 4,
       "backup-runs": 3,

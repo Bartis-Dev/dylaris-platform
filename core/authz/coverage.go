@@ -23,9 +23,13 @@ import (
 //     ownership, canManageNode, ...) is the real authorization boundary.
 var ExemptRoutes = map[string]bool{
 	// --- PUBLIC (no session auth) ---
-	"/healthz":                 true,
-	"/api":                     true, // /api subrouter mount point, not a handler
-	"/api/auth/login":          true,
+	"/healthz":        true,
+	"/api":            true, // /api subrouter mount point, not a handler
+	"/api/auth/login": true,
+	// Clears the session cookie and nothing else. Unauthenticated on purpose:
+	// the state most in need of clearing is a session that can no longer
+	// authenticate.
+	"/api/auth/logout":         true,
 	"/api/status":              true,
 	"/api/setup/status":        true,
 	"/api/setup/admin":         true,

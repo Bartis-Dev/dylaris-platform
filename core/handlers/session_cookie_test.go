@@ -1,0 +1,182 @@
+package handlers
+
+import (
+	"crypto/tls"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+// A non-nil ConnectionState is all r.TLS != nil needs; nothing reads its fields.
+var tlsDummy = tls.ConnectionState{}
+
+func cookieByName(rec *httptest.ResponseRecorder, name string) *http.Cookie {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+// The attributes are the feature. Every one of them is load-bearing and three
+// of them are load-bearing in a way that is invisible until something breaks
+// somewhere else.
+func TestSessionCookieAttributes(t *testing.T) {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "https://panel.example.com/api/auth/login", nil)
+	r.TLS = &tlsDummy
+	setSessionCookie(rec, r, "the-jwt", 3600)
+
+	c := cookieByName(rec, sessionCookieName)
+	if c == nil {
+		t.Fatal("no session cookie was set")
+	}
+	if !c.HttpOnly {
+		t.Error("the session cookie is readable by script, which is the whole thing this changes")
+	}
+	if !c.Secure {
+		t.Error("Secure is off on an https request")
+	}
+	if c.SameSite != http.SameSiteLaxMode {
+		t.Errorf("SameSite = %v, want Lax", c.SameSite)
+	}
+	if c.Path != "/" {
+		t.Errorf("Path = %q, want /", c.Path)
+	}
+	// Host-only. A Domain would widen the cookie to every subdomain - including
+	// the per-tab content hosts that serve a tenant's own container output - and
+	// would be rejected outright by the Beam client, which proxies the panel
+	// onto its own wails.localhost origin.
+	if c.Domain != "" {
+		t.Errorf("Domain = %q, want empty (host-only)", c.Domain)
+	}
+
+	hint := cookieByName(rec, signedInHintName)
+	if hint == nil {
+		t.Fatal("no signed-in hint was set; the panel would flash the login screen on every load")
+	}
+	if hint.HttpOnly {
+		t.Error("the hint is HttpOnly, so the panel cannot read it and it does nothing")
+	}
+	if hint.Value == "the-jwt" {
+		t.Fatal("the hint carries the session token; it must hold nothing")
+	}
+}
+
+// Secure follows the scheme, including through a terminating proxy. Getting this
+// wrong in the safe-looking direction is not safe: a Secure cookie on a plain
+// http self-host install is dropped by the browser and nobody can log in.
+func TestSecureFollowsTheScheme(t *testing.T) {
+	tests := []struct {
+		name       string
+		tls        bool
+		forwarded  string
+		wantSecure bool
+	}{
+		{name: "direct https", tls: true, wantSecure: true},
+		{name: "behind a terminating proxy", forwarded: "https", wantSecure: true},
+		{name: "proxy header casing", forwarded: "HTTPS", wantSecure: true},
+		{name: "plain http self-host", wantSecure: false},
+		{name: "proxy reports http", forwarded: "http", wantSecure: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "http://panel.example.com/", nil)
+			if tt.tls {
+				r.TLS = &tlsDummy
+			}
+			if tt.forwarded != "" {
+				r.Header.Set("X-Forwarded-Proto", tt.forwarded)
+			}
+			rec := httptest.NewRecorder()
+			setSessionCookie(rec, r, "t", 60)
+			if got := cookieByName(rec, sessionCookieName).Secure; got != tt.wantSecure {
+				t.Errorf("Secure = %v, want %v", got, tt.wantSecure)
+			}
+		})
+	}
+}
+
+// Clearing has to actually clear. A cookie rewritten with an empty value but a
+// live Max-Age keeps arriving and keeps being rejected, which reads to the panel
+// as a broken server rather than as a signed-out state.
+func TestClearingUsesANegativeAge(t *testing.T) {
+	rec := httptest.NewRecorder()
+	clearSessionCookie(rec, httptest.NewRequest(http.MethodPost, "https://panel.example.com/api/auth/logout", nil))
+	for _, name := range []string{sessionCookieName, signedInHintName} {
+		c := cookieByName(rec, name)
+		if c == nil {
+			t.Fatalf("%s was not cleared at all", name)
+		}
+		if c.MaxAge >= 0 {
+			t.Errorf("%s MaxAge = %d, want negative", name, c.MaxAge)
+		}
+		if c.Value != "" {
+			t.Errorf("%s still carries %q", name, c.Value)
+		}
+	}
+}
+
+// The CSRF gate, and the reason it exists at all.
+//
+// SameSite=Lax withholds the cookie from cross-SITE requests. This platform
+// deliberately serves tenant container output on hosts under
+// TAB_PROXY_HOST_SUFFIX, which share a registrable domain with the panel - so
+// those hosts are same-SITE and Lax would happily send the session along. That
+// is the exact isolation the tab proxy exists to provide, and it would be
+// reopened by moving the session into a cookie without this check.
+func TestCookieAuthRefusesAnotherOriginsMutation(t *testing.T) {
+	const frontend = "https://panel.example.com"
+	tests := []struct {
+		name, method, origin string
+		want                 bool
+	}{
+		{name: "the panel itself", method: http.MethodPost, origin: frontend, want: true},
+		{name: "the panel, port and case normalised", method: http.MethodPost, origin: "https://Panel.Example.com", want: true},
+		// The one that matters: same registrable domain, different origin, and
+		// it is a host serving a tenant's own container output.
+		{name: "a tab content host", method: http.MethodPost, origin: "https://abc.share.example.com", want: false},
+		{name: "the share wrapper", method: http.MethodPost, origin: "https://share.example.com", want: false},
+		{name: "an unrelated site", method: http.MethodPost, origin: "https://evil.test", want: false},
+		// Absent means an old browser or a non-browser client. A non-browser
+		// client should be sending the header, where this gate does not apply.
+		{name: "no Origin at all", method: http.MethodPost, origin: "", want: false},
+		{name: "wrong scheme", method: http.MethodPost, origin: "http://panel.example.com", want: false},
+		// Safe methods carry no side effect to protect.
+		{name: "GET from anywhere", method: http.MethodGet, origin: "https://evil.test", want: true},
+		{name: "HEAD from anywhere", method: http.MethodHead, origin: "", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(tt.method, frontend+"/api/servers/1/power", nil)
+			r.Host = "panel.example.com"
+			r.TLS = &tlsDummy // the request itself arrived over https
+			if tt.origin != "" {
+				r.Header.Set("Origin", tt.origin)
+			}
+			if got := requireSameOriginForCookieAuth(r, frontend); got != tt.want {
+				t.Errorf("allowed = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// FRONTEND_URL is one value, and a Core legitimately answers on several names:
+// the public host, localhost during setup, a LAN address, and the
+// wails.localhost the Beam client proxies onto. A page addressing the host it
+// was served from is the panel talking to its own origin.
+func TestCookieAuthAcceptsTheHostItWasAddressedTo(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "http://wails.localhost/api/servers/1/power", nil)
+	r.Host = "wails.localhost"
+	r.Header.Set("Origin", "http://wails.localhost")
+	if !requireSameOriginForCookieAuth(r, "https://panel.example.com") {
+		t.Error("the Beam client's own origin was refused; the desktop app could not act")
+	}
+	// And that leniency is not a hole: a page elsewhere still cannot match,
+	// because Origin says where the PAGE came from, not where it is sending.
+	r.Header.Set("Origin", "https://evil.test")
+	if requireSameOriginForCookieAuth(r, "https://panel.example.com") {
+		t.Error("a foreign origin matched the request host")
+	}
+}

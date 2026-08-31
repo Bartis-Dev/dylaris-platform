@@ -689,6 +689,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// --- PUBLIC ENDPOINTS ---
 	api.HandleFunc("/auth/login", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.LoginHandler))).Methods("POST")
+	// Unauthenticated: it only clears the session cookie, and the state somebody
+	// most needs to clear is an expired session they can no longer authenticate
+	// with. Rate-limited anyway, so it cannot be used as free traffic.
+	api.HandleFunc("/auth/logout", authLimiter.Limit(30, authHandler.Logout)).Methods("POST")
 	api.HandleFunc("/status", authHandler.StatusHandler).Methods("GET")
 	api.HandleFunc("/system/capabilities", systemHandler.GetCapabilities).Methods("GET")
 	// Public - used by the topbar to display "Connected to <region> Core".

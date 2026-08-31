@@ -37,8 +37,15 @@ func NewAuthHandler(state *AppState, jwtSecret string) *AuthHandler {
 // (see passwordFingerprint). Callers that genuinely have no hash to bind to -
 // the demo account short-circuit - pass "", and such a session is simply not
 // password-bound; there is nothing for a reset to invalidate.
+// sessionTTL is how long a session lives, in ONE place: the JWT expiry and the
+// cookie Max-Age are the same window by construction. Two numbers here would
+// drift, and the failure is quiet in both directions - a cookie that outlives
+// its token is a browser resending a dead credential, and one that dies first
+// logs out a session the server still considers valid.
+const sessionTTL = 24 * time.Hour
+
 func (h *AuthHandler) IssueToken(username string, isAdmin bool, pwdHash string) (string, error) {
-	expirationTime := time.Now().Add(24 * time.Hour)
+	expirationTime := time.Now().Add(sessionTTL)
 	claims := &Claims{
 		Username:         username,
 		IsAdmin:          isAdmin,
@@ -145,6 +152,7 @@ func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
 		return
 	}
+	setSessionCookie(w, r, token, int(sessionTTL.Seconds()))
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "token": token, "username": u.Username})
 }
 
@@ -319,6 +327,23 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				w.Header().Set("Cache-Control", "no-store")
 			}
 		}
+		// The session cookie: same JWT, different transport. Last, so an
+		// explicit Authorization header always wins - ambient authority must
+		// never override something the caller stated.
+		//
+		// The CSRF gate applies ONLY here. A request that named its own
+		// credential cannot be triggered by a page somebody else wrote.
+		cookieAuth := false
+		if authHeader == "" {
+			if tok := sessionTokenFromCookie(r); tok != "" {
+				if !requireSameOriginForCookieAuth(r, h.state.FrontendURL) {
+					sendJSONError(w, "Cross-origin request refused", http.StatusForbidden)
+					return
+				}
+				authHeader = "Bearer " + tok
+				cookieAuth = true
+			}
+		}
 		if authHeader == "" {
 			sendJSONError(w, "Missing Authorization Header", http.StatusUnauthorized)
 			return
@@ -329,6 +354,13 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return h.jwtKey, nil
 		}, jwt.WithValidMethods([]string{"HS256"}))
 		if err != nil || !token.Valid {
+			// A dead cookie is removed rather than left to be resent on every
+			// request for the next 24 hours: the browser keeps sending it, and
+			// each rejection looks to the panel like a server fault rather than
+			// a signed-out state.
+			if cookieAuth {
+				clearSessionCookie(w, r)
+			}
 			sendJSONError(w, "Invalid Token", http.StatusUnauthorized)
 			return
 		}
@@ -623,7 +655,8 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	expirationTime := time.Now().Add(24 * time.Hour)
+	// The same window IssueToken uses; the cookie's Max-Age is set from it too.
+	expirationTime := time.Now().Add(sessionTTL)
 	claims := &Claims{
 		Username: user.Username,
 		IsAdmin:  user.IsAdmin,
@@ -651,6 +684,15 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The session goes out as an HttpOnly cookie. It is still in the body too,
+	// and that is not redundancy for its own sake: the Beam desktop client and
+	// anything else driving this API programmatically read it from there, and
+	// the panel is the only caller that has a cookie jar to put it in.
+	//
+	// What CHANGED is that the panel no longer stores what it reads. That is
+	// where the win is - a token in localStorage is readable by any script that
+	// manages to run on the page.
+	setSessionCookie(w, r, tokenString, int(sessionTTL.Seconds()))
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"token":   tokenString,
@@ -822,11 +864,35 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	if passwordChanged {
 		if fresh, terr := h.IssueToken(user.Username, user.IsAdmin, user.Password); terr == nil {
 			out["token"] = fresh
+			// The cookie has to be replaced too, or the caller keeps sending
+			// the one their own password change just invalidated and is thrown
+			// out on the next request.
+			setSessionCookie(w, r, fresh, int(sessionTTL.Seconds()))
 		} else {
 			log.Printf("profile: could not re-issue a session after a password change for %s: %v", user.Username, terr)
 		}
 	}
 	json.NewEncoder(w).Encode(out)
+}
+
+// Logout POST /api/auth/logout - drops the session cookie.
+//
+// There was no such endpoint before, and there did not need to be: the session
+// lived in localStorage, so signing out was the panel deleting its own copy.
+// An HttpOnly cookie is the point and it is also the reason - the panel cannot
+// delete what it cannot read, so the server has to be asked.
+//
+// Unauthenticated on purpose. It only ever CLEARS, so the worst a stranger can
+// do by calling it is sign themselves out; requiring a valid session would mean
+// an expired or corrupted one could never be cleared, which is exactly the state
+// somebody trying to log out is most likely in.
+//
+// The body token, if a caller still holds one, is not invalidated here. Sessions
+// are stateless JWTs - the mechanism that ends them early is the password
+// fingerprint, and that is what a password change already uses.
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	clearSessionCookie(w, r)
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
 // StatusHandler GET /api/status - liveness for the login page. needsSetup is
