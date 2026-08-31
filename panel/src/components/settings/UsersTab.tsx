@@ -996,9 +996,12 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     // this modal with ("can this person do BYON yet"), and because a grant is
     // the one control here that hands out capability rather than restricting it.
     const [ent, setEnt] = useState<Entitlement | null>(null);
-    const [grantKind, setGrantKind] = useState<'byon' | 'route_only' | 'both'>('byon');
-    const [grantDays, setGrantDays] = useState('14');
-    const [savingGrant, setSavingGrant] = useState(false);
+    // One pending duration per kind. They are separate grants now, so a single
+    // shared value would make the two rows fight over one input.
+    const [grantDaysByon, setGrantDaysByon] = useState('30');
+    const [grantDaysRoute, setGrantDaysRoute] = useState('30');
+    // Which row is mid-request, so only that row's buttons go inert.
+    const [grantBusy, setGrantBusy] = useState<'byon' | 'route_only' | null>(null);
 
     useEffect(() => {
         getUserEntitlement(user.id).then(e => {
@@ -1041,22 +1044,24 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
         show(okMsg, true);
     };
 
-    const handleGrant = async () => {
-        const days = parseInt(grantDays, 10);
+    const handleGrant = async (kind: 'byon' | 'route_only', rawDays: string) => {
+        const days = parseInt(rawDays, 10);
         if (!Number.isFinite(days) || days < 1 || days > 730) {
             show('Days must be between 1 and 730', false);
             return;
         }
-        setSavingGrant(true);
-        const r = await grantEntitlement(user.id, grantKind, days);
-        setSavingGrant(false);
+        setGrantBusy(kind);
+        const r = await grantEntitlement(user.id, kind, days);
+        setGrantBusy(null);
         applyEntitlement(r, `Granted for ${days} day${days === 1 ? '' : 's'}`);
     };
 
-    const handleRevokeGrant = async () => {
-        setSavingGrant(true);
-        const r = await revokeEntitlement(user.id);
-        setSavingGrant(false);
+    // Ends ONE kind. The other keeps whatever time it has left - that is the
+    // whole reason the two carry separate deadlines.
+    const handleRevokeGrant = async (kind: 'byon' | 'route_only') => {
+        setGrantBusy(kind);
+        const r = await revokeEntitlement(user.id, kind);
+        setGrantBusy(null);
         applyEntitlement(r, 'Grant removed');
     };
 
@@ -1141,52 +1146,37 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                         <p className="text-xs text-(--base-06)">
                                             {entitlementExplanation(ent)}
                                         </p>
-                                        {ent.grantKind && ent.grantExpiresAt && (
-                                            <div className="flex items-center justify-between gap-3 rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2">
-                                                <div className="text-xs text-(--base-07)">
-                                                    Granted <span className="font-mono">{ent.grantKind}</span> until {new Date(ent.grantExpiresAt).toLocaleDateString()}
-                                                </div>
-                                                <button
-                                                    onClick={handleRevokeGrant}
-                                                    disabled={savingGrant}
-                                                    className="btn btn-secondary btn-sm disabled:opacity-40"
-                                                >
-                                                    Remove grant
-                                                </button>
-                                            </div>
-                                        )}
-                                        <div className="flex flex-wrap items-end gap-2">
-                                            <div className="flex flex-col gap-[5px]">
-                                                <label className="input-label">Give access to</label>
-                                                <select
-                                                    className="input-field"
-                                                    value={grantKind}
-                                                    onChange={e => setGrantKind(e.target.value as 'byon' | 'route_only' | 'both')}
-                                                >
-                                                    <option value="byon">Bring your own node</option>
-                                                    <option value="route_only">Route only</option>
-                                                    <option value="both">Both</option>
-                                                </select>
-                                            </div>
-                                            <div className="flex flex-col gap-[5px] w-24">
-                                                <label className="input-label">For (days)</label>
-                                                <input
-                                                    type="number"
-                                                    min={1}
-                                                    max={730}
-                                                    className="input-field"
-                                                    value={grantDays}
-                                                    onChange={e => setGrantDays(e.target.value)}
-                                                />
-                                            </div>
-                                            <button onClick={handleGrant} disabled={savingGrant} className="btn btn-primary disabled:opacity-40">
-                                                {savingGrant ? 'Saving...' : ent.grantKind ? 'Replace grant' : 'Grant'}
-                                            </button>
+                                        {/* One row per kind, because they ARE two grants.
+                                            A single dropdown made granting the second
+                                            one silently end the first, which is what
+                                            "it only switches between them" was. */}
+                                        <div className="space-y-2">
+                                            <GrantRow
+                                                label="Bring your own node"
+                                                expiresAt={ent.grantByonExpiresAt}
+                                                days={grantDaysByon}
+                                                onDaysChange={setGrantDaysByon}
+                                                busy={grantBusy === 'byon'}
+                                                disabled={grantBusy !== null}
+                                                onGrant={() => handleGrant('byon', grantDaysByon)}
+                                                onRevoke={() => handleRevokeGrant('byon')}
+                                            />
+                                            <GrantRow
+                                                label="Route only"
+                                                expiresAt={ent.grantRouteExpiresAt}
+                                                days={grantDaysRoute}
+                                                onDaysChange={setGrantDaysRoute}
+                                                busy={grantBusy === 'route_only'}
+                                                disabled={grantBusy !== null}
+                                                onGrant={() => handleGrant('route_only', grantDaysRoute)}
+                                                onRevoke={() => handleRevokeGrant('route_only')}
+                                            />
                                         </div>
                                         <p className="text-xs text-(--base-06)">
-                                            A grant is added on top of whatever their plan already allows, so buying a plan
-                                            later extends the access rather than colliding with it. It lapses on its own at
-                                            the end of the period.
+                                            Each is granted on its own and keeps its own deadline, so one may run for a week
+                                            and the other for a year. A grant is added on top of whatever they have bought,
+                                            so subscribing later extends the access rather than colliding with it, and it
+                                            lapses on its own at the end of the period.
                                         </p>
                                     </>
                                 )}
@@ -1316,6 +1306,71 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                     <button type="button" onClick={onClose} className="btn btn-secondary">Close</button>
                 </div>
             </div>
+        </div>
+    );
+}
+
+/**
+ * One entitlement, with its own clock.
+ *
+ * Deliberately shows the state and the control together: the row says what the
+ * tenant has right now and the same row is where you change it. The previous
+ * shape put the state in one box and a dropdown in another, which is how an
+ * admin could grant the second kind without noticing they had just ended the
+ * first.
+ */
+function GrantRow({
+    label, expiresAt, days, onDaysChange, busy, disabled, onGrant, onRevoke,
+}: {
+    label: string;
+    /** Set only while this kind is actively granted. */
+    expiresAt?: string;
+    days: string;
+    onDaysChange: (v: string) => void;
+    busy: boolean;
+    disabled: boolean;
+    onGrant: () => void;
+    onRevoke: () => void;
+}) {
+    const granted = !!expiresAt;
+    return (
+        <div className="flex flex-wrap items-center gap-2 rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2">
+            <div className="min-w-0 flex-1">
+                <div className="text-sm text-(--base-09)">{label}</div>
+                <div className="text-xs text-(--base-06)">
+                    {granted
+                        ? `Granted until ${new Date(expiresAt).toLocaleDateString()}`
+                        : 'Not granted'}
+                </div>
+            </div>
+            <input
+                type="number"
+                min={1}
+                max={730}
+                className="input-field input-mono w-20 text-center"
+                value={days}
+                onChange={e => onDaysChange(e.target.value)}
+                aria-label={`Days to grant ${label}`}
+            />
+            <span className="text-xs text-(--base-06)">days</span>
+            <button
+                type="button"
+                onClick={onGrant}
+                disabled={disabled}
+                className="btn btn-primary btn-sm disabled:opacity-40"
+            >
+                {busy ? 'Saving...' : granted ? 'Extend' : 'Grant'}
+            </button>
+            {granted && (
+                <button
+                    type="button"
+                    onClick={onRevoke}
+                    disabled={disabled}
+                    className="btn btn-secondary btn-sm disabled:opacity-40"
+                >
+                    Remove
+                </button>
+            )}
         </div>
     );
 }

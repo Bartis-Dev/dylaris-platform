@@ -74,6 +74,16 @@ type grantRequest struct {
 	Days int    `json:"days"`
 }
 
+// grantKinds expands the request's kind into the kinds actually written. Only
+// "both" expands; it exists so the fan-out is one named thing rather than an if
+// in the middle of the handler.
+func grantKinds(kind string) []string {
+	if kind == services.EntitlementBoth {
+		return []string{services.EntitlementByon, services.EntitlementRouteOnly}
+	}
+	return []string{kind}
+}
+
 // Grant POST /api/admin/users/{id}/entitlement - RequireCap("plans.write").
 //
 // Grants BYON and/or route-only for N days. Additive to whatever the tenant's
@@ -107,9 +117,14 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 
 	expires := time.Now().Add(time.Duration(req.Days) * 24 * time.Hour)
 	actor, _ := r.Context().Value("userID").(string)
-	if err := h.state.Store.SetUserManualEntitlement(userID, kind, &expires, actor); err != nil {
-		sendJSONError(w, "Save failed", http.StatusInternalServerError)
-		return
+	// Per KIND, so granting one does not end the other. "both" is still accepted
+	// and now means what it says - two grants with the same deadline - rather
+	// than one grant that happens to cover two things.
+	for _, k := range grantKinds(kind) {
+		if err := h.state.Store.SetUserManualEntitlementKind(userID, k, &expires, actor); err != nil {
+			sendJSONError(w, "Save failed", http.StatusInternalServerError)
+			return
+		}
 	}
 	LogIdentityAudit(h.state, r, AuditEventEntitlementGranted, actor, userID, map[string]interface{}{
 		"kind":       kind,
@@ -140,8 +155,21 @@ func (h *EntitlementHandler) subjectIsAdmin(userID string) bool {
 // "take back what I gave", not "cut them off" (that is the billing status).
 func (h *EntitlementHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	if err := h.state.Store.SetUserManualEntitlement(userID, "", nil, ""); err != nil {
-		sendJSONError(w, "Save failed", http.StatusInternalServerError)
+	// ?kind= takes back ONE of the two. Without it the whole grant goes, which
+	// is what every existing caller means and what the button used to do.
+	switch kind := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("kind"))); kind {
+	case "":
+		if err := h.state.Store.SetUserManualEntitlement(userID, "", nil, ""); err != nil {
+			sendJSONError(w, "Save failed", http.StatusInternalServerError)
+			return
+		}
+	case services.EntitlementByon, services.EntitlementRouteOnly:
+		if err := h.state.Store.SetUserManualEntitlementKind(userID, kind, nil, ""); err != nil {
+			sendJSONError(w, "Save failed", http.StatusInternalServerError)
+			return
+		}
+	default:
+		sendJSONError(w, `kind must be "byon" or "route_only", or omitted to revoke both`, http.StatusBadRequest)
 		return
 	}
 	actor, _ := r.Context().Value("userID").(string)

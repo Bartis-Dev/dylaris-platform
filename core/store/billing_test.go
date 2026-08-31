@@ -25,9 +25,10 @@ func TestGetUserBilling_Found(t *testing.T) {
 		"r2_retention", "node_retention", "r2_quota_gb", "max_nodes", "max_links",
 		"traffic_edge_gb", "traffic_relay_gb", "traffic_combined_gb",
 		"manual_entitlement", "manual_entitlement_expires_at",
+		"manual_entitlement_byon_expires_at", "manual_entitlement_route_expires_at",
 		"manual_entitlement_granted_at", "manual_entitlement_granted_by",
 		"overlimit_since", "traffic_ceiling_gb", "traffic_billing_enabled", "backup_billing_enabled", "updated_at",
-	}).AddRow("user-1", "past_due", grace, nil, "48h", "", "", nil, 5, nil, nil, nil, nil, "", nil, nil, nil, nil, int64(0), false, false, now)
+	}).AddRow("user-1", "past_due", grace, nil, "48h", "", "", nil, 5, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, now)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + userBillingCols + ` FROM user_billing WHERE user_id = $1`)).
 		WithArgs("user-1").
@@ -174,11 +175,12 @@ func TestListUserBillingByStatus_HappyPath(t *testing.T) {
 		"r2_retention", "node_retention", "r2_quota_gb", "max_nodes", "max_links",
 		"traffic_edge_gb", "traffic_relay_gb", "traffic_combined_gb",
 		"manual_entitlement", "manual_entitlement_expires_at",
+		"manual_entitlement_byon_expires_at", "manual_entitlement_route_expires_at",
 		"manual_entitlement_granted_at", "manual_entitlement_granted_by",
 		"overlimit_since", "traffic_ceiling_gb", "traffic_billing_enabled", "backup_billing_enabled", "updated_at",
 	}).
-		AddRow("user-1", "suspended", nil, now, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, int64(0), false, false, now).
-		AddRow("user-2", "suspended", nil, now, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, int64(0), false, false, now)
+		AddRow("user-1", "suspended", nil, now, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, now).
+		AddRow("user-2", "suspended", nil, now, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, now)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + userBillingCols + ` FROM user_billing WHERE status = $1`)).
 		WithArgs("suspended").
@@ -215,10 +217,11 @@ func TestListUserBillingByStatus_ScanErrorPropagates(t *testing.T) {
 		"r2_retention", "node_retention", "r2_quota_gb", "max_nodes", "max_links",
 		"traffic_edge_gb", "traffic_relay_gb", "traffic_combined_gb",
 		"manual_entitlement", "manual_entitlement_expires_at",
+		"manual_entitlement_byon_expires_at", "manual_entitlement_route_expires_at",
 		"manual_entitlement_granted_at", "manual_entitlement_granted_by",
 		"overlimit_since", "traffic_ceiling_gb", "traffic_billing_enabled", "backup_billing_enabled", "updated_at",
 	}).
-		AddRow("user-1", "suspended", nil, nil, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, int64(0), false, false, "not-a-time")
+		AddRow("user-1", "suspended", nil, nil, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, "not-a-time")
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + userBillingCols + ` FROM user_billing WHERE status = $1`)).
 		WithArgs("suspended").

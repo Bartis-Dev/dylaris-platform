@@ -40,6 +40,11 @@ type Entitlement struct {
 	// grant is reported as no grant at all, so a stale row can never read as one.
 	GrantKind      string     `json:"grantKind,omitempty"`
 	GrantExpiresAt *time.Time `json:"grantExpiresAt,omitempty"`
+	// Per-kind deadlines for the two grants, so an admin screen can show and
+	// end them one at a time. GrantExpiresAt above stays the LATER of the two
+	// and remains the single date to render where only one fits.
+	GrantByonExpiresAt  *time.Time `json:"grantByonExpiresAt,omitempty"`
+	GrantRouteExpiresAt *time.Time `json:"grantRouteExpiresAt,omitempty"`
 }
 
 // entitlementStore is the narrow store surface EffectiveEntitlement needs. It is
@@ -129,15 +134,39 @@ func EffectiveEntitlement(st entitlementStore, userID string, now time.Time, sto
 
 	out := Entitlement{Source: EntitlementSourceNone}
 
-	// Manual grant.
+	// Manual grant. The two kinds carry their OWN expiry, so an admin can hold
+	// both with different deadlines - granting one used to replace the other.
+	//
+	// The legacy single string + single expiry is still read, but only for a row
+	// that predates the split and has not been touched since: the migration
+	// backfills the per-kind columns, so anything written after it answers here.
+	// Keeping the fallback means a Core that rolls back mid-upgrade does not read
+	// every existing grant as revoked.
 	grantByon, grantRoute := false, false
-	if billing != nil && strings.TrimSpace(billing.ManualEntitlement) != "" {
-		exp := billing.ManualEntitlementExpiresAt
-		if exp != nil && exp.After(now) {
-			grantByon, grantRoute = kindGrants(billing.ManualEntitlement)
-			out.GrantKind = billing.ManualEntitlement
+	if billing != nil {
+		if exp := billing.ManualByonExpiresAt; exp != nil && exp.After(now) {
+			grantByon = true
 			out.GrantExpiresAt = exp
+			out.GrantByonExpiresAt = exp
 		}
+		if exp := billing.ManualRouteExpiresAt; exp != nil && exp.After(now) {
+			grantRoute = true
+			out.GrantRouteExpiresAt = exp
+			// The LATER of the two is what the summary line reports, so it says
+			// when the tenant stops being entitled to anything rather than when
+			// the first half lapses.
+			if out.GrantExpiresAt == nil || exp.After(*out.GrantExpiresAt) {
+				out.GrantExpiresAt = exp
+			}
+		}
+		if !grantByon && !grantRoute && strings.TrimSpace(billing.ManualEntitlement) != "" &&
+			billing.ManualByonExpiresAt == nil && billing.ManualRouteExpiresAt == nil {
+			if exp := billing.ManualEntitlementExpiresAt; exp != nil && exp.After(now) {
+				grantByon, grantRoute = kindGrants(billing.ManualEntitlement)
+				out.GrantExpiresAt = exp
+			}
+		}
+		out.GrantKind = purchasedKind(grantByon, grantRoute)
 	}
 
 	// What was bought. The store pushes a purchase as per-user limit overrides,

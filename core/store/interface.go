@@ -91,6 +91,7 @@ type Store interface {
 	// SetUserManualEntitlement grants or revokes an admin entitlement
 	// ("byon" | "route_only" | "both", empty = revoke) with an expiry.
 	SetUserManualEntitlement(userID, kind string, expiresAt *time.Time, grantedBy string) error
+	SetUserManualEntitlementKind(userID, kind string, expiresAt *time.Time, grantedBy string) error
 	ListUserBillingByStatus(status string) ([]UserBilling, error)
 	ListUserBilling() ([]UserBilling, error)
 	SetUserOverLimitSince(userID string, at *time.Time) error

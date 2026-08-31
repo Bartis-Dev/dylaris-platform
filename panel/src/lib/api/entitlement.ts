@@ -18,7 +18,14 @@ export interface Entitlement {
     planKind?: string;
     /** Only present while a manual grant is ACTIVE; an expired one is not reported. */
     grantKind?: string;
+    /** The LATER of the two deadlines below - when the tenant stops being granted anything. */
     grantExpiresAt?: string;
+    /**
+     * Per-kind deadlines. The two grants are independent: one may run for a week
+     * and the other for a year, and ending one leaves the other alone.
+     */
+    grantByonExpiresAt?: string;
+    grantRouteExpiresAt?: string;
 }
 
 export interface EntitlementResponse extends Partial<Entitlement> {
@@ -61,10 +68,16 @@ export async function grantEntitlement(userId: string, kind: 'byon' | 'route_onl
     }
 }
 
-/** Take back the grant. Whatever the plan allows is untouched. */
-export async function revokeEntitlement(userId: string): Promise<EntitlementResponse> {
+/**
+ * Take back a grant. Whatever the plan allows is untouched.
+ *
+ * `kind` ends ONE of the two and leaves the other running; omitting it ends both,
+ * which is what every caller meant before the two could be held separately.
+ */
+export async function revokeEntitlement(userId: string, kind?: 'byon' | 'route_only'): Promise<EntitlementResponse> {
     try {
-        const res = await fetch(`${API_URL}/admin/users/${encodeURIComponent(userId)}/entitlement`, {
+        const query = kind ? `?kind=${kind}` : '';
+        const res = await fetch(`${API_URL}/admin/users/${encodeURIComponent(userId)}/entitlement${query}`, {
             method: 'DELETE',
             headers: getAuthHeader(),
         });

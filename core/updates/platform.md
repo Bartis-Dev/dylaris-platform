@@ -11,7 +11,9 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.08.31.17
 
 ### Features
-- Nothing.
+- BYON and route-only can now be granted to a user separately, each with its own
+  duration. Granting one used to replace the other, so holding both meant picking
+  "Both" up front and giving them the same deadline. `core`
 
 ### Breaking
 - Nothing.

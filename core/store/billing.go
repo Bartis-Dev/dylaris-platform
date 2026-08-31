@@ -2,8 +2,10 @@ package store
 
 import (
 	"database/sql"
-	"dylaris-core/models"
+	"fmt"
 	"time"
+
+	"dylaris-core/models"
 )
 
 // UserBilling is one tenant's billing/lifecycle state. A missing row means
@@ -37,6 +39,17 @@ type UserBilling struct {
 	// so a stale row is inert rather than quietly still granting.
 	ManualEntitlement          string     `json:"manualEntitlement,omitempty"`
 	ManualEntitlementExpiresAt *time.Time `json:"manualEntitlementExpiresAt,omitempty"`
+	// Per-kind expiry, and the ACTUAL truth about what is granted. The pair
+	// above is the legacy shape: one string, one clock, so the two kinds could
+	// not be held with different deadlines and granting one replaced the other.
+	// ManualEntitlement is still written in step with these, for the partial
+	// index it carries and for an older Core reading the same row.
+	//
+	// nil means that kind is not granted. A past time means it was and has run
+	// out, which reads as not granted and is deliberately not cleaned up: the
+	// admin screen shows when it lapsed.
+	ManualByonExpiresAt        *time.Time `json:"manualByonExpiresAt,omitempty"`
+	ManualRouteExpiresAt       *time.Time `json:"manualRouteExpiresAt,omitempty"`
 	ManualEntitlementGrantedAt *time.Time `json:"manualEntitlementGrantedAt,omitempty"`
 	ManualEntitlementGrantedBy string     `json:"manualEntitlementGrantedBy,omitempty"`
 	// OverLimitSince is when the tenant was first seen holding more than they
@@ -64,7 +77,7 @@ type UserBilling struct {
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), updated_at`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_byon_expires_at, manual_entitlement_route_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), updated_at`
 
 // SetUserOverLimitSince stamps (or clears, with nil) when a tenant was first seen
 // over a purchased cap. Touches ONLY that column: the row also carries the
@@ -105,10 +118,10 @@ func scanUserBilling(row interface {
 	var gp, r2, nr sql.NullString
 	var quota, maxNodes, maxLinks, tEdge, tRelay, tComb sql.NullInt64
 	var meKind, meBy sql.NullString
-	var meExp, meAt, overLimit sql.NullTime
+	var meExp, meByon, meRoute, meAt, overLimit sql.NullTime
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
 		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb,
-		&meKind, &meExp, &meAt, &meBy, &overLimit,
+		&meKind, &meExp, &meByon, &meRoute, &meAt, &meBy, &overLimit,
 		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -118,6 +131,12 @@ func scanUserBilling(row interface {
 	b.ManualEntitlement = meKind.String
 	if meExp.Valid {
 		b.ManualEntitlementExpiresAt = &meExp.Time
+	}
+	if meByon.Valid {
+		b.ManualByonExpiresAt = &meByon.Time
+	}
+	if meRoute.Valid {
+		b.ManualRouteExpiresAt = &meRoute.Time
 	}
 	if meAt.Valid {
 		b.ManualEntitlementGrantedAt = &meAt.Time
@@ -237,6 +256,73 @@ func (s *PostgresStore) SetUserManualEntitlement(userID, kind string, expiresAt 
 			manual_entitlement_granted_by = EXCLUDED.manual_entitlement_granted_by,
 			updated_at                    = NOW()`,
 		userID, kind, expiresAt, grantedAt, by)
+	return err
+}
+
+// SetUserManualEntitlementKind grants or clears ONE kind, leaving the other
+// exactly as it was.
+//
+// This is what "grant BYON" and "grant route-only" have to mean if a tenant can
+// hold both. SetUserManualEntitlement writes the whole grant at once, so calling
+// it for route-only silently ended a BYON grant that was still running - the
+// "it just switches between the two" report.
+//
+// expiresAt nil clears that kind. The legacy manual_entitlement string is
+// recomputed IN THE SAME STATEMENT from this kind's new value and the other
+// kind's stored one, so the two shapes cannot drift apart and no read-modify-
+// write window exists for a second admin to land in.
+func (s *PostgresStore) SetUserManualEntitlementKind(userID, kind string, expiresAt *time.Time, grantedBy string) error {
+	var by any
+	if grantedBy != "" {
+		by = grantedBy
+	}
+	// Only stamped when something is actually granted, for the same reason the
+	// whole-grant writer gives: a revoke must not leave a timestamp behind for a
+	// grant that no longer exists.
+	var grantedAt any
+	if expiresAt != nil {
+		grantedAt = time.Now()
+	}
+
+	// Two statements rather than one with an interpolated column name. The pair
+	// is symmetrical and short, and building SQL identifiers from a parameter is
+	// how a switch like this turns into an injection point later.
+	var q string
+	switch kind {
+	case "byon":
+		q = `
+		INSERT INTO user_billing (user_id, manual_entitlement, manual_entitlement_byon_expires_at,
+			manual_entitlement_granted_at, manual_entitlement_granted_by, updated_at)
+		VALUES ($1, CASE WHEN $2::timestamptz IS NULL THEN '' ELSE 'byon' END, $2, $3, $4, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			manual_entitlement_byon_expires_at = $2,
+			manual_entitlement = CASE
+				WHEN $2::timestamptz IS NOT NULL AND user_billing.manual_entitlement_route_expires_at IS NOT NULL THEN 'both'
+				WHEN $2::timestamptz IS NOT NULL THEN 'byon'
+				WHEN user_billing.manual_entitlement_route_expires_at IS NOT NULL THEN 'route_only'
+				ELSE '' END,
+			manual_entitlement_granted_at = COALESCE($3, user_billing.manual_entitlement_granted_at),
+			manual_entitlement_granted_by = COALESCE($4, user_billing.manual_entitlement_granted_by),
+			updated_at = NOW()`
+	case "route_only":
+		q = `
+		INSERT INTO user_billing (user_id, manual_entitlement, manual_entitlement_route_expires_at,
+			manual_entitlement_granted_at, manual_entitlement_granted_by, updated_at)
+		VALUES ($1, CASE WHEN $2::timestamptz IS NULL THEN '' ELSE 'route_only' END, $2, $3, $4, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			manual_entitlement_route_expires_at = $2,
+			manual_entitlement = CASE
+				WHEN $2::timestamptz IS NOT NULL AND user_billing.manual_entitlement_byon_expires_at IS NOT NULL THEN 'both'
+				WHEN $2::timestamptz IS NOT NULL THEN 'route_only'
+				WHEN user_billing.manual_entitlement_byon_expires_at IS NOT NULL THEN 'byon'
+				ELSE '' END,
+			manual_entitlement_granted_at = COALESCE($3, user_billing.manual_entitlement_granted_at),
+			manual_entitlement_granted_by = COALESCE($4, user_billing.manual_entitlement_granted_by),
+			updated_at = NOW()`
+	default:
+		return fmt.Errorf("unknown entitlement kind %q", kind)
+	}
+	_, err := s.db.Exec(q, userID, expiresAt, grantedAt, by)
 	return err
 }
 
