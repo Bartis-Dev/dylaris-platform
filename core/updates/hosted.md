@@ -25,8 +25,8 @@ Newest release first. The format is fixed and checked in CI - see the
 
 ### Fixes
 - A node that had lost contact could keep re-registering instead of reconnecting,
-  and stayed offline while doing so. It now reports what it needs to recover.
-  `node`
+  and stayed offline while doing so. Fixed on our side; nothing to update on
+  yours.
 - The panel no longer squeezes itself below a usable width on a narrow window.
 
 ## 2026.08.31.8
