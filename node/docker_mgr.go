@@ -916,6 +916,9 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		WorkingDir: "/data",
 		Hostname:   containerName,
 		Env:        buildRedisEnv(config.UUID, "", sidecarAddr),
+		// Stamped so another node sharing this docker.sock can tell whose it
+		// is. See container_owner.go.
+		Labels: map[string]string{ownerLabel: nodeIdentity(nodeSecretDir)},
 	}
 
 	hc := &container.HostConfig{
@@ -1123,6 +1126,9 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		WorkingDir: fmt.Sprintf("/data/%s", config.ActiveSubServer),
 		Hostname:   containerName,
 		Env:        buildRedisEnv(config.UUID, config.ActiveSubServer, sidecarAddr),
+		// Stamped so another node sharing this docker.sock can tell whose it
+		// is. See container_owner.go.
+		Labels: map[string]string{ownerLabel: nodeIdentity(nodeSecretDir)},
 	}
 
 	// The container runs as uid 1000, so the world has to belong to it. Done
@@ -1459,11 +1465,18 @@ func (dm *DockerManager) ListRunningMCContainers() ([]MCContainer, error) {
 		return nil, err
 	}
 
+	self := nodeIdentities(nodeSecretDir)
 	var result []MCContainer
 	for _, c := range containers {
 		for _, name := range c.Names {
 			clean := strings.TrimPrefix(name, "/")
 			if strings.HasPrefix(clean, "mc_") {
+				// ReconcileRedisEnv reads this and RESTARTS what it does not
+				// like. Unfiltered, a node restarted another node's running
+				// servers on its own startup. See container_owner.go.
+				if !ownsContainer(c.Labels, self) {
+					break
+				}
 				uuid := strings.TrimPrefix(clean, "mc_")
 				result = append(result, MCContainer{UUID: uuid, ContainerName: clean})
 				break
@@ -1487,11 +1500,19 @@ func (dm *DockerManager) ListAllMCContainers() ([]MCContainerInfo, error) {
 		return nil, err
 	}
 
+	self := nodeIdentities(nodeSecretDir)
 	var result []MCContainerInfo
 	for _, c := range containers {
 		for _, name := range c.Names {
 			clean := strings.TrimPrefix(name, "/")
 			if strings.HasPrefix(clean, "mc_") {
+				// Another node on this same docker.sock has its own mc_
+				// containers, and every caller of this treats what it returns as
+				// something to manage: restart it, republish its stats, recreate
+				// it. See container_owner.go for what that cost.
+				if !ownsContainer(c.Labels, self) {
+					break
+				}
 				uuid := strings.TrimPrefix(clean, "mc_")
 				result = append(result, MCContainerInfo{
 					UUID:          uuid,

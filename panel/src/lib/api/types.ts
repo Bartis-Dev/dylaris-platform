@@ -650,11 +650,15 @@ export const toggleLibraryPath = (path: string, enabled: boolean) =>
 // storage config) and have been removed on both sides.
 
 // --- FILE MANAGER SETTINGS ---
+// On the platform limit convention: null is no limit, 0 refuses the transfer,
+// n is the ceiling in bytes. They used to be plain numbers whose enforcement
+// guarded on `> 0`, so a stored 0 meant "use the default" and neither extreme
+// was reachable from the screen.
 export interface FileManagerSettings {
-    adminUploadLimit: number;
-    adminDownloadLimit: number;
-    userUploadLimit: number;
-    userDownloadLimit: number;
+    adminUploadLimit: number | null;
+    adminDownloadLimit: number | null;
+    userUploadLimit: number | null;
+    userDownloadLimit: number | null;
 }
 export const getFileManagerSettings = () => fetchAPI('/settings/filemanager');
 export const saveFileManagerSettings = (data: FileManagerSettings) => fetchAPI('/settings/filemanager', { method: 'POST', body: JSON.stringify(data) });

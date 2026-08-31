@@ -33,7 +33,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 
 	// The client supplies the UUID and it becomes the %s in every
 	// dylaris:server:<uuid>:* Redis key and the node's server directory name, so
-	// reject anything that is not a canonical UUID (also rejects an empty UUID,
+	// reject anything unsafe to interpolate there (also rejects an empty UUID,
 	// which used to create an unroutable server).
 	if !validate.IsServerUUID(req.UUID) {
 		sendJSONError(w, "Invalid server UUID", http.StatusBadRequest)
@@ -417,7 +417,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce sub-server limit (skip for first setup / admins).
+	// Enforce sub-server limit. Skipped during first setup only - the comment
+	// here used to claim admins were exempt too, and they never have been:
+	// the condition below reads srv.Status and nothing else.
 	//
 	// Read through the shared parser: this site used to hold its own copy of the
 	// rule, guarded on `n > 0`, and therefore threw away a stored 0 and fell back

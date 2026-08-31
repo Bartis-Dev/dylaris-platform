@@ -50,8 +50,9 @@ func TestGetTransferLimit_ResolvesTheDownloadKeys(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := h.getTransferLimit(downloadLimitRequest(c.isAdmin), c.limitType); got != c.want {
-				t.Fatalf("getTransferLimit(%q, admin=%v) = %d, want %d", c.limitType, c.isAdmin, got, c.want)
+			got := h.getTransferLimit(downloadLimitRequest(c.isAdmin), c.limitType)
+			if got == nil || *got != c.want {
+				t.Fatalf("getTransferLimit(%q, admin=%v) = %v, want %d", c.limitType, c.isAdmin, got, c.want)
 			}
 		})
 	}
@@ -64,11 +65,11 @@ func TestGetTransferLimit_DownloadFallsBackToTheDefault(t *testing.T) {
 	fs.kv["fm.user_download_limit"] = "not-a-number"
 	h := &FileHandler{state: &AppState{Store: fs}}
 
-	if got := h.getTransferLimit(downloadLimitRequest(false), "download"); got != 1*1024*1024*1024 {
-		t.Fatalf("unparseable setting gave %d, want the 1 GiB user default", got)
+	if got := h.getTransferLimit(downloadLimitRequest(false), "download"); got == nil || *got != 1*1024*1024*1024 {
+		t.Fatalf("unparseable setting gave %v, want the 1 GiB user default", got)
 	}
-	if got := h.getTransferLimit(downloadLimitRequest(true), "download"); got != 5*1024*1024*1024 {
-		t.Fatalf("unset setting gave %d, want the 5 GiB admin default", got)
+	if got := h.getTransferLimit(downloadLimitRequest(true), "download"); got == nil || *got != 5*1024*1024*1024 {
+		t.Fatalf("unset setting gave %v, want the 5 GiB admin default", got)
 	}
 }
 
@@ -131,4 +132,44 @@ func TestDownloadBudget_RefuseMidStreamAborts(t *testing.T) {
 	}()
 	(&downloadBudget{}).refuse(httptest.NewRecorder(), true)
 	t.Fatal("refuse returned instead of aborting a started response")
+}
+
+// The two states the old int64 could not hold, and the reason this became a
+// pointer. A stored 0 used to fall through to the built-in default, so the one
+// value an operator could type to mean "nobody may transfer" granted them the
+// default allowance instead - and "no limit" was not expressible at all.
+func TestGetTransferLimit_ZeroIsNoneAndUnlimitedIsNoCap(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	fs.kv["fm.user_upload_limit"] = "0"
+	fs.kv["fm.user_download_limit"] = "unlimited"
+	h := &FileHandler{state: &AppState{Store: fs}}
+
+	got := h.getTransferLimit(downloadLimitRequest(false), "upload")
+	if got == nil || *got != 0 {
+		t.Fatalf("a stored 0 gave %v, want a cap of none", got)
+	}
+	if got := h.getTransferLimit(downloadLimitRequest(false), "download"); got != nil {
+		t.Fatalf("a stored \"unlimited\" gave %v, want no cap", got)
+	}
+}
+
+// A nil cap must not become a budget of zero, which would refuse the first byte
+// of every download - the exact inversion this convention exists to prevent.
+func TestNewDownloadBudget(t *testing.T) {
+	b := newDownloadBudget(nil)
+	if !b.take(1 << 30) {
+		t.Error("an unlimited budget refused a transfer")
+	}
+
+	none := int64(0)
+	b = newDownloadBudget(&none)
+	if b.take(1) {
+		t.Error("a cap of none allowed a byte through")
+	}
+
+	cap := int64(10)
+	b = newDownloadBudget(&cap)
+	if !b.take(10) || b.take(1) {
+		t.Error("a real cap did not behave like one")
+	}
 }

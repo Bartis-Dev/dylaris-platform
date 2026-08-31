@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01
+
+### Features
+- Granting BYON or route-only now takes a quantity as well as a duration, so a
+  grant no longer hands out access with no ceiling behind it. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A node managed the Minecraft containers of OTHER nodes on the same machine.
+  Every node drives the host's Docker socket and nothing distinguished whose
+  container was whose, so a second node's startup restarted the first node's
+  running servers and both published stats for the same ones. Containers are
+  labelled with the node that created them now. `node`
+- The file manager's transfer limits could express neither "no limit" nor "none":
+  a stored 0 fell through to the built-in default, so the one value meaning
+  nobody may upload granted the default allowance instead. `core`
+- A user created by assigning an orphaned server got no region access, which the
+  server list reads as "no regions" rather than "not decided". `core`
+
 ## 2026.08.31.20
 
 ### Features

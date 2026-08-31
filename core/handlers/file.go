@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/services"
 	"dylaris-pkg/beam/quota"
 	"dylaris-pkg/validate"
 	pb "dylaris-proto/node"
@@ -45,37 +46,40 @@ func NewFileHandler(state *AppState) *FileHandler {
 	return &FileHandler{RootPath: "servers", state: state}
 }
 
-// getTransferLimit returns the upload or download limit in bytes for the current user
-func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) int64 {
+// getTransferLimit returns the upload or download cap for the current user, on
+// the platform limit convention: nil is no limit, 0 refuses the transfer, n is
+// the ceiling in bytes.
+//
+// It used to return a bare int64 and read the setting with `n > 0`, so a stored
+// 0 - the one value meaning "none" - fell through to the built-in default. An
+// operator who set a user upload limit of zero granted 500 MB, and "no limit"
+// could not be expressed at all.
+//
+// The defaults live in ONE place now (defaultFileManagerSettings) instead of
+// being repeated here: the two copies were already free to drift, and the second
+// one is invisible from the settings screen that appears to own them.
+func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) *int64 {
 	isAdmin := IsAdmin(r)
 	var key string
-	var defaultVal int64
+	var def *int64
 	if limitType == "upload" {
 		if isAdmin {
-			key = "fm.admin_upload_limit"
-			defaultVal = 2 * 1024 * 1024 * 1024
+			key, def = "fm.admin_upload_limit", defaultFileManagerSettings.AdminUploadLimit
 		} else {
-			key = "fm.user_upload_limit"
-			defaultVal = 500 * 1024 * 1024
+			key, def = "fm.user_upload_limit", defaultFileManagerSettings.UserUploadLimit
 		}
 	} else {
 		if isAdmin {
-			key = "fm.admin_download_limit"
-			defaultVal = 5 * 1024 * 1024 * 1024
+			key, def = "fm.admin_download_limit", defaultFileManagerSettings.AdminDownloadLimit
 		} else {
-			key = "fm.user_download_limit"
-			defaultVal = 1 * 1024 * 1024 * 1024
+			key, def = "fm.user_download_limit", defaultFileManagerSettings.UserDownloadLimit
 		}
 	}
 	val, err := h.state.Store.GetSetting(key)
-	if err != nil || val == "" {
-		return defaultVal
+	if err != nil {
+		return def
 	}
-	var n int64
-	if _, err := fmt.Sscanf(val, "%d", &n); err == nil && n > 0 {
-		return n
-	}
-	return defaultVal
+	return services.ParseLimitSetting(val, def)
 }
 
 // downloadBudget enforces the per-user download ceiling across a streamed
@@ -89,10 +93,28 @@ func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) int64 
 // offered the operator a download ceiling that did nothing, while the upload
 // ceiling right next to it (same function, same settings page) was enforced on
 // both write paths.
-type downloadBudget struct{ left int64 }
+// downloadBudget tracks what is left of a download ceiling. unlimited is the
+// nil cap: no ceiling to spend, so take always succeeds. A budget of 0 is a real
+// ceiling of none and refuses the first byte, which is the difference the
+// pointer exists to carry.
+type downloadBudget struct {
+	left      int64
+	unlimited bool
+}
+
+// newDownloadBudget builds one from a cap on the platform limit convention.
+func newDownloadBudget(cap *int64) downloadBudget {
+	if cap == nil {
+		return downloadBudget{unlimited: true}
+	}
+	return downloadBudget{left: *cap}
+}
 
 // take reserves n bytes, reporting false once the budget is spent.
 func (b *downloadBudget) take(n int) bool {
+	if b.unlimited {
+		return true
+	}
 	if b.left < int64(n) {
 		return false
 	}
@@ -342,7 +364,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 	// without this an authenticated user could POST an arbitrarily large body and
 	// have it decoded into RAM. Reuse the per-user upload ceiling (the same one
 	// UploadFileHandler applies via MaxBytesReader).
-	if !capBody(w, r, h.getTransferLimit(r, "upload")) {
+	if !capBodyLimit(w, r, h.getTransferLimit(r, "upload")) {
 		return
 	}
 
@@ -717,7 +739,7 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 	// the status code away from us. See downloadBudget.refuse.
 	bodyStarted := false
 	flusher, canFlush := w.(http.Flusher)
-	budget := downloadBudget{left: h.getTransferLimit(r, "download")}
+	budget := newDownloadBudget(h.getTransferLimit(r, "download"))
 
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
@@ -821,7 +843,7 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 	headerWritten := false
 	bodyStarted := false
 	flusher, canFlush := w.(http.Flusher)
-	budget := downloadBudget{left: h.getTransferLimit(r, "download")}
+	budget := newDownloadBudget(h.getTransferLimit(r, "download"))
 
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
@@ -862,7 +884,7 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 // then streams them to the Node via gRPC chunks.
 func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) {
 	uploadLimit := h.getTransferLimit(r, "upload")
-	if !capBody(w, r, uploadLimit) {
+	if !capBodyLimit(w, r, uploadLimit) {
 		return
 	}
 	// 32MiB in memory; anything larger spills to a temp file on disk. Passing

@@ -78,6 +78,16 @@ func LimitBody(max int64, next http.HandlerFunc) http.HandlerFunc {
 // Refusing before the first read means Go sends the 413 INSTEAD of the 100
 // Continue, which is exactly what Expect is for. MaxBytesReader stays for the
 // cases Content-Length cannot cover: chunked bodies, and a header that lies.
+// capBodyLimit is capBody for a cap on the platform limit convention: nil is no
+// limit and skips the check entirely, anything else - including 0, which refuses
+// any body with content - is passed through.
+func capBodyLimit(w http.ResponseWriter, r *http.Request, max *int64) bool {
+	if max == nil {
+		return true
+	}
+	return capBody(w, r, *max)
+}
+
 func capBody(w http.ResponseWriter, r *http.Request, max int64) bool {
 	if r.ContentLength > max {
 		sendJSONError(w, "Request body is too large", http.StatusRequestEntityTooLarge)

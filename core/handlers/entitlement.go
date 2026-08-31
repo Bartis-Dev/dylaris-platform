@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -72,6 +73,18 @@ func (h *EntitlementHandler) GetForUser(w http.ResponseWriter, r *http.Request) 
 type grantRequest struct {
 	Kind string `json:"kind"`
 	Days int    `json:"days"`
+	// Amount is how many of this kind they may hold, written as the matching
+	// limit override. Absent leaves the limit alone.
+	//
+	// It exists because a grant used to hand out ACCESS without a QUANTITY, and
+	// an absent limit is no limit - so a granted tenant could enroll without
+	// bound until the store pushed a real cap on their first purchase, at which
+	// point they were retroactively over it and on the 72-hour clock. The grant
+	// screen could not see that it was doing this.
+	//
+	// A pointer, on the platform limit convention: nil says nothing, 0 is a cap
+	// of none, n is the cap.
+	Amount *int64 `json:"amount"`
 }
 
 // grantKinds expands the request's kind into the kinds actually written. Only
@@ -126,6 +139,17 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The quantity, written as the same override a purchase writes, so the two
+	// sources cannot disagree about where a tenant's ceiling lives. Only the
+	// kinds being granted are touched: setting the node cap while granting
+	// route-only would silently change something the admin did not ask about.
+	if req.Amount != nil {
+		if err := h.applyGrantAmount(userID, kind, req.Amount); err != nil {
+			log.Printf("Grant: amount for %s: %v", userID, err)
+			sendJSONError(w, "The grant was saved but its limit was not", http.StatusInternalServerError)
+			return
+		}
+	}
 	LogIdentityAudit(h.state, r, AuditEventEntitlementGranted, actor, userID, map[string]interface{}{
 		"kind":       kind,
 		"days":       req.Days,
@@ -135,6 +159,34 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, h.subjectIsAdmin(userID))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(entitlementResponse{Success: true, Entitlement: ent})
+}
+
+// applyGrantAmount writes the quantity for the kinds just granted, leaving every
+// other limit as it was.
+//
+// Read-modify-write, because the store's setter takes the whole set of overrides
+// at once and passing nil for the others would ERASE them - turning "give them
+// two nodes" into "and remove whatever traffic allowance they had".
+func (h *EntitlementHandler) applyGrantAmount(userID, kind string, amount *int64) error {
+	b, err := h.state.Store.GetUserBilling(userID)
+	if err != nil {
+		return err
+	}
+	maxNodes, maxLinks := (*int64)(nil), (*int64)(nil)
+	var edge, relay, combined *int64
+	if b != nil {
+		maxNodes, maxLinks = b.MaxNodes, b.MaxLinks
+		edge, relay, combined = b.TrafficEdgeGB, b.TrafficRelayGB, b.TrafficCombinedGB
+	}
+	for _, k := range grantKinds(kind) {
+		switch k {
+		case services.EntitlementByon:
+			maxNodes = amount
+		case services.EntitlementRouteOnly:
+			maxLinks = amount
+		}
+	}
+	return h.state.Store.SetUserLimitOverrides(userID, maxNodes, maxLinks, edge, relay, combined)
 }
 
 // subjectIsAdmin answers the entitlement question about the user NAMED IN THE

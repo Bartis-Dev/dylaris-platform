@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- If you run more than one node on a single machine, they could manage each
+  other's servers - one starting up would restart the other's, players and all.
+  Each node now only touches what it created. Update your node to get this. `node`
+
 ## 2026.08.31.20
 
 ### Features

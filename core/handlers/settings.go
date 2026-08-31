@@ -37,18 +37,26 @@ func NewSettingsHandler(state *AppState) *SettingsHandler {
 
 // --- File Manager Settings ---
 
+// FileManagerSettings holds the four browser transfer ceilings, on the platform
+// limit convention: nil is no limit, 0 is none (transfers refused), n is the cap
+// in bytes.
+//
+// They were plain int64 and the enforcement site guarded on `n > 0`, so a stored
+// 0 fell through to the built-in default - which made "nobody may upload" say
+// two gigabytes, and left no way to express "no limit" at all. Both ends of the
+// range were unreachable from the screen that edits them.
 type FileManagerSettings struct {
-	AdminUploadLimit   int64 `json:"adminUploadLimit"`   // bytes
-	AdminDownloadLimit int64 `json:"adminDownloadLimit"` // bytes
-	UserUploadLimit    int64 `json:"userUploadLimit"`    // bytes
-	UserDownloadLimit  int64 `json:"userDownloadLimit"`  // bytes
+	AdminUploadLimit   *int64 `json:"adminUploadLimit"`   // bytes
+	AdminDownloadLimit *int64 `json:"adminDownloadLimit"` // bytes
+	UserUploadLimit    *int64 `json:"userUploadLimit"`    // bytes
+	UserDownloadLimit  *int64 `json:"userDownloadLimit"`  // bytes
 }
 
 var defaultFileManagerSettings = FileManagerSettings{
-	AdminUploadLimit:   2 * 1024 * 1024 * 1024, // 2 GB
-	AdminDownloadLimit: 5 * 1024 * 1024 * 1024, // 5 GB
-	UserUploadLimit:    500 * 1024 * 1024,      // 500 MB
-	UserDownloadLimit:  1 * 1024 * 1024 * 1024, // 1 GB
+	AdminUploadLimit:   services.LimitPtr(2 * 1024 * 1024 * 1024), // 2 GB
+	AdminDownloadLimit: services.LimitPtr(5 * 1024 * 1024 * 1024), // 5 GB
+	UserUploadLimit:    services.LimitPtr(500 * 1024 * 1024),      // 500 MB
+	UserDownloadLimit:  services.LimitPtr(1 * 1024 * 1024 * 1024), // 1 GB
 }
 
 // GetFileManagerSettings GET /api/settings/filemanager - PANEL settings.read (RequireCap at the route).
@@ -69,11 +77,14 @@ func (h *SettingsHandler) SaveFileManagerSettings(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Through the shared formatter, so a nil cap stores the word rather than an
+	// empty string: empty means "never saved" and would be read back as the
+	// default, silently discarding a deliberate "no limit".
 	pairs := []struct{ k, v string }{
-		{"fm.admin_upload_limit", fmt.Sprintf("%d", req.AdminUploadLimit)},
-		{"fm.admin_download_limit", fmt.Sprintf("%d", req.AdminDownloadLimit)},
-		{"fm.user_upload_limit", fmt.Sprintf("%d", req.UserUploadLimit)},
-		{"fm.user_download_limit", fmt.Sprintf("%d", req.UserDownloadLimit)},
+		{"fm.admin_upload_limit", services.FormatLimitSetting(req.AdminUploadLimit)},
+		{"fm.admin_download_limit", services.FormatLimitSetting(req.AdminDownloadLimit)},
+		{"fm.user_upload_limit", services.FormatLimitSetting(req.UserUploadLimit)},
+		{"fm.user_download_limit", services.FormatLimitSetting(req.UserDownloadLimit)},
 	}
 
 	for _, p := range pairs {
@@ -89,28 +100,28 @@ func (h *SettingsHandler) SaveFileManagerSettings(w http.ResponseWriter, r *http
 func (h *SettingsHandler) loadFileManagerSettings() FileManagerSettings {
 	settings := defaultFileManagerSettings
 
-	getInt64 := func(key string, def int64) int64 {
+	// ParseLimitSetting, not a hand-rolled Sscanf with `n > 0`. That guard is
+	// what threw away a stored 0 - the one value meaning "none" was the one value
+	// that fell back to the default.
+	getLimit := func(key string, def *int64) *int64 {
 		val, err := h.state.Store.GetSetting(key)
-		if err != nil || val == "" {
+		if err != nil {
 			return def
 		}
-		var n int64
-		if _, err := fmt.Sscanf(val, "%d", &n); err == nil && n > 0 {
-			return n
-		}
-		return def
+		return services.ParseLimitSetting(val, def)
 	}
 
-	settings.AdminUploadLimit = getInt64("fm.admin_upload_limit", settings.AdminUploadLimit)
-	settings.AdminDownloadLimit = getInt64("fm.admin_download_limit", settings.AdminDownloadLimit)
-	settings.UserUploadLimit = getInt64("fm.user_upload_limit", settings.UserUploadLimit)
-	settings.UserDownloadLimit = getInt64("fm.user_download_limit", settings.UserDownloadLimit)
+	settings.AdminUploadLimit = getLimit("fm.admin_upload_limit", settings.AdminUploadLimit)
+	settings.AdminDownloadLimit = getLimit("fm.admin_download_limit", settings.AdminDownloadLimit)
+	settings.UserUploadLimit = getLimit("fm.user_upload_limit", settings.UserUploadLimit)
+	settings.UserDownloadLimit = getLimit("fm.user_download_limit", settings.UserDownloadLimit)
 
 	return settings
 }
 
-// GetUploadLimitForUser returns the upload limit in bytes for the current user
-func (h *SettingsHandler) GetUploadLimitForUser(isAdmin bool) int64 {
+// GetUploadLimitForUser returns the upload cap for the current user. nil means
+// no limit; 0 means uploads are refused.
+func (h *SettingsHandler) GetUploadLimitForUser(isAdmin bool) *int64 {
 	settings := h.loadFileManagerSettings()
 	if isAdmin {
 		return settings.AdminUploadLimit
@@ -118,8 +129,9 @@ func (h *SettingsHandler) GetUploadLimitForUser(isAdmin bool) int64 {
 	return settings.UserUploadLimit
 }
 
-// GetDownloadLimitForUser returns the download limit in bytes for the current user
-func (h *SettingsHandler) GetDownloadLimitForUser(isAdmin bool) int64 {
+// GetDownloadLimitForUser returns the download cap for the current user. nil
+// means no limit; 0 means downloads are refused.
+func (h *SettingsHandler) GetDownloadLimitForUser(isAdmin bool) *int64 {
 	settings := h.loadFileManagerSettings()
 	if isAdmin {
 		return settings.AdminDownloadLimit
@@ -132,7 +144,7 @@ func (h *SettingsHandler) GetUserLimits(w http.ResponseWriter, r *http.Request) 
 	isAdmin := IsAdmin(r)
 	settings := h.loadFileManagerSettings()
 
-	var uploadLimit, downloadLimit int64
+	var uploadLimit, downloadLimit *int64
 	if isAdmin {
 		uploadLimit = settings.AdminUploadLimit
 		downloadLimit = settings.AdminDownloadLimit
@@ -141,6 +153,8 @@ func (h *SettingsHandler) GetUserLimits(w http.ResponseWriter, r *http.Request) 
 		downloadLimit = settings.UserDownloadLimit
 	}
 
+	// null on the wire is "no limit", which is what the panel's LimitField reads
+	// as its unlimited state.
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":       true,
 		"uploadLimit":   uploadLimit,

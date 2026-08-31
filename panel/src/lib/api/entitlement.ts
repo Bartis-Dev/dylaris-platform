@@ -54,13 +54,25 @@ export async function getUserEntitlement(userId: string): Promise<EntitlementRes
     }
 }
 
-/** Grant BYON and/or route-only for `days` days. Additive to the tenant's plan. */
-export async function grantEntitlement(userId: string, kind: 'byon' | 'route_only' | 'both', days: number): Promise<EntitlementResponse> {
+/**
+ * Grant BYON and/or route-only for `days` days. Additive to the tenant's plan.
+ *
+ * `amount` is how many of that kind they may hold, written as the matching limit
+ * override. Omit it to leave the limit alone - but note that an absent limit is
+ * NO limit, so a grant without one lets the tenant enroll without bound until a
+ * purchase pushes a real cap, at which point they are retroactively over it.
+ */
+export async function grantEntitlement(
+    userId: string,
+    kind: 'byon' | 'route_only' | 'both',
+    days: number,
+    amount?: number | null,
+): Promise<EntitlementResponse> {
     try {
         const res = await fetch(`${API_URL}/admin/users/${encodeURIComponent(userId)}/entitlement`, {
             method: 'POST',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ kind, days }),
+            body: JSON.stringify(amount === undefined ? { kind, days } : { kind, days, amount }),
         });
         return (await handleResponse(res)) as EntitlementResponse;
     } catch (err) {

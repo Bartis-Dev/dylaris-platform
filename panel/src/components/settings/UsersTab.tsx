@@ -1000,6 +1000,11 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     // shared value would make the two rows fight over one input.
     const [grantDaysByon, setGrantDaysByon] = useState('30');
     const [grantDaysRoute, setGrantDaysRoute] = useState('30');
+    // How many of each they may hold. Empty means "leave the limit alone", which
+    // for a tenant who has bought nothing means NO limit - so the row says so
+    // rather than letting the default be silent.
+    const [grantAmountByon, setGrantAmountByon] = useState('1');
+    const [grantAmountRoute, setGrantAmountRoute] = useState('1');
     // Which row is mid-request, so only that row's buttons go inert.
     const [grantBusy, setGrantBusy] = useState<'byon' | 'route_only' | null>(null);
 
@@ -1044,14 +1049,26 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
         show(okMsg, true);
     };
 
-    const handleGrant = async (kind: 'byon' | 'route_only', rawDays: string) => {
+    const handleGrant = async (kind: 'byon' | 'route_only', rawDays: string, rawAmount: string) => {
         const days = parseInt(rawDays, 10);
         if (!Number.isFinite(days) || days < 1 || days > 730) {
             show('Days must be between 1 and 730', false);
             return;
         }
+        // Empty is a real choice - "do not touch their limit" - and is sent as
+        // undefined rather than 0, which would cap them at none.
+        const trimmed = rawAmount.trim();
+        let amount: number | undefined;
+        if (trimmed !== '') {
+            const n = parseInt(trimmed, 10);
+            if (!Number.isFinite(n) || n < 0) {
+                show('How many must be a whole number, or empty to leave the limit alone', false);
+                return;
+            }
+            amount = n;
+        }
         setGrantBusy(kind);
-        const r = await grantEntitlement(user.id, kind, days);
+        const r = await grantEntitlement(user.id, kind, days, amount);
         setGrantBusy(null);
         applyEntitlement(r, `Granted for ${days} day${days === 1 ? '' : 's'}`);
     };
@@ -1156,9 +1173,12 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                                 expiresAt={ent.grantByonExpiresAt}
                                                 days={grantDaysByon}
                                                 onDaysChange={setGrantDaysByon}
+                                                amount={grantAmountByon}
+                                                onAmountChange={setGrantAmountByon}
+                                                currentAmount={data.overrides.maxNodes}
                                                 busy={grantBusy === 'byon'}
                                                 disabled={grantBusy !== null}
-                                                onGrant={() => handleGrant('byon', grantDaysByon)}
+                                                onGrant={() => handleGrant('byon', grantDaysByon, grantAmountByon)}
                                                 onRevoke={() => handleRevokeGrant('byon')}
                                             />
                                             <GrantRow
@@ -1166,9 +1186,12 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                                 expiresAt={ent.grantRouteExpiresAt}
                                                 days={grantDaysRoute}
                                                 onDaysChange={setGrantDaysRoute}
+                                                amount={grantAmountRoute}
+                                                onAmountChange={setGrantAmountRoute}
+                                                currentAmount={data.overrides.maxLinks}
                                                 busy={grantBusy === 'route_only'}
                                                 disabled={grantBusy !== null}
-                                                onGrant={() => handleGrant('route_only', grantDaysRoute)}
+                                                onGrant={() => handleGrant('route_only', grantDaysRoute, grantAmountRoute)}
                                                 onRevoke={() => handleRevokeGrant('route_only')}
                                             />
                                         </div>
@@ -1320,19 +1343,29 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
  * first.
  */
 function GrantRow({
-    label, expiresAt, days, onDaysChange, busy, disabled, onGrant, onRevoke,
+    label, expiresAt, days, onDaysChange, amount, onAmountChange, currentAmount,
+    busy, disabled, onGrant, onRevoke,
 }: {
     label: string;
     /** Set only while this kind is actively granted. */
     expiresAt?: string;
     days: string;
     onDaysChange: (v: string) => void;
+    /** How many they may hold. Empty leaves their limit untouched. */
+    amount: string;
+    onAmountChange: (v: string) => void;
+    /** What their limit is right now: null means no limit at all. */
+    currentAmount?: number | null;
     busy: boolean;
     disabled: boolean;
     onGrant: () => void;
     onRevoke: () => void;
 }) {
     const granted = !!expiresAt;
+    // The state worth naming, because it is the one that bites later: granting
+    // access without a quantity leaves the tenant uncapped, and their first
+    // purchase then pushes a real cap they are immediately over.
+    const uncapped = currentAmount === null || currentAmount === undefined;
     return (
         <div className="flex flex-wrap items-center gap-2 rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2">
             <div className="min-w-0 flex-1">
@@ -1341,8 +1374,22 @@ function GrantRow({
                     {granted
                         ? `Granted until ${new Date(expiresAt).toLocaleDateString()}`
                         : 'Not granted'}
+                    {granted && uncapped && (
+                        <span className="text-(--warning)"> &middot; no limit set</span>
+                    )}
                 </div>
             </div>
+            <input
+                type="number"
+                min={0}
+                className="input-field input-mono w-16 text-center"
+                value={amount}
+                onChange={e => onAmountChange(e.target.value)}
+                placeholder="-"
+                aria-label={`How many ${label}`}
+                title="How many they may hold. Empty leaves their current limit alone."
+            />
+            <span className="text-xs text-(--base-06)">for</span>
             <input
                 type="number"
                 min={1}

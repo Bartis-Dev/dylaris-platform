@@ -34,20 +34,35 @@ function displayToBytes(value: number, unit: string): number {
 interface LimitFieldProps {
     id: string;
     label: string;
-    bytes: number;
-    onChange: (bytes: number) => void;
+    /** null = no limit; 0 = none (transfers refused); n = the cap in bytes. */
+    bytes: number | null;
+    onChange: (bytes: number | null) => void;
 }
 
+/**
+ * A byte ceiling with a unit picker, on the platform limit convention.
+ *
+ * Not the shared LimitField: these are sizes, so the unit picker is the whole
+ * reason a local control exists. It carries the same three states, which it did
+ * not before - the number had min={1}, so neither "none" nor "no limit" was
+ * reachable, and the enforcement site read a stored 0 as "use the default".
+ */
 function LimitField({ id, label, bytes, onChange }: LimitFieldProps) {
-    const display = bytesToDisplay(bytes);
+    const display = bytesToDisplay(bytes ?? 0);
     const [value, setValue] = useState(display.value);
     const [unit, setUnit] = useState(display.unit);
 
     useEffect(() => {
+        // Only track a real cap. Re-reading while unlimited would reset the
+        // remembered number to 0, so switching the limit back on would land on
+        // "none" instead of the value the operator last had.
+        if (bytes === null) return;
         const d = bytesToDisplay(bytes);
         setValue(d.value);
         setUnit(d.unit);
     }, [bytes]);
+
+    const unlimited = bytes === null;
 
     const handleValueChange = (v: number) => {
         setValue(v);
@@ -62,25 +77,42 @@ function LimitField({ id, label, bytes, onChange }: LimitFieldProps) {
     return (
         <div className="flex flex-col gap-[5px]">
             <label className="input-label" htmlFor={id}>{label}</label>
-            <div className="flex gap-2">
-                <input
-                    id={id}
-                    type="number"
-                    min={1}
-                    value={value}
-                    onChange={e => handleValueChange(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="input-field w-24 text-right"
-                />
-                <select
-                    value={unit}
-                    onChange={e => handleUnitChange(e.target.value)}
-                    aria-label={`${label} unit`}
-                    className="input-field w-20"
-                >
-                    {UNITS.map(u => (
-                        <option key={u.label} value={u.label}>{u.label}</option>
-                    ))}
-                </select>
+            <div className="flex gap-2 items-center">
+                {!unlimited && (
+                    <>
+                        <input
+                            id={id}
+                            type="number"
+                            min={0}
+                            value={value}
+                            onChange={e => handleValueChange(Math.max(0, parseInt(e.target.value) || 0))}
+                            className="input-field w-24 text-right"
+                        />
+                        <select
+                            value={unit}
+                            onChange={e => handleUnitChange(e.target.value)}
+                            aria-label={`${label} unit`}
+                            className="input-field w-20"
+                        >
+                            {UNITS.map(u => (
+                                <option key={u.label} value={u.label}>{u.label}</option>
+                            ))}
+                        </select>
+                    </>
+                )}
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={unlimited}
+                        aria-label={`${label}: no limit`}
+                        onClick={() => onChange(unlimited ? displayToBytes(value || 1, unit) : null)}
+                        className={`toggle-track ${unlimited ? 'toggle-track-on' : 'toggle-track-off'}`}
+                    >
+                        <span className={`toggle-knob ${unlimited ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                    </button>
+                    <span className="text-[10px] font-mono uppercase text-(--base-06)">No limit</span>
+                </label>
             </div>
         </div>
     );
@@ -100,7 +132,7 @@ export default function FileManagerTab() {
     });
 
     const s = form.value ?? DEFAULTS;
-    const set = (key: keyof FileManagerSettings, value: number) => form.patch({ [key]: value });
+    const set = (key: keyof FileManagerSettings, value: number | null) => form.patch({ [key]: value });
 
     return (
         <SettingsPage
