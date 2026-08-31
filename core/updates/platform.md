@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Navigation entries past the first collapsed into the "More" menu at window
+  widths where they fit, and once collapsed only a page reload brought them
+  back. `core`
+
 ## 2026.08.31.7
 
 ### Features

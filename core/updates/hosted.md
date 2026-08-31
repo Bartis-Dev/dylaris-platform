@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Navigation entries could disappear into the "More" menu at window sizes where
+  they fit, and only a page reload brought them back. Nothing to update on your
+  side.
+
 ## 2026.08.31.7
 
 ### Features
