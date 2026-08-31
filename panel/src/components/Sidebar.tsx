@@ -328,7 +328,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           })}
         </div>
         <div className="shrink-0 border-t border-(--base-03) py-2 flex justify-center">
-          <CreateMenu onNewServer={onNewServer} />
+          <CreateMenu onNewServer={onNewServer} compact />
         </div>
       </aside>
     );

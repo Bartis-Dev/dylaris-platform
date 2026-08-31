@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     groupInstances, compareVersions, serviceLabel, anythingOutdated,
-    bellState, categories, formatDeadline, mergeReleases,
+    bellState, categories, formatDeadline, mergeReleases, releasesSince, mandatoryApplies,
 } from './updateGroups';
 import type { UpdateInstance, Release, ReleaseEntry } from './api/updates';
 
@@ -219,5 +219,62 @@ describe('mergeReleases', () => {
             rel('2026.08.30.1', { required: { deadline: '2026-09-05', immediate: false } }),
         ])!;
         expect(m.required?.immediate).toBe(true);
+    });
+});
+
+// The rule this decides: WHICH releases the panel shows as new.
+//
+// It exists because the panel showed all twenty it was sent, every time, no
+// matter what the reader had already acknowledged. An operator who had just
+// updated and was current still opened the bell to "2026.08.29.14 -
+// 2026.08.31.13, 20 releases, mandatory" - a span reaching back days, with a red
+// badge, describing nothing they had to do. The block's own comment said
+// "everything the reader has not seen"; nothing filtered on seen.
+describe('releasesSince', () => {
+    const r = (version: string, required?: { deadline: string; immediate?: boolean; note?: string }) =>
+        ({ version, features: [], breaking: [], security: [], fixes: [], required }) as unknown as Release;
+
+    it('drops what has already been acknowledged', () => {
+        const all = [r('2026.08.31.13'), r('2026.08.31.12'), r('2026.08.30')];
+        expect(releasesSince(all, '2026.08.31.12').map(x => x.version)).toEqual(['2026.08.31.13']);
+    });
+
+    it('shows nothing when the newest release is the one that was seen', () => {
+        const all = [r('2026.08.31.13'), r('2026.08.30')];
+        expect(releasesSince(all, '2026.08.31.13')).toEqual([]);
+    });
+
+    // A reader who has never opened it gets the lot; that is the one time the
+    // full span is the honest answer.
+    it('shows everything when nothing was ever seen', () => {
+        const all = [r('2026.08.31.13'), r('2026.08.30')];
+        expect(releasesSince(all, undefined).length).toBe(2);
+    });
+
+    // A seen marker naming a version no longer in the window must not hide the
+    // window. Falling back to "show everything" is the safe direction: a reader
+    // shown one release too many loses a moment, one shown too few loses the
+    // release.
+    it('an unknown seen marker does not hide everything', () => {
+        const all = [r('2026.08.31.13'), r('2026.08.30')];
+        expect(releasesSince(all, '2026.01.01').length).toBe(2);
+    });
+});
+
+// The rule this decides: when the red "mandatory" badge appears.
+//
+// It used to appear whenever ANY release in the window carried a deadline, so a
+// requirement satisfied days ago kept shouting. What binds a reader is whether
+// something THEY run is below the floor - which Core already computes per
+// component and sends as `required`.
+describe('mandatoryApplies', () => {
+    it('is false when no component is below a floor', () => {
+        expect(mandatoryApplies([])).toBe(false);
+    });
+
+    it('is true when a component is below a floor', () => {
+        expect(mandatoryApplies([
+            { service: 'node', minVersion: '2026.08.30', deadline: '2026-09-05T00:00:00Z', passed: false },
+        ] as never)).toBe(true);
     });
 });

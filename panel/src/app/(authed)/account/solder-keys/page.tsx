@@ -135,7 +135,7 @@ export default function SolderKeysPage() {
                             </div>
                             <button
                                 onClick={() => setDeleting(k)}
-                                className="btn-icon btn-ghost shrink-0"
+                                className="btn btn-icon btn-ghost shrink-0"
                                 title="Delete key"
                             >
                                 <Trash2 size={14} className="text-(--error)" />

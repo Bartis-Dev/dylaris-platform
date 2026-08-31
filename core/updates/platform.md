@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.14
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- What's New shows only what you have not read yet, as a summary you can expand,
+  instead of every release it was sent. A current operator no longer opens it to
+  a span reaching back days. `core`
+- The red "mandatory" badge now means a component you run is below a required
+  version, not that some release in the window once carried a deadline. `core`
+- Buttons on the backup-storage page, the Solder pages and a modpack page render
+  correctly. They named a style modifier without the base button class, so they
+  had no padding and no rounded corners. `core`
+- At rail width the sidebar shows the product icon instead of a lone letter, and
+  Create becomes a single plus. `core`
+
 ## 2026.08.31.13
 
 ### Features

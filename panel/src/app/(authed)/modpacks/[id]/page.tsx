@@ -446,7 +446,7 @@ export default function PackDetailPage() {
                                         </div>
                                         <button
                                             onClick={() => handleRemoveClient(c.id)}
-                                            className="btn-icon btn-ghost"
+                                            className="btn btn-icon btn-ghost"
                                             title="Remove client"
                                         >
                                             <Trash2 size={13} className="text-(--error)" />

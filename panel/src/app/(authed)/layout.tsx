@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { AppDataProvider, useAppData } from '@/lib/AppDataContext';
+import brandMark from '@/app/icon.png';
 import { logout, updateProfile as apiUpdateProfile } from '@/lib/api';
 import { getSetupStatus } from '@/lib/api/setup';
 import Navbar from '@/components/Navbar';
@@ -349,13 +350,24 @@ function UtilityCluster({ children }: { children: React.ReactNode }) {
 // The branding block. Collapses to the mark alone at rail width so it keeps the
 // sidebar's footprint exactly - a full-width logo over a 56px rail is the
 // misalignment this avoids.
+//
+// The mark is the ICON, not the letter D. Cutting the wordmark down to its first
+// glyph left a bare "D" in a display face built for a whole word: at 20px it
+// reads as a stray character rather than as a logo, and it is the one thing on
+// screen at rail width that is supposed to say which product this is. The icon
+// already exists - it is the favicon - so the narrow state now shows the same
+// mark the browser tab does.
 function SidebarBrand() {
     const { collapsed } = useSidebarCollapse();
     if (collapsed) {
         return (
-            <div className="flex items-center justify-center w-14 shrink-0 border-r border-(--base-03) mr-4 pr-2">
-                <div className="px-2 py-1 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center">
-                    <span className="text-xl font-logo tracking-widest select-none text-(--accent-light)">D</span>
+            <div className="flex items-center justify-center w-14 shrink-0 border-r border-(--base-03) mr-4">
+                <div className="p-1 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center">
+                    {/* A plain img rather than next/image: the panel is a static
+                        export, so there is no optimizer behind it, and the
+                        import already yields the hashed same-origin URL the CSP
+                        allows. */}
+                    <img src={brandMark.src} alt="Dylaris" width={22} height={22} className="block select-none" draggable={false} />
                 </div>
             </div>
         );

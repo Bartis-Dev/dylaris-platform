@@ -134,7 +134,7 @@ export default function SolderClientsPage() {
                                     </span>
                                     <button
                                         onClick={() => { navigator.clipboard.writeText(c.uuid); showToast('UUID copied.', true); }}
-                                        className="btn-icon btn-ghost shrink-0"
+                                        className="btn btn-icon btn-ghost shrink-0"
                                         title="Copy UUID"
                                     >
                                         <Copy size={12} />
@@ -146,7 +146,7 @@ export default function SolderClientsPage() {
                             </div>
                             <button
                                 onClick={() => setDeleting(c)}
-                                className="btn-icon btn-ghost shrink-0"
+                                className="btn btn-icon btn-ghost shrink-0"
                                 title="Delete client"
                             >
                                 <Trash2 size={14} className="text-(--error)" />

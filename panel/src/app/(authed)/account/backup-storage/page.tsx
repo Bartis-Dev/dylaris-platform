@@ -110,7 +110,7 @@ export default function OwnBackupStoragePage() {
                         </div>
                     </div>
                     {!denied && (
-                        <button onClick={startCreate} className="btn-primary flex items-center gap-2 shrink-0">
+                        <button onClick={startCreate} className="btn btn-primary flex items-center gap-2 shrink-0">
                             <Plus size={16} /> Connect storage
                         </button>
                     )}
@@ -170,16 +170,16 @@ export default function OwnBackupStoragePage() {
                                         <button
                                             onClick={() => runTest(s)}
                                             disabled={testingId === s.id}
-                                            className="btn-secondary text-xs disabled:opacity-50"
+                                            className="btn btn-secondary text-xs disabled:opacity-50"
                                         >
                                             {testingId === s.id ? 'Testing...' : 'Test'}
                                         </button>
-                                        <button onClick={() => startEdit(s)} className="btn-icon btn-sm" aria-label={`Edit ${s.name}`}>
+                                        <button onClick={() => startEdit(s)} className="btn btn-icon btn-sm" aria-label={`Edit ${s.name}`}>
                                             <Pencil size={15} />
                                         </button>
                                         <button
                                             onClick={() => setConfirmDelete(s)}
-                                            className="btn-icon btn-sm text-(--error)"
+                                            className="btn btn-icon btn-sm text-(--error)"
                                             aria-label={`Remove ${s.name}`}
                                         >
                                             <Trash2 size={15} />
@@ -215,8 +215,8 @@ export default function OwnBackupStoragePage() {
                             download them.
                         </p>
                         <div className="flex justify-end gap-2 mt-5">
-                            <button onClick={() => setConfirmDelete(null)} className="btn-secondary">Cancel</button>
-                            <button onClick={remove} disabled={deleting} className="btn-danger disabled:opacity-50">
+                            <button onClick={() => setConfirmDelete(null)} className="btn btn-secondary">Cancel</button>
+                            <button onClick={remove} disabled={deleting} className="btn btn-danger disabled:opacity-50">
                                 {deleting ? 'Removing...' : 'Remove'}
                             </button>
                         </div>
@@ -247,7 +247,7 @@ function StorageDialog({
                     <h2 id="storage-dialog-title" className="text-base font-medium text-(--base-09)">
                         {isEdit ? 'Edit storage' : 'Connect S3 storage'}
                     </h2>
-                    <button onClick={onCancel} className="btn-icon btn-sm" aria-label="Close"><X size={16} /></button>
+                    <button onClick={onCancel} className="btn btn-icon btn-sm" aria-label="Close"><X size={16} /></button>
                 </div>
 
                 <div className="space-y-3">
@@ -317,8 +317,8 @@ function StorageDialog({
                 </div>
 
                 <div className="flex justify-end gap-2 mt-5">
-                    <button onClick={onCancel} className="btn-secondary">Cancel</button>
-                    <button onClick={onSave} disabled={saving} className="btn-primary disabled:opacity-50">
+                    <button onClick={onCancel} className="btn btn-secondary">Cancel</button>
+                    <button onClick={onSave} disabled={saving} className="btn btn-primary disabled:opacity-50">
                         {saving ? 'Saving...' : isEdit ? 'Save' : 'Connect'}
                     </button>
                 </div>

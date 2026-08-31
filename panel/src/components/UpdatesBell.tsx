@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Sparkles, X, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Sparkles, X, AlertTriangle, RefreshCw, ChevronDown } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getUpdates, markUpdatesSeen,
@@ -9,7 +9,8 @@ import {
 } from '@/lib/api/updates';
 import {
     groupInstances, serviceLabel, anythingOutdated, bellState,
-    formatDeadline, mergeReleases, type VersionGroup, type MergedReleases,
+    formatDeadline, mergeReleases, releasesSince, mandatoryApplies,
+    type VersionGroup, type MergedReleases,
 } from '@/lib/updateGroups';
 
 // ---------------------------------------------------------------------------
@@ -141,33 +142,80 @@ function RequirementBanner({ req }: { req: UpdateRequirement }) {
     );
 }
 
-// Everything the reader has not seen, as ONE block.
+// What is new since the reader last looked, as ONE block - a summary first, the
+// entries only if they ask.
 //
-// It used to be a block per version, stacked. Four releases in a day meant four
-// headings, sixteen category labels and a dozen "Nothing this time." lines
-// between the reader and the two entries that mattered. Nobody opens a changelog
-// to learn how it was cut into blocks; they open it to find out what changed
-// since they last looked, which is one question with one answer.
-function MergedBlock({ merged }: { merged: MergedReleases }) {
+// Two things were wrong with showing it all. It rendered every release Core sent
+// rather than the unacknowledged ones (see releasesSince), so a fully-current
+// operator opened it to a span reaching back days. And even correctly filtered,
+// a busy day is four releases, sixteen category headings and a dozen "Nothing
+// this time." lines between the reader and the two entries that matter.
+//
+// So the default is the shape of the news - how many releases, how much of what
+// kind - and the entries are one click away. Nobody opens a changelog to read
+// it end to end; they open it to find out whether anything concerns them.
+function MergedBlock({ merged, mandatory, expanded, onToggle }: {
+    merged: MergedReleases;
+    mandatory: boolean;
+    expanded: boolean;
+    onToggle: () => void;
+}) {
+    const filled = merged.categories.filter(c => c.entries.length > 0);
+    const total = filled.reduce((n, c) => n + c.entries.length, 0);
+
     return (
-        <section className="px-4 pt-4">
-            <div className="flex flex-wrap items-center gap-2 pb-1">
+        <section className="px-4 pt-4 pb-2">
+            <div className="flex flex-wrap items-center gap-2 pb-2">
                 <h3 className="text-sm font-display font-semibold text-(--base-09) font-mono">{merged.range}</h3>
                 {merged.count > 1 && (
                     <span className="badge badge-neutral">{merged.count} releases</span>
                 )}
-                {merged.required && <span className="badge badge-error">mandatory</span>}
+                {/* Earned by a component of the reader's being below a floor, not
+                    by a deadline existing somewhere in the window. */}
+                {mandatory && <span className="badge badge-error">mandatory</span>}
             </div>
-            {merged.categories.map(cat => {
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+                {filled.length === 0 ? (
+                    <span className="text-(--base-06)">No entries in these releases.</span>
+                ) : (
+                    filled.map(cat => (
+                        <span key={cat.key} className="inline-flex items-center gap-1.5">
+                            <span className={`font-mono text-[11px] font-semibold uppercase tracking-[0.06em] ${CATEGORY_STYLES[cat.key].color}`}>
+                                {cat.label}
+                            </span>
+                            <span className="text-(--base-07) tabular-nums">{cat.entries.length}</span>
+                        </span>
+                    ))
+                )}
+            </div>
+
+            {total > 0 && (
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    aria-expanded={expanded}
+                    className="mt-2 inline-flex items-center gap-1 text-[12px] text-(--base-07) hover:text-(--accent-light) transition-colors"
+                >
+                    <ChevronDown
+                        size={13}
+                        className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
+                    />
+                    {expanded ? 'Hide details' : `Show details (${total})`}
+                </button>
+            )}
+
+            {expanded && merged.categories.map(cat => {
                 const style = CATEGORY_STYLES[cat.key];
                 const isBreaking = cat.key === 'breaking';
                 // An empty Breaking section gets no box: a highlighted frame
                 // around "Nothing this time." shouts about the absence of news.
                 const framed = isBreaking && cat.entries.length > 0;
+                if (cat.entries.length === 0) return null;
                 return (
                     <div
                         key={cat.key}
-                        className={`mt-2 ${framed ? 'rounded-md border border-(--error)/40 bg-(--error)/5 p-3' : ''}`}
+                        className={`mt-3 ${framed ? 'rounded-md border border-(--error)/40 bg-(--error)/5 p-3' : ''}`}
                     >
                         <div className="flex items-center gap-2">
                             <div className={`font-mono text-[11px] font-semibold uppercase tracking-[0.06em] ${style.color}`}>
@@ -177,37 +225,20 @@ function MergedBlock({ merged }: { merged: MergedReleases }) {
                                 <span className="badge badge-error text-[10px]">please read</span>
                             )}
                         </div>
-                        {cat.entries.length === 0 ? (
-                            // Written out rather than omitted: an absent heading
-                            // reads as "nobody filled this in", and for a Security
-                            // section those are very different statements.
-                            <div className="text-[13px] text-(--base-05) mt-0.5">Nothing this time.</div>
-                        ) : (
-                            <ul className="mt-0.5 space-y-1">
-                                {cat.entries.map((e, i) => (
-                                    <li key={i} className="flex items-start gap-2.5">
-                                        <span className={`shrink-0 mt-[7px] w-1.5 h-1.5 rounded-full ${style.dot}`} aria-hidden="true" />
-                                        <div className="min-w-0 text-[13px] text-(--base-08) leading-relaxed">
-                                            {e.text}
-                                            {(e.services?.length ?? 0) > 0 && (
-                                                // The services an entry names mean "update THIS to get
-                                                // it", which is the actionable half of the line. They
-                                                // were grey text at 10px and read as a footnote; the
-                                                // shared badge is the same thing the rest of the panel
-                                                // uses to say "this is a thing, not prose".
-                                                <span className="inline-flex flex-wrap gap-1 align-middle ml-1.5">
-                                                    {e.services!.map(svc => (
-                                                        <span key={svc} className="badge badge-neutral">
-                                                            {serviceLabel(svc)}
-                                                        </span>
-                                                    ))}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
+                        <ul className="mt-1.5 space-y-1.5">
+                            {cat.entries.map((e, i) => (
+                                <li key={i} className="text-[12px] leading-relaxed text-(--base-08)">
+                                    {e.text}
+                                    {(e.services?.length ?? 0) > 0 && (
+                                        <span className="ml-1.5 inline-flex flex-wrap gap-1 align-middle">
+                                            {e.services!.map(svc => (
+                                                <code key={svc} className="badge badge-neutral text-[10px]">{svc}</code>
+                                            ))}
+                                        </span>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
                     </div>
                 );
             })}
@@ -225,6 +256,11 @@ export default function UpdatesBell() {
     const [required, setRequired] = useState<UpdateRequirement[]>([]);
     const [latest, setLatest] = useState<string | undefined>();
     const [seen, setSeen] = useState<string | undefined>();
+    // What had been acknowledged when the modal was OPENED, not what is
+    // acknowledged now. Opening marks everything seen, so reading the live value
+    // here would empty the list the click was meant to show.
+    const [seenAtOpen, setSeenAtOpen] = useState<string | undefined>();
+    const [expanded, setExpanded] = useState(false);
     const closeRef = useRef<HTMLButtonElement>(null);
 
     const refresh = useCallback(async () => {
@@ -264,6 +300,8 @@ export default function UpdatesBell() {
     // release exists is not the same as having updated, and a button that goes
     // quiet when you look at it stops reporting the thing it is for.
     const openModal = () => {
+        setSeenAtOpen(seen);
+        setExpanded(false);
         setOpen(true);
         if (latest && latest !== seen) {
             setSeen(latest);
@@ -357,16 +395,33 @@ export default function UpdatesBell() {
                                 </>
                             )}
 
-                            {releases.length === 0 ? (
-                                <div className="px-4 py-10 text-sm text-(--base-06) text-center">
-                                    No releases published yet.
-                                </div>
-                            ) : (
-                                (() => {
-                                    const merged = mergeReleases(releases);
-                                    return merged ? <MergedBlock merged={merged} /> : null;
-                                })()
-                            )}
+                            {(() => {
+                                if (releases.length === 0) {
+                                    return (
+                                        <div className="px-4 py-10 text-sm text-(--base-06) text-center">
+                                            No releases published yet.
+                                        </div>
+                                    );
+                                }
+                                const fresh = releasesSince(releases, seenAtOpen);
+                                if (fresh.length === 0) {
+                                    return (
+                                        <div className="px-4 py-10 text-sm text-(--base-06) text-center">
+                                            You have read everything published so far.
+                                        </div>
+                                    );
+                                }
+                                const merged = mergeReleases(fresh);
+                                if (!merged) return null;
+                                return (
+                                    <MergedBlock
+                                        merged={merged}
+                                        mandatory={mandatoryApplies(required)}
+                                        expanded={expanded}
+                                        onToggle={() => setExpanded(v => !v)}
+                                    />
+                                );
+                            })()}
                         </div>
                     </div>
                 </div>

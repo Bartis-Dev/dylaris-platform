@@ -203,3 +203,33 @@ export function formatDeadline(iso: string): string {
         hour: '2-digit', minute: '2-digit',
     });
 }
+
+// releasesSince narrows the list to what the reader has NOT acknowledged.
+//
+// The bell used to render everything Core sent - twenty releases - regardless of
+// the seen marker sitting right beside them in the same response. An operator
+// who was fully current still opened it to a span reaching back days. The block
+// that rendered them already said "everything the reader has not seen"; that was
+// the intent, written as though it were the implementation.
+//
+// An unknown marker shows EVERYTHING rather than nothing. The two failure
+// directions are not equal: one release too many costs a moment, one too few
+// costs the release - and a marker naming a version that has aged out of the
+// window is exactly the case where guessing wrong is easy.
+export function releasesSince(releases: Release[], seen?: string): Release[] {
+    if (!seen) return releases;
+    const at = releases.findIndex(r => r.version === seen);
+    if (at < 0) return releases;
+    return releases.slice(0, at);
+}
+
+// mandatoryApplies decides whether the red badge is earned.
+//
+// It reads what Core computed per COMPONENT, not what the release notes carry. A
+// deadline in the window means someone once had to act; a `required` entry means
+// something this reader runs is below the floor right now. Deriving the badge
+// from the notes kept it lit for people who had already updated - which is how a
+// red badge stops meaning anything.
+export function mandatoryApplies(required: { service: string }[] | undefined): boolean {
+    return (required?.length ?? 0) > 0;
+}

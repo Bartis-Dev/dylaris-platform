@@ -74,7 +74,10 @@ function MenuEntry({
     );
 }
 
-export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }) {
+// compact is the rail-width sidebar: a full-width button reading "Create" in a
+// 56px column is the text that gets clipped rather than the control that gets
+// smaller. Same menu, same position, just the glyph.
+export default function CreateMenu({ onNewServer, compact = false }: { onNewServer?: () => void; compact?: boolean }) {
     const { user, featureFlags, entitlement, gatewayEnabled, byonEnabled } = useAppData();
     const [open, setOpen] = useState(false);
     const [deployableNodes, setDeployableNodes] = useState<number | null>(null);
@@ -135,22 +138,31 @@ export default function CreateMenu({ onNewServer }: { onNewServer?: () => void }
     };
 
     return (
-        <div ref={wrapRef} className="relative shrink-0 border-t border-(--base-03)">
+        <div ref={wrapRef} className={`relative shrink-0 ${compact ? '' : 'border-t border-(--base-03)'}`}>
             <button
                 type="button"
                 onClick={() => setOpen(v => !v)}
                 aria-expanded={open}
                 aria-haspopup="menu"
-                className={`btn w-full px-4 py-3 text-sm bg-transparent border-0 justify-start transition-colors ${
-                    open ? 'bg-(--base-03) text-(--base-09)' : 'text-(--accent-light) hover:bg-(--base-03)'
-                }`}
+                title={compact ? 'Create' : undefined}
+                aria-label={compact ? 'Create' : undefined}
+                className={`btn text-sm bg-transparent border-0 transition-colors ${
+                    compact
+                        ? 'w-9 h-9 p-0 justify-center rounded-md'
+                        : 'w-full px-4 py-3 justify-start'
+                } ${open ? 'bg-(--base-03) text-(--base-09)' : 'text-(--accent-light) hover:bg-(--base-03)'}`}
             >
-                <Plus size={16} />
-                Create
+                <Plus size={compact ? 18 : 16} />
+                {!compact && 'Create'}
             </button>
 
             {open && (
-                <div className="absolute bottom-full left-2 right-2 mb-2 z-40 dropdown-menu p-1.5 animate-fade-in" role="menu">
+                <div
+                    className={`absolute bottom-full mb-2 z-40 dropdown-menu p-1.5 animate-fade-in ${
+                        compact ? 'left-0 w-72' : 'left-2 right-2'
+                    }`}
+                    role="menu"
+                >
                     <MenuEntry
                         icon={<Server size={15} />}
                         title="New server"
