@@ -34,6 +34,19 @@ type WailsBindings = {
   OpenUpdateDownload?: (token: string) => void;
   ApplyUpdate?: (token: string) => Promise<void>;
   ClearLocalData?: (token: string) => Promise<void>;
+  ListPanels?: () => Promise<{ panels: SavedPanel[]; active: string }>;
+  SavePanels?: (token: string, panels: SavedPanel[], active: string) => Promise<void>;
+  SwitchPanel?: (token: string, url: string) => Promise<void>;
+};
+
+// One saved panel. name is the resolved label (the host when nothing was typed);
+// rawName is what the user actually entered, so editing does not turn a blank
+// name into the host permanently.
+type SavedPanel = {
+  name: string;
+  rawName?: string;
+  url: string;
+  apiUrl?: string;
 };
 
 declare global {
@@ -78,6 +91,9 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [savingError, setSavingError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
+  const [panels, setPanels] = useState<SavedPanel[]>([]);
+  const [activePanel, setActivePanel] = useState('');
+  const [adding, setAdding] = useState('');
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [gate, setGate] = useState<UpdateGate | null>(null);
 
@@ -114,6 +130,8 @@ export default function App() {
         setApiDefaultUrl(apiFallback);
         // GetAPIURL falls back to the build default; "" only when none is compiled in.
         setApiInputUrl((await bindings?.GetAPIURL?.()) ?? apiFallback);
+        const list = await bindings?.ListPanels?.();
+        if (list) { setPanels(list.panels ?? []); setActivePanel(list.active ?? ''); }
         bindings?.GetUpdateInfo?.().then(u => setUpdate(u)).catch(() => {});
         bindings?.GetUpdateGate?.().then(g => setGate(g)).catch(() => {});
       } catch (err) {
@@ -197,6 +215,57 @@ export default function App() {
       )}
     </>
   );
+
+  // The panel list. Saved as a WHOLE rather than per entry: the settings page
+  // edits it as a list, and add/remove/rename as separate calls would let the
+  // stored order and the active choice disagree halfway through an edit.
+  const persistPanels = async (next: SavedPanel[], active: string) => {
+    setSavingError(null);
+    try {
+      await getBindings()?.SavePanels?.(shellToken, next, active);
+    } catch (err) {
+      setSavingError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+    setPanels(next);
+    setActivePanel(active);
+    return true;
+  };
+
+  // Switching does NOT sign you out. The shell keeps one cookie jar per host, so
+  // the panel you are leaving stays signed in and coming back is instant - which
+  // is the whole reason a list beats an edit box.
+  const switchTo = async (url: string) => {
+    setSavingError(null);
+    try {
+      await getBindings()?.SwitchPanel?.(shellToken, url);
+    } catch (err) {
+      setSavingError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    window.location.href = '/';
+  };
+
+  const addPanel = async () => {
+    const url = adding.trim();
+    if (!url) return;
+    if (await persistPanels([...panels, { name: url, url }], activePanel || url)) setAdding('');
+  };
+
+  const removePanel = async (url: string) => {
+    const next = panels.filter(p => p.url !== url);
+    if (next.length === 0) {
+      setSavingError('Keep at least one panel.');
+      return;
+    }
+    // Removing the ACTIVE one has to move it, or the window would go on
+    // proxying a panel the list no longer contains.
+    await persistPanels(next, url === activePanel ? next[0].url : activePanel);
+  };
+
+  const renamePanel = (url: string, name: string) => {
+    setPanels(prev => prev.map(p => (p.url === url ? { ...p, rawName: name, name: name || p.url } : p)));
+  };
 
   // The session lives in the app shell, not in the webview, so clearing site
   // data inside the Panel would reach nothing. This is the only way to drop a
@@ -301,6 +370,58 @@ export default function App() {
         </div>
       )}
 
+      {panels.length > 1 && (
+        <div className="settings-card" style={{ marginBottom: '1rem' }}>
+          <div className="settings-title">Panels</div>
+          <div style={{ fontSize: '0.8em', opacity: 0.7, marginTop: '0.3rem' }}>
+            Each keeps its own sign-in, so switching does not log you out.
+          </div>
+          <ul style={{ listStyle: 'none', padding: 0, margin: '0.75rem 0 0' }}>
+            {panels.map(p => {
+              const active = p.url === activePanel;
+              return (
+                <li
+                  key={p.url}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                    padding: '0.45rem 0.55rem', borderRadius: '6px',
+                    background: active ? 'rgba(112,72,200,0.15)' : 'transparent',
+                    border: active ? '1px solid rgba(112,72,200,0.45)' : '1px solid transparent',
+                  }}
+                >
+                  <input
+                    type="text"
+                    className="url-input"
+                    style={{ flex: 1, minWidth: 0, margin: 0, padding: '0.3rem 0.5rem', fontSize: '0.85em' }}
+                    value={p.rawName ?? ''}
+                    placeholder={p.url}
+                    onChange={e => renamePanel(p.url, e.target.value)}
+                    onBlur={() => persistPanels(panels, activePanel)}
+                    aria-label={`Name for ${p.url}`}
+                  />
+                  {active ? (
+                    <span style={{ fontSize: '0.75em', opacity: 0.8, whiteSpace: 'nowrap' }}>in use</span>
+                  ) : (
+                    <button type="button" className="btn btn-secondary" style={{ padding: '0.3rem 0.6rem', fontSize: '0.8em' }} onClick={() => switchTo(p.url)}>
+                      Switch
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: '0.3rem 0.55rem', fontSize: '0.8em' }}
+                    onClick={() => removePanel(p.url)}
+                    aria-label={`Remove ${p.url}`}
+                  >
+                    Remove
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
       <div className="settings-card">
         <div className="settings-title">Panel URL</div>
         <input
@@ -360,6 +481,23 @@ export default function App() {
           </button>
           <button type="button" className="btn btn-primary" onClick={handleSave}>
             Save &amp; connect
+          </button>
+        </div>
+
+        <div className="settings-title" style={{ marginTop: '1.25rem' }}>Add another panel</div>
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
+          <input
+            type="text"
+            className="url-input"
+            style={{ flex: 1, minWidth: 0, margin: 0 }}
+            value={adding}
+            onChange={e => setAdding(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') addPanel(); }}
+            placeholder="https://panel.example.com"
+            aria-label="URL of another panel"
+          />
+          <button type="button" className="btn btn-secondary" onClick={addPanel} disabled={!adding.trim()}>
+            Add
           </button>
         </div>
       </div>

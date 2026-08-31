@@ -14,6 +14,9 @@ Newest release first. The format is fixed and checked in CI - see the
 - The Dylaris Store page shows the subscription itself: which units, how much of
   the traffic and backup allowance is gone, and two switches deciding whether
   running out bills you or stops you. `core`
+- The Beam desktop app can hold several panels and switch between them, each
+  keeping its own sign-in, and its settings are reachable from a small button you
+  can drag along the bottom of the window.
 
 ### Breaking
 - Nothing.

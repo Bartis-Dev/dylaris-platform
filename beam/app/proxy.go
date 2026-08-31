@@ -232,7 +232,7 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 			// Take the session out of the response before anything else looks
 			// at it; the webview keeps only the readable sign-in hint.
 			captureShellCookies(resp, app.panelCookies(), app.resolvePanelTarget())
-			app.rememberReadableCookies(resp)
+			app.rememberReadableCookies(app.resolvePanelTarget(), resp)
 			// The Panel ships no security headers of its own, so beam is
 			// the only place a CSP / framing policy is applied. Drop the
 			// report-only variant and X-Frame-Options (the latter is
@@ -272,9 +272,12 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 				// Replay the readable cookies from the page. See
 				// readableCookieScript: the Set-Cookie header above may or may
 				// not reach WebView2's cookie store, and this path needs none.
-				if script := app.readableCookieScript(nonce); script != "" {
+				if script := app.readableCookieScript(app.resolvePanelTarget(), nonce); script != "" {
 					body = injectBeforeBodyEnd(body, script)
 				}
+				// The only route into Beam's own settings while the panel is
+				// reachable; see launcher.go.
+				body = injectBeforeBodyEnd(body, launcherTag(nonce))
 				resp.Body = io.NopCloser(bytes.NewReader(body))
 				resp.ContentLength = int64(len(body))
 				resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
@@ -638,22 +641,26 @@ func captureShellCookies(resp *http.Response, jar http.CookieJar, target *url.UR
 // Deletions are kept rather than dropped: a "Max-Age=0" line is the instruction
 // that clears a stale copy, and forgetting it would leave the page believing it
 // is signed in after a logout.
-func (a *App) rememberReadableCookies(resp *http.Response) {
+func (a *App) rememberReadableCookies(target *url.URL, resp *http.Response) {
 	values := resp.Header.Values("Set-Cookie")
 	if len(values) == 0 {
 		return
 	}
+	key := panelKey(target)
 	a.readableMu.Lock()
 	defer a.readableMu.Unlock()
 	if a.readable == nil {
-		a.readable = map[string]string{}
+		a.readable = map[string]map[string]string{}
+	}
+	if a.readable[key] == nil {
+		a.readable[key] = map[string]string{}
 	}
 	for _, v := range values {
 		name, _, ok := strings.Cut(v, "=")
 		if !ok {
 			continue
 		}
-		a.readable[strings.TrimSpace(name)] = v
+		a.readable[key][strings.TrimSpace(name)] = v
 	}
 }
 
@@ -669,14 +676,15 @@ func (a *App) rememberReadableCookies(resp *http.Response) {
 // Core chose, but this writes them into a <script> element, and the way that
 // bites is a value containing "</script>" - so the encoding covers the tag, not
 // only the quotes.
-func (a *App) readableCookieScript(nonce string) string {
+func (a *App) readableCookieScript(target *url.URL, nonce string) string {
 	a.readableMu.Lock()
 	defer a.readableMu.Unlock()
-	if len(a.readable) == 0 {
+	held := a.readable[panelKey(target)]
+	if len(held) == 0 {
 		return ""
 	}
-	lines := make([]string, 0, len(a.readable))
-	for _, v := range a.readable {
+	lines := make([]string, 0, len(held))
+	for _, v := range held {
 		enc, err := json.Marshal(v)
 		if err != nil {
 			continue

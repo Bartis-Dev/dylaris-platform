@@ -17,6 +17,9 @@ Newest release first. The format is fixed and checked in CI - see the
 - The panel now shows your subscription: how much of your traffic and backup
   allowance is used, and whether going over bills you or stops you. Both
   switches can be turned on and off from there.
+- Beam can hold several panels and switch between them without signing in again,
+  and its own settings now open from a small button you can drag along the bottom
+  of the window. Update the app to get it.
 
 ### Breaking
 - Nothing.

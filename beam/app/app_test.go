@@ -65,8 +65,12 @@ func TestSavePanelURLTokenGate(t *testing.T) {
 	if err := a.SavePanelURL("good-token", "https://panel.example.test"); err != nil {
 		t.Fatalf("SavePanelURL rejected a good token: %v", err)
 	}
-	if got := loadSettings().PanelURL; got != "https://panel.example.test" {
-		t.Errorf("saved PanelURL = %q, want https://panel.example.test", got)
+	// Read through activePanel rather than off the legacy field: the setting
+	// moved into a LIST when the app learned about several panels, and the
+	// legacy field is now only a migration source. Asserting the old field would
+	// be asserting the storage shape rather than what the app resolves.
+	if got := loadSettings().activePanel().URL; got != "https://panel.example.test" {
+		t.Errorf("active panel = %q, want https://panel.example.test", got)
 	}
 }
 

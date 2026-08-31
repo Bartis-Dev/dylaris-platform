@@ -55,11 +55,13 @@ type App struct {
 	cookieMu sync.Mutex
 	cookies  http.CookieJar
 
-	// readable holds the Set-Cookie lines the webview IS allowed to have,
-	// keyed by cookie name, so they can be replayed into the page; see
-	// readableCookieScript in proxy.go.
+	// readable holds the Set-Cookie lines the webview IS allowed to have, keyed
+	// by PANEL and then by cookie name, so they can be replayed into the page;
+	// see readableCookieScript in proxy.go. Per panel because the app can hold
+	// several: one flat map would write panel A's sign-in hint into panel B's
+	// document, telling B's login screen a session exists when none does.
 	readableMu sync.Mutex
-	readable   map[string]string
+	readable   map[string]map[string]string
 
 	// healthCheckStop is closed when the current health-check goroutine
 	// should exit (Logout, SetSession on a new account). nil while no
@@ -113,8 +115,15 @@ type App struct {
 // runs. Lives at $UserConfigDir/dylaris-beam/config.json — the user's
 // Panel URL choice survives reinstalls of the same major version.
 type userSettings struct {
+	// PanelURL and APIURL are the pre-list schema, kept because installs in the
+	// field have them on disk. Read only when Panels is empty; see panelList.
 	PanelURL string `json:"panelUrl"`
 	APIURL   string `json:"apiUrl"` // Core API origin ("" = same-origin /api)
+
+	// Panels is every panel the app knows about, and Active is which of them the
+	// window is showing (by URL, so reordering the list does not move it).
+	Panels []savedPanel `json:"panels,omitempty"`
+	Active string       `json:"activePanel,omitempty"`
 }
 
 // settingsPath returns the OS-appropriate config file location:
@@ -166,8 +175,12 @@ func saveSettings(s userSettings) error {
 //
 // May return "" when nothing is configured; the redirector then shows Settings.
 func (a *App) GetPanelURL() string {
-	if saved := strings.TrimSpace(loadSettings().PanelURL); saved != "" {
-		return saved
+	// The ACTIVE entry of the list, which a pre-list config migrates into. Every
+	// caller that used to read the single setting - the proxy target, the CSP
+	// connect-src, the deploy kit's coreOrigin - follows a switch through here
+	// without knowing the list exists.
+	if active := strings.TrimSpace(loadSettings().activePanel().URL); active != "" {
+		return active
 	}
 	if a.panelURL != "" {
 		return a.panelURL
@@ -200,10 +213,27 @@ func (a *App) SavePanelURL(token, url string) error {
 	// (e.g. "/login") never produces a double-slash.
 	url = strings.TrimRight(url, "/")
 	s := loadSettings()
-	s.PanelURL = url
-	// The shell holds the session for the panel it was pointed at. Pointing it
-	// somewhere else must not carry that credential along: at best the new host
-	// rejects it, at worst it is sent to someone who should never see it.
+	// Writes into the LIST, not beside it. Two places holding "which panel" is
+	// two places that can disagree, and the one the proxy reads would win
+	// silently.
+	list := s.panelList()
+	active := s.activePanel()
+	replaced := false
+	for i := range list {
+		if list[i].URL == active.URL {
+			list[i].URL = url
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		list = append(list, savedPanel{URL: url})
+	}
+	s.Panels, s.Active = list, url
+	s.PanelURL, s.APIURL = "", ""
+	// The shell holds the session for the panel it was pointed at. Repointing an
+	// entry must not carry that credential to a different host: at best the new
+	// one rejects it, at worst it is sent to someone who should never see it.
 	a.forgetPanelSession()
 	return saveSettings(s)
 }
@@ -229,7 +259,7 @@ func (a *App) ClearLocalData(token string) error {
 // "" means the Panel talks to the API same-origin (/api) and needs no extra
 // connect-src entry.
 func (a *App) GetAPIURL() string {
-	if saved := strings.TrimSpace(loadSettings().APIURL); saved != "" {
+	if saved := strings.TrimSpace(loadSettings().activePanel().APIURL); saved != "" {
 		return saved
 	}
 	if a.apiURL != "" {
@@ -257,7 +287,21 @@ func (a *App) SaveAPIURL(token, url string) error {
 	}
 	url = strings.TrimRight(strings.TrimSpace(url), "/")
 	s := loadSettings()
-	s.APIURL = url
+	// The override belongs to the ACTIVE panel; the entries are different
+	// deployments, so a global one would follow the user to a panel it is wrong
+	// for.
+	list := s.panelList()
+	active := s.activePanel()
+	for i := range list {
+		if list[i].URL == active.URL {
+			list[i].APIURL = url
+		}
+	}
+	s.Panels, s.Active = list, active.URL
+	s.PanelURL, s.APIURL = "", ""
+	if len(list) == 0 {
+		s.APIURL = url
+	}
 	return saveSettings(s)
 }
 
@@ -1305,4 +1349,91 @@ func (a *App) forgetPanelSession() {
 	a.cookieMu.Lock()
 	defer a.cookieMu.Unlock()
 	a.cookies = nil
+}
+
+// The panel list, exposed to the app-shell settings page.
+//
+// GetPanelURL and GetAPIURL now answer for the ACTIVE entry, so every existing
+// caller - the proxy target, the CSP connect-src, the deploy-kit's coreOrigin -
+// follows a switch without knowing the list exists.
+
+// ListPanels returns the saved panels and which one is active.
+func (a *App) ListPanels() map[string]interface{} {
+	s := loadSettings()
+	list := s.panelList()
+	out := make([]map[string]string, 0, len(list))
+	for _, p := range list {
+		out = append(out, map[string]string{
+			"name":    p.DisplayName(),
+			"rawName": p.Name,
+			"url":     p.URL,
+			"apiUrl":  p.APIURL,
+		})
+	}
+	return map[string]interface{}{"panels": out, "active": s.activePanel().URL}
+}
+
+// SavePanels replaces the whole list and the active choice in one write.
+//
+// One call rather than add/remove/rename, because the settings page edits the
+// list as a whole and a partial API would let the two disagree about which entry
+// is active mid-edit. Shell-token gated like every other side-effecting binding:
+// a compromised proxied panel must not be able to add an entry and point the app
+// at it.
+func (a *App) SavePanels(token string, panels []savedPanel, active string) error {
+	if !a.checkShellToken(token) {
+		return fmt.Errorf("unauthorized")
+	}
+	cleaned := make([]savedPanel, 0, len(panels))
+	seen := map[string]bool{}
+	for _, p := range panels {
+		u, err := normalisePanelURL(p.URL)
+		if err != nil {
+			return err
+		}
+		if seen[strings.ToLower(u)] {
+			// Two entries for one URL would share a session and a jar while
+			// looking like separate places to be signed in.
+			continue
+		}
+		seen[strings.ToLower(u)] = true
+		api := strings.TrimRight(strings.TrimSpace(p.APIURL), "/")
+		if api != "" {
+			if _, err := normalisePanelURL(api); err != nil {
+				return err
+			}
+		}
+		cleaned = append(cleaned, savedPanel{Name: strings.TrimSpace(p.Name), URL: u, APIURL: api})
+	}
+	if len(cleaned) == 0 {
+		return fmt.Errorf("keep at least one panel")
+	}
+
+	s := loadSettings()
+	s.Panels = cleaned
+	s.Active = strings.TrimRight(strings.TrimSpace(active), "/")
+	// The legacy single field is cleared once a list exists, so a future read
+	// cannot resurrect a panel that was removed here.
+	s.PanelURL, s.APIURL = "", ""
+	return saveSettings(s)
+}
+
+// SwitchPanel points the window at one of the saved panels.
+//
+// It does NOT clear any session. The shell holds one jar per host, so the
+// session for the panel being left stays valid and switching back is instant -
+// which is the whole reason the list is worth having rather than an edit box.
+func (a *App) SwitchPanel(token, panelURL string) error {
+	if !a.checkShellToken(token) {
+		return fmt.Errorf("unauthorized")
+	}
+	target := strings.TrimRight(strings.TrimSpace(panelURL), "/")
+	s := loadSettings()
+	for _, p := range s.panelList() {
+		if p.URL == target {
+			s.Active = target
+			return saveSettings(s)
+		}
+	}
+	return fmt.Errorf("that panel is not in the list")
 }

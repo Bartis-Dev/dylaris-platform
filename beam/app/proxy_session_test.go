@@ -125,9 +125,9 @@ func TestTheReadableCookiesAreAlsoWrittenFromThePage(t *testing.T) {
 	resp.Header.Add("Set-Cookie", "dylaris_session=secret-jwt; Path=/; HttpOnly; Secure")
 	resp.Header.Add("Set-Cookie", "dylaris_signed_in=1; Path=/; Max-Age=86400; Secure")
 	captureShellCookies(resp, a.panelCookies(), target)
-	a.rememberReadableCookies(resp)
+	a.rememberReadableCookies(target, resp)
 
-	script := a.readableCookieScript("nonce123")
+	script := a.readableCookieScript(target, "nonce123")
 	if !strings.Contains(script, "dylaris_signed_in=1") {
 		t.Errorf("the sign-in hint is not replayed into the page: %q", script)
 	}
@@ -141,8 +141,8 @@ func TestTheReadableCookiesAreAlsoWrittenFromThePage(t *testing.T) {
 	a2 := &App{}
 	bad := &http.Response{Header: http.Header{}}
 	bad.Header.Add("Set-Cookie", `x=</script><script>alert(1)</script>; Path=/`)
-	a2.rememberReadableCookies(bad)
-	if strings.Contains(a2.readableCookieScript(""), "<script>alert(1)") {
+	a2.rememberReadableCookies(target, bad)
+	if strings.Contains(a2.readableCookieScript(target, ""), "<script>alert(1)") {
 		t.Error("a cookie value broke out of the injected script")
 	}
 }
@@ -151,7 +151,8 @@ func TestTheReadableCookiesAreAlsoWrittenFromThePage(t *testing.T) {
 // response is noise that a strict CSP then has to be widened for.
 func TestNoSessionInjectsNoScript(t *testing.T) {
 	a := &App{}
-	if got := a.readableCookieScript("n"); got != "" {
+	target, _ := url.Parse("https://panel.example.com/")
+	if got := a.readableCookieScript(target, "n"); got != "" {
 		t.Errorf("a script was injected with no cookies held: %q", got)
 	}
 }
