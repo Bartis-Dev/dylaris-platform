@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { X, Server, Network, Copy, Check, ExternalLink, Info } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { coreOrigin } from '@/lib/api/core';
+import { isWails } from '@/lib/adapters';
 
 // ---------------------------------------------------------------------------
 // "How do I add a node?" — the admin answer.
@@ -117,6 +118,26 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                         <X size={18} />
                     </button>
                 </div>
+
+                {isWails() && (
+                    <div className="px-6 pt-4 shrink-0">
+                        {/* Only inside Beam. A browser cannot know what is
+                            installed on the machine reading this page, so
+                            everywhere else the honest answer is the instructions
+                            below - which is what this modal already is. */}
+                        <button
+                            type="button"
+                            onClick={() => { window.location.href = '/__beam/#deploy'; }}
+                            className="btn btn-primary btn-sm w-full justify-center"
+                        >
+                            <Server size={13} /> Run a node on THIS machine
+                        </button>
+                        <p className="text-xs text-(--base-06) mt-1.5">
+                            Beam checks Docker here and writes the compose file for you. The steps
+                            below stay available for any other machine.
+                        </p>
+                    </div>
+                )}
 
                 {showExternal && (
                     <div className="px-6 pt-4 shrink-0">

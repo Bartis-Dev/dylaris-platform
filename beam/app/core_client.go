@@ -164,6 +164,63 @@ func (c *CoreClient) GetBeamConfig() (*BeamConfig, error) {
 	}, nil
 }
 
+// NodeEnrollToken mints a single-use pairing token for a NEW node.
+//
+// Minted here rather than copied out of the panel by hand: the shell already
+// holds the signed-in session, and a token the user has to select, copy and
+// paste is a token that ends up in a clipboard, a chat window and a screenshot.
+// It is single-use and expires, so the copy written into the compose file is
+// spent the moment the node pairs.
+//
+// Core applies the same entitlement and node-limit checks it applies to the
+// panel's own button - this is the same endpoint, with the same session.
+func (c *CoreClient) NodeEnrollToken(label string) (*NodeEnrollToken, error) {
+	body, err := json.Marshal(map[string]string{"label": label})
+	if err != nil {
+		return nil, err
+	}
+	data, err := c.post("/nodes/enroll-token", body)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Success            bool   `json:"success"`
+		Token              string `json:"token"`
+		GRPCTLSFingerprint string `json:"grpcTlsFingerprint"`
+		Message            string `json:"message"`
+		Error              string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Success || resp.Token == "" {
+		// Core's own words: the refusals that matter here are "BYON is not
+		// enabled" and "node limit reached", and both are things the user can act
+		// on only if they are told which one it was.
+		if msg := firstNonEmpty(resp.Message, resp.Error); msg != "" {
+			return nil, fmt.Errorf("%s", msg)
+		}
+		return nil, fmt.Errorf("core did not return an enroll token")
+	}
+	return &NodeEnrollToken{Token: resp.Token, TLSFingerprint: resp.GRPCTLSFingerprint}, nil
+}
+
+// NodeEnrollToken is a freshly minted pairing token and the fingerprint to pin,
+// which is empty when Core runs its control channel without TLS.
+type NodeEnrollToken struct {
+	Token          string `json:"token"`
+	TLSFingerprint string `json:"tlsFingerprint"`
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func (c *CoreClient) GetBeamServers() ([]BeamServer, error) {
 	data, err := c.get("/beam/servers")
 	if err != nil {

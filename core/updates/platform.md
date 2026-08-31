@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.20
+
+### Features
+- Beam can set a node up on the machine it is running on. It checks whether
+  Docker is installed, running and reachable by your account, says which of those
+  failed and what to do about it, then reserves a pairing token and writes a
+  ready-to-run compose file - starting it for you, or leaving it for you to read
+  first.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.31.19
 
 ### Features
