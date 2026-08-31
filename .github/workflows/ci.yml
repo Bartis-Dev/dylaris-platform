@@ -563,6 +563,11 @@ jobs:
             ENTRY_PATH=./core/
             SERVICE=core
             RUN_AS=dylaris
+            # Without this the Dockerfile default (panel-none) wins and the
+            # image ships WITHOUT the panel - it boots, serves the API, and
+            # answers every page with the placeholder. Asserted by
+            # TestCIBuildsCoreWithThePanel so it cannot be dropped silently.
+            PANEL_STAGE=panel-build
             RELEASE_VERSION=${{ needs.detect-changes.outputs.version }}
 
   build-node:

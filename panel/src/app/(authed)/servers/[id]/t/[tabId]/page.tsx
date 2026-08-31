@@ -12,11 +12,12 @@ import { Skeleton } from '@/components/Skeleton';
 // dynamic renderer for custom tabs. Loads the tab metadata, then either:
 //  - direct: embeds the configured URL in an iframe (open_in_panel=true) or
 //    shows a landing card with a popout button (false).
-//  - proxied, surface tab|both: mints the dyl_tabproxy cookie on the tab's OWN
-//    host (core/handlers/tab_proxy_host.go HostMint) and then embeds that host.
-//    The iframe src never carries a token, and the container runs on an origin
-//    that is not the panel's, so its JavaScript cannot read the session token
-//    out of the panel origin's localStorage.
+//  - proxied, surface tab|both: gets a ticket from Core on this origin, has the
+//    tab's OWN host store it as that host's cookie
+//    (core/handlers/tab_proxy_host.go HostMint), and then embeds that host. The
+//    iframe src never carries a token, and the container runs on an origin that
+//    is not the panel's, so its JavaScript reaches neither these pages nor the
+//    session cookie, which is host-only to the panel's host.
 //  - proxied, surface page: not embeddable here, points at the share link.
 // Reacts to server_tabs.changed SSE so edits in another tab refresh here
 // without reload.
@@ -79,7 +80,8 @@ export default function ServerCustomTabPage() {
         // never tear down an iframe that is already loaded and working, so
         // it just leaves the state alone and lets the next interval tick retry.
         const mint = async (isInitial: boolean) => {
-            const res = await mintTabProxyAuth(tab?.proxyOrigin || '');
+            if (!tab) return;
+            const res = await mintTabProxyAuth(tab);
             if (cancelled) return;
             if (res.success) {
                 setProxyAuth('ready');

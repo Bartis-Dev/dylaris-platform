@@ -23,6 +23,12 @@ services:
     environment:
       API_PORT: "25500"
       FRONTEND_URL: "${FRONTEND_URL:-http://localhost:25500}"
+      # EMPTY for every normal deployment: Core serves the panel, so the API is
+      # same-origin and the panel finds it without being told. Set it only if
+      # you terminate the API on a second hostname, and only for non-browser
+      # callers - the session cookie is host-only and does not cross that split.
+      # Core renders this into the page config AND the CSP's connect-src.
+      PANEL_API_URL: "${PANEL_API_URL:-}"
       JWT_SECRET: "${JWT_SECRET}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       # The gateway Hub's internal URL, so the panel's DNS form can be forwarded

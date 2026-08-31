@@ -53,3 +53,37 @@ func TestWarnTabProxySuffixNotSameSite(t *testing.T) {
 		})
 	}
 }
+
+// The split-hostname layout is documented as still supported, and for a
+// non-browser client it is. For a BROWSER it stopped working the moment the
+// session became a cookie: the cookie is host-only to whichever host issued it,
+// and a cross-origin fetch neither sends nor stores one here.
+//
+// The failure looks exactly like a broken server - the panel loads, the login
+// form submits, everything after is 401 - so the only thing standing between an
+// operator and an afternoon is this line at boot. The test is on the predicate
+// rather than the wording: it must fire on a real split and stay quiet on every
+// shape that is not one.
+func TestPanelAPIURLSplitDetection(t *testing.T) {
+	cases := []struct {
+		name, frontend, api string
+		split               bool
+	}{
+		{"unset - the normal deployment", "https://panel.example.com", "", false},
+		{"same origin, spelled with the path", "https://panel.example.com", "https://panel.example.com/api", false},
+		{"same origin, different case", "https://panel.example.com", "https://Panel.Example.com/api", false},
+		{"a second hostname", "https://panel.example.com", "https://api.example.com/api", true},
+		// A scheme split is a split: http://panel and https://panel are
+		// different origins to a cookie as much as to CORS.
+		{"same host, other scheme", "https://panel.example.com", "http://panel.example.com/api", true},
+		{"a different port", "http://localhost:25510", "http://localhost:25500/api", true},
+		{"unparseable - say nothing rather than guess", "https://panel.example.com", "not a url", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := panelAPIURLIsAnotherOrigin(tc.frontend, tc.api); got != tc.split {
+				t.Errorf("split = %v, want %v", got, tc.split)
+			}
+		})
+	}
+}

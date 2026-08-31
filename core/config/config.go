@@ -215,7 +215,10 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	frontendURL := getEnv("FRONTEND_URL", "http://localhost:25510")
+	// 25500, and it used to be 25510. Core serves the panel itself now, so the
+	// panel's old port answers nothing - a default pointing at it would put a
+	// dead host in every verification and password-reset email.
+	frontendURL := getEnv("FRONTEND_URL", "http://localhost:25500")
 	// PANEL_API_URL is the browser-reachable API base, and it is EMPTY for the
 	// normal deployment: Core serves the panel itself, so the API is on the same
 	// origin and the panel resolves /api without being told. It stays supported
@@ -223,6 +226,7 @@ func LoadConfig() (Config, error) {
 	// on a separate hostname - and Core renders it into /config.js and into the
 	// CSP rather than a second container doing so from its own copy of the value.
 	panelAPIURL := strings.TrimSpace(getEnv("PANEL_API_URL", ""))
+	warnPanelAPIURLIsAnotherOrigin(frontendURL, panelAPIURL)
 	tabProxyHostSuffix := normalizeTabProxyHostSuffix(getEnv("TAB_PROXY_HOST_SUFFIX", ""))
 	warnTabProxySuffixNotSameSite(frontendURL, tabProxyHostSuffix)
 
@@ -444,6 +448,50 @@ func warnTabProxySuffixNotSameSite(frontendURL, suffix string) {
 		"The tab ticket cookie is set on the tab host and read back from it, which the browser only allows "+
 		"same-site, so every proxied tab will fail to authorize. Put the suffix under %s.",
 		suffix, u.Hostname(), tabSite, panelSite, panelSite)
+}
+
+// warnPanelAPIURLIsAnotherOrigin says so when the split-hostname layout is
+// configured, because a browser session cannot survive it any more.
+//
+// The session is a cookie now, host-only to the host that issued it. Point the
+// panel's API at a second hostname and the login response sets that cookie for
+// THAT host - which the browser will not even store, because a cross-origin
+// fetch without credentials:'include' discards Set-Cookie, and Core answers no
+// Access-Control-Allow-Credentials that would make including them work.
+//
+// The failure is quiet and looks like a broken server: the panel loads, the
+// login form submits, and every request afterwards is a 401. So it is named
+// here, once, at boot.
+//
+// It is a warning rather than a refusal because the variable still has a
+// legitimate use - a non-browser client pointed at a second hostname, and any
+// deployment where the two values are the same origin, which is not a split at
+// all.
+func warnPanelAPIURLIsAnotherOrigin(frontendURL, panelAPIURL string) {
+	if !panelAPIURLIsAnotherOrigin(frontendURL, panelAPIURL) {
+		return
+	}
+	log.Printf("config: PANEL_API_URL %q is a different origin than FRONTEND_URL %q. "+
+		"The panel session is a host-only cookie, so a browser will not carry it across that split: "+
+		"the panel will load and every API call will answer 401. Core serves the panel and the API "+
+		"together - leave PANEL_API_URL empty unless nothing but non-browser clients use it.",
+		panelAPIURL, frontendURL)
+}
+
+// panelAPIURLIsAnotherOrigin is the predicate on its own, so it can be asserted
+// without capturing a log line. Unparseable or empty is NOT a split: this
+// decides whether to warn, and a warning fired on a value nobody can read would
+// point at the wrong thing.
+func panelAPIURLIsAnotherOrigin(frontendURL, panelAPIURL string) bool {
+	if strings.TrimSpace(panelAPIURL) == "" {
+		return false
+	}
+	api, aerr := url.Parse(strings.TrimSpace(panelAPIURL))
+	fe, ferr := url.Parse(strings.TrimSpace(frontendURL))
+	if aerr != nil || ferr != nil || api.Host == "" || fe.Host == "" {
+		return false
+	}
+	return !strings.EqualFold(api.Scheme, fe.Scheme) || !strings.EqualFold(api.Host, fe.Host)
 }
 
 // normalizeTabProxyHostSuffix cleans TAB_PROXY_HOST_SUFFIX into the bare DNS

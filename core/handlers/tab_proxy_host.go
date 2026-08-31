@@ -6,6 +6,7 @@ import (
 	"html"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -209,19 +210,28 @@ func (h *ProxyHandler) allowHostRequest(w http.ResponseWriter, r *http.Request, 
 	return true
 }
 
-// HostMint sets this host's ticket cookie. Registered behind AuthMiddleware, so
-// the full session chain (signature, expiry, denylist, 2FA-setup lock, demo
-// read-only) is inherited rather than re-implemented here.
+// HostMint stores the ticket the panel obtained on its OWN origin.
 //
-// The panel reaches this cross-origin and sends its session as a Bearer HEADER.
-// That is only possible because the panel token lives in localStorage, not in a
-// cookie: the other origin cannot READ it, but the panel can SEND it. No
-// credential is ever put in a URL.
+// This used to be the authorization decision, and it could be: the panel
+// reached it cross-origin with its session as a Bearer header, which worked
+// only because the session sat in localStorage - the content origin could not
+// READ it, but the panel could SEND it.
+//
+// The session is an HttpOnly, host-only cookie now. A fetch from the panel to a
+// content host therefore carries NOTHING: not the header, because no script can
+// build one any more, and not the cookie, because it belongs to the panel host
+// alone. That is exactly what HttpOnly is for, and it leaves this end with no
+// way to know who is calling.
+//
+// So the decision moved to where the session still is - POST
+// /api/servers/{id}/tabs/{tabId}/proxy-ticket on the panel origin, behind the
+// tabs.read capability - and this endpoint became the delivery step it always
+// had to be, because a cookie can only be set by the host that answered.
 //
 // The cookie is HOST-ONLY on purpose - no Domain attribute. Domain=<suffix>
 // would work too and would be worse: it would send tab A's ticket to tab B's
 // host, leaving only the claim check between them. Host-only makes cross-tab
-// reuse impossible by scope, and the claim check below stays anyway.
+// reuse impossible by scope, and the claim check in allowMint stays anyway.
 func (h *ProxyHandler) HostMint(w http.ResponseWriter, r *http.Request) {
 	label := TabProxyHostLabel(r.Host, h.state.TabProxyHostSuffix)
 	if label == "" {
@@ -237,26 +247,8 @@ func (h *ProxyHandler) HostMint(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-
-	username, _ := r.Context().Value("username").(string)
-	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-
-	srv, serr := h.state.Store.GetServerByID(tab.ServerID)
-	if serr != nil || srv == nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
-		return
-	}
-	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
-	if rerr != nil || !res.HasCap(tabsReadCap) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
-	readOnly := !isAdmin && isDemoAccount(h.state, userID)
-	ticket, terr := h.auth.IssueTabProxyTicket(username, isAdmin, tab.ServerID, tab.ID, readOnly)
-	if terr != nil {
-		sendJSONError(w, "Failed to mint proxy ticket", http.StatusInternalServerError)
+	ticket, ok := h.allowMint(w, r, tab)
+	if !ok {
 		return
 	}
 
@@ -276,6 +268,133 @@ func (h *ProxyHandler) HostMint(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// allowMint is every check between a presented ticket and this host's cookie,
+// split out so each one can be asserted without a database behind it. It writes
+// the refusal itself and reports false.
+//
+// Two questions, and only two, because the rest were answered on the panel
+// origin: is this a tab-proxy ticket at all, and is it for THIS tab. A ticket
+// carries Purpose "tab_proxy", which AuthMiddleware refuses everywhere else, so
+// it can no more stand in for a session than a session can stand in for it.
+//
+// The tab check is the second lock on a door the cookie scope already holds
+// shut - the ticket cookie is host-only per content host, so a ticket for
+// another tab should not be presentable here at all. It stays because "should
+// not be reachable" is not a check.
+func (h *ProxyHandler) allowMint(w http.ResponseWriter, r *http.Request, tab *proxyTab) (string, bool) {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return "", false
+	}
+	ticket := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	claims, err := h.auth.ParseTabProxyTicket(ticket)
+	if err != nil {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return "", false
+	}
+	if claims.TabID != tab.ID {
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		return "", false
+	}
+	return ticket, true
+}
+
+// MintTicket issues a tab-proxy ticket on the PANEL's origin, where the session
+// is: POST /api/servers/{id}/tabs/{tabId}/proxy-ticket.
+//
+// It exists because the ticket has to be decided somewhere the session cookie is
+// actually sent, and that is only ever the panel's own host. The panel then
+// presents the ticket to the tab's content host, which stores it as that host's
+// cookie (see HostMint). Two round trips instead of one, and the split is what a
+// host-only session costs.
+//
+// Handing the ticket to script rather than straight into a cookie is not a
+// widening: it is scoped to one tab, expires in minutes, is refused by
+// AuthMiddleware on every ordinary route, and script on this origin already
+// holds an authenticated session by ambient cookie - anything that could steal
+// this could simply ask for another. It never touches a URL or storage.
+func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
+	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+		sendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
+		return
+	}
+	serverID, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid server id", http.StatusBadRequest)
+		return
+	}
+	tabID, err := strconv.Atoi(mux.Vars(r)["tabId"])
+	if err != nil {
+		sendJSONError(w, "Invalid tab id", http.StatusBadRequest)
+		return
+	}
+	tab, err := h.getTabByID(serverID, tabID)
+	if err != nil || tab == nil {
+		sendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
+	// A ticket for a tab that cannot be served is a credential for nothing, and
+	// minting one would report success to a panel that is about to render a frame
+	// the content host will refuse. The same three conditions HostContent applies.
+	if !tab.Enabled || tab.Mode != "proxied" || !tab.ProxyHostLabel.Valid || tab.ProxyHostLabel.String == "" {
+		sendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
+
+	username, _ := r.Context().Value("username").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+	// The route already carries the tabs.read capability for {id}. Resolving again
+	// is not belt-and-braces: the capability is what a ticket GRANTS on the
+	// content host, so it is read here to fill the ticket's own claims, and a
+	// caller who lost it between routing and now must not receive one.
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	if rerr != nil || !res.HasCap(tabsReadCap) {
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	readOnly := !isAdmin && isDemoAccount(h.state, userID)
+	ticket, terr := h.auth.IssueTabProxyTicket(username, isAdmin, tab.ServerID, tab.ID, readOnly)
+	if terr != nil {
+		sendJSONError(w, "Failed to mint proxy ticket", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"ticket":    ticket,
+		"expiresIn": int(tabProxyTicketTTL.Seconds()),
+	})
+}
+
+// getTabByID loads a tab by the pair the panel route names. The server id is in
+// the WHERE clause rather than merely checked afterwards: the capability was
+// granted for THAT server, so a tab id from another one must not resolve at all.
+func (h *ProxyHandler) getTabByID(serverID, tabID int) (*proxyTab, error) {
+	db := h.rawDB()
+	if db == nil {
+		return nil, fmt.Errorf("db unavailable")
+	}
+	var t proxyTab
+	err := db.QueryRow(`SELECT t.id, t.server_id, s.uuid, s.node_id, t.mode,
+		COALESCE(t.target_port,0), t.target_path, t.surface, t.visibility, t.share_expires_at,
+		t.enabled, t.share_token, t.proxy_host_label,
+		COALESCE(t.sub_server_name,''), COALESCE(s.active_sub_server,'')
+		FROM server_tabs t JOIN servers s ON s.id = t.server_id
+		WHERE t.id=$1 AND t.server_id=$2`, tabID, serverID).Scan(
+		&t.ID, &t.ServerID, &t.ServerUUID, &t.NodeID, &t.Mode,
+		&t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareExpires,
+		&t.Enabled, &t.ShareToken, &t.ProxyHostLabel,
+		&t.SubServerName, &t.ActiveSubServer)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 // writeHostGatePage renders a refusal INSIDE the iframe.
@@ -319,12 +438,14 @@ func (h *ProxyHandler) writeHostGatePage(w http.ResponseWriter, status int, titl
 //
 // Returns next unchanged when no suffix is configured, so a deployment without
 // one carries no extra layer at all.
-func TabProxyHostMux(state *AppState, ph *ProxyHandler, auth *AuthHandler, next http.Handler) http.Handler {
+func TabProxyHostMux(state *AppState, ph *ProxyHandler, next http.Handler) http.Handler {
 	suffix := state.TabProxyHostSuffix
 	if suffix == "" || ph == nil {
 		return next
 	}
-	mint := auth.AuthMiddleware(ph.HostMint)
+	// The mint is deliberately NOT behind AuthMiddleware. What arrives is a
+	// tab-proxy ticket, and AuthMiddleware refuses that purpose by design - it is
+	// not a session and must never be usable as one. HostMint validates it itself.
 	allowed := tabProxyMintOrigins(state.FrontendURL, suffix)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -342,7 +463,7 @@ func TabProxyHostMux(state *AppState, ph *ProxyHandler, auth *AuthHandler, next 
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-			mint(w, r)
+			ph.HostMint(w, r)
 			return
 		}
 		ph.HostContent(w, r)

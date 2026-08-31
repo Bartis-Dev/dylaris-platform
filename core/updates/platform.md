@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The 2026.08.31 Core image was built WITHOUT the panel in it: every page
+  answered with a placeholder saying so, while the API worked normally. Pull
+  this release and the panel is there. `core`
+- Proxied custom tabs stopped opening in 2026.08.31: the panel could no longer
+  prove who it was to the tab's own hostname, so every private tab showed the
+  "open it from the panel" card instead of its content. `core`
+- `PANEL_API_URL` was documented but never reached Core from the bundled compose
+  and stack files, so setting it did nothing. It is passed through now, and Core
+  warns when it names a different origin than `FRONTEND_URL` - a browser cannot
+  carry the session across that split. `core`
+
 ## 2026.08.31
 
 **Update required now** - the panel is no longer a separate image.

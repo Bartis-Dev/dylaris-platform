@@ -601,7 +601,7 @@ Keep Core, the Panel, Nodes, Postgres and Redis on a private network and put **o
 
 **Same-origin (the default, and now the shape of the software).** Point the host at `core:25500`. Core serves the panel and the API together, so the browser only ever talks to one origin: no `PANEL_API_URL`, no path rule, and **no CORS** to configure.
 
-**Cross-origin.** Only if you terminate the API on a second hostname. Set `PANEL_API_URL` to it (Core renders it into the page's runtime config AND into the CSP's `connect-src`, so one value covers both) and set `FRONTEND_URL` to the panel origin so CORS accepts it.
+**Cross-origin.** Only for NON-BROWSER clients, and Core warns at boot when it sees the split. The panel session is a host-only cookie: a browser will not carry it to a second hostname, so a panel configured this way loads and then answers 401 to everything. Set `PANEL_API_URL` to that hostname (Core renders it into the page's runtime config AND into the CSP's `connect-src`, so one value covers both) and set `FRONTEND_URL` to the panel origin so CORS accepts it.
 
 TLS is terminated at the proxy (Let's Encrypt). Core and the Panel speak plain HTTP behind it. For a remote database set `DB_SSLMODE=require` (or `verify-full`).
 

@@ -393,8 +393,9 @@ func TestCap_TabsReadVsWrite(t *testing.T) {
 // This used to run through the route table, because the mint was a route with
 // RequireCap("tabs.read") on it. It is not any more: a cookie can only be set
 // for the host that answers the request, and a tab is served on its own host,
-// so the mint moved there (handlers.HostMint) and its authorization moved
-// in-handler with it.
+// so the mint SPLIT: the decision is made on the panel's origin, where the
+// session cookie is sent (handlers.MintTicket), and the content host only stores
+// what that decision produced.
 //
 // The invariant did not move, and it is the important half. The ticket is not a
 // hint about access, it IS the access - the content handler checks nothing but
@@ -402,38 +403,58 @@ func TestCap_TabsReadVsWrite(t *testing.T) {
 // mint one and read a tab in full. That was a real regression once, when this
 // gate said overview.read while the listing said tabs.read.
 //
-// Asserting it against the source is deliberate: HostMint resolves its tab from
-// the request Host through the database, so there is no route to drive and no
-// handler call that reaches the authz check without one. The ORDER is asserted
-// too - a capability check after the ticket is issued would be decoration.
-func TestHostMintStillRequiresTabsRead(t *testing.T) {
+// Asserting it against the source is deliberate: both halves resolve their tab
+// through the database, so there is no route to drive and no handler call that
+// reaches the authz check without one. The ORDER is asserted too - a capability
+// check after the ticket is issued would be decoration.
+func TestTabTicketStillRequiresTabsRead(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("handlers", "tab_proxy_host.go"))
 	if err != nil {
 		t.Fatalf("read tab_proxy_host.go: %v", err)
 	}
-	body := string(src)
-	i := strings.Index(body, "func (h *ProxyHandler) HostMint(")
-	if i < 0 {
-		t.Fatal("HostMint is gone; if the mint moved again, move this assertion with it")
-	}
-	body = body[i:]
-	if j := strings.Index(body, "\nfunc "); j > 0 {
-		body = body[:j]
-	}
+	file := string(src)
 
+	body, ok := funcBody(file, "func (h *ProxyHandler) MintTicket(")
+	if !ok {
+		t.Fatal("MintTicket is gone; if the mint moved again, move this assertion with it")
+	}
 	resolve := strings.Index(body, "h.state.Authz.Resolve(")
 	hasCap := strings.Index(body, "HasCap(tabsReadCap)")
 	issue := strings.Index(body, "IssueTabProxyTicket(")
 	switch {
 	case resolve < 0:
-		t.Error("HostMint no longer resolves the caller's capabilities on the tab's server")
+		t.Error("MintTicket no longer resolves the caller's capabilities on the tab's server")
 	case hasCap < 0:
-		t.Error("HostMint no longer requires tabs.read; a member refused the tab LIST could mint a ticket and read the tab in full")
+		t.Error("MintTicket no longer requires tabs.read; a member refused the tab LIST could mint a ticket and read the tab in full")
 	case issue < 0:
-		t.Error("HostMint no longer issues a ticket - this assertion is checking the wrong function")
+		t.Error("MintTicket no longer issues a ticket - this assertion is checking the wrong function")
 	case hasCap > issue:
 		t.Error("the capability check runs AFTER the ticket is issued, so it decides nothing")
 	}
+
+	// And the other end must stay a delivery step. HostMint is reachable with no
+	// session at all - it has to be, a cross-origin fetch carries none - so a
+	// ticket ISSUED there would be issued to nobody in particular.
+	hostMint, ok := funcBody(file, "func (h *ProxyHandler) HostMint(")
+	if !ok {
+		t.Fatal("HostMint is gone")
+	}
+	if strings.Contains(hostMint, "IssueTabProxyTicket(") {
+		t.Error("HostMint issues a ticket again, on an endpoint that cannot identify its caller")
+	}
+}
+
+// funcBody returns the source between a function's header and the next one.
+func funcBody(file, header string) (string, bool) {
+	i := strings.Index(file, header)
+	if i < 0 {
+		return "", false
+	}
+	body := file[i:]
+	if j := strings.Index(body, "\nfunc "); j > 0 {
+		body = body[:j]
+	}
+	return body, true
 }
 
 func TestFiles_DeleteNeedsDeleteCap(t *testing.T) {

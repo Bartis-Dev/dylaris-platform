@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { AlertTriangle } from 'lucide-react';
-import { mintTabProxyAuth, resolveShareLink } from '@/lib/api/serverTabs';
+import { resolveShareLink } from '@/lib/api/serverTabs';
 import { tabContentSrc } from '@/lib/tabProxy';
 
 // Standalone, Dylaris-branded page for a shared custom tab. Lives OUTSIDE the
@@ -15,23 +15,17 @@ import { tabContentSrc } from '@/lib/tabProxy';
 // the panel for a phishing target, say - which is a smaller hole than reading
 // the session token but the same kind of hole.
 //
-// The flow is deliberately short:
+// The flow is deliberately short: resolve the token to its content host, then
+// render the frame. That is all this page can do, and the reason is worth
+// stating because it looks like something is missing.
 //
-//   1. resolve the token to its content host, and whether a ticket is needed
-//   2. if one is, try to mint it; a visitor who is signed in gets a working
-//      frame, one who is not gets Core's own "open it from the panel" card
-//      INSIDE the frame
-//   3. render the frame either way
-//
-// Step 2 does not branch on the outcome, and that is the point. This page
-// cannot tell "not signed in" from "signed in but holds no ticket for this tab
-// yet" - it can read neither the panel's localStorage nor a cookie that was
-// never set - so it does not try. Core answers on the content host, where both
-// are knowable.
-
-// The ticket is short-lived (~5min server-side); re-mint comfortably inside
-// that window so it never lapses under a frame that is still open.
-const PROXY_AUTH_REFRESH_MS = 4 * 60 * 1000;
+// This page is served on the share host, NOT the panel host. Everything that
+// identifies a visitor is scoped to the panel's origin - the session cookie is
+// host-only, and storage is per-origin - so nothing here can prove who is
+// looking, and a ticket cannot be minted from this page for a PRIVATE tab. A
+// public link needs none and works. A private one gets Core's own "open it from
+// the panel" card inside the frame, which is the honest answer and comes from
+// the side that can actually tell.
 
 type State = 'checking' | 'ready' | 'notfound' | 'expired';
 
@@ -43,7 +37,6 @@ export default function StandaloneTabProxyPage() {
 
     useEffect(() => {
         let cancelled = false;
-        let refresh: ReturnType<typeof setInterval> | undefined;
 
         (async () => {
             const res = await resolveShareLink(token);
@@ -53,23 +46,10 @@ export default function StandaloneTabProxyPage() {
                 return;
             }
             setContentOrigin(res.data.contentOrigin);
-
-            if (res.data.requiresAuth) {
-                // Best effort, and unconditional afterwards. A signed-in
-                // visitor gets content; anyone else gets Core's card in the
-                // frame, which is the same answer this page would have had to
-                // render anyway, only from the side that can actually tell.
-                await mintTabProxyAuth(res.data.contentOrigin);
-                if (cancelled) return;
-                refresh = setInterval(() => { mintTabProxyAuth(res.data!.contentOrigin); }, PROXY_AUTH_REFRESH_MS);
-            }
             setState('ready');
         })();
 
-        return () => {
-            cancelled = true;
-            if (refresh) clearInterval(refresh);
-        };
+        return () => { cancelled = true; };
     }, [token]);
 
     const iframeSrc = tabContentSrc(contentOrigin);

@@ -735,8 +735,12 @@ func main() {
 	//      asks Core which content host a share token belongs to. It is NOT a
 	//      tab-content host - those never reach this router at all, they are
 	//      taken by the host mux before CORS.
-	// Auth is Bearer-token (no cookies), so a wider CORS surface grants no
-	// ambient privilege.
+	// This list is not an authorization decision, and must not become one. No
+	// Access-Control-Allow-Credentials is emitted here, so a browser refuses to
+	// hand any of these origins a response to a credentialed request - the
+	// session cookie is host-only to the panel anyway, and an Authorization
+	// header is not ambient authority. Adding credentials to this CORS config
+	// would turn every origin above into one that can act as the signed-in user.
 	shareWrapperOrigin := handlers.TabProxyWrapperOrigin(cfg.FrontendURL, cfg.TabProxyHostSuffix)
 	allowedOrigin := func(origin string) bool {
 		if origin != "" && origin == cfg.FrontendURL {
@@ -781,7 +785,7 @@ func main() {
 	srv := &http.Server{
 		Addr: ":" + port,
 		Handler: handlers.TabProxyHostMux(
-			appState, extras.proxyHandler, authHandler, corsObj(root)),
+			appState, extras.proxyHandler, corsObj(root)),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

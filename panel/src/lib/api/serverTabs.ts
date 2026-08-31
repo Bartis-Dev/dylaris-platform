@@ -115,26 +115,45 @@ export async function revokeShareLink(serverId: number, tabId: number): Promise<
 }
 
 // mintTabProxyAuth authorizes one tab's iframe by setting the dyl_tabproxy
-// ticket cookie ON THAT TAB'S OWN HOST.
+// ticket cookie ON THAT TAB'S OWN HOST. Two requests, and the split is not
+// incidental.
 //
-// The mint has to run there and nowhere else: a cookie can only be set for the
-// host that answered the request, and the content is served from
-// "<label>.<suffix>", not from the panel or the API host.
+// The ticket has to be DECIDED where the session is, and stored where the
+// content is, and those are different origins. The session is an HttpOnly,
+// host-only cookie on the panel's host: a cross-origin fetch to a tab host
+// carries neither it nor a header any script could build, so that end cannot
+// identify a caller at all. The cookie, conversely, can only be set by the host
+// that answered the request - the content host and nobody else.
 //
-// It is reached cross-origin with the session as a Bearer HEADER, which is only
-// possible because the panel token lives in localStorage rather than in a
-// cookie - the content origin cannot READ it, but the panel can SEND it. The
-// response is 204 with a Set-Cookie and no body, so no credential ever lands in
-// an iframe src. credentials:'include' is what makes the Set-Cookie stick;
-// Core answers the matching Access-Control-Allow-Credentials for exactly the
-// panel and wrapper origins.
-export async function mintTabProxyAuth(proxyOrigin: string): Promise<{ success: boolean; status?: number; message?: string }> {
+// So: mint on our origin, present the result on theirs. The ticket is scoped to
+// this one tab and expires in minutes; the response there is 204 with a
+// Set-Cookie and no body, so no credential ever lands in an iframe src.
+// credentials:'include' is what makes the Set-Cookie stick, and Core answers the
+// matching Access-Control-Allow-Credentials for exactly the panel and wrapper
+// origins.
+export async function mintTabProxyAuth(tab: Pick<ServerTab, 'id' | 'serverId' | 'proxyOrigin'>): Promise<{ success: boolean; status?: number; message?: string }> {
+    const proxyOrigin = tab.proxyOrigin;
     if (!proxyOrigin) {
         return { success: false, message: 'This tab has no proxy host configured.' };
     }
+    let ticket = '';
+    try {
+        const res = await fetch(`${API_URL}/servers/${tab.serverId}/tabs/${tab.id}/proxy-ticket`, {
+            method: 'POST',
+            headers: getAuthHeader(),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.ticket) {
+            return { success: false, status: res.status, message: data?.message || 'Not allowed to open this tab.' };
+        }
+        ticket = data.ticket;
+    } catch (err) {
+        console.error('tab proxy ticket failed:', err);
+        return { success: false, message: 'Could not reach Core to authorize this tab.' };
+    }
     try {
         const res = await fetch(`${proxyOrigin}/__dyl/mint`, {
-            headers: getAuthHeader(),
+            headers: { Authorization: `Bearer ${ticket}` },
             credentials: 'include',
         });
         if (res.status === 204) return { success: true, status: 204 };

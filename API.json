@@ -3724,6 +3724,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-ticket",
+      "auth": "session",
+      "authorization": "tabs.read",
+      "description": "issues a tab-proxy ticket on the PANEL's origin, where the session is: POST /api/servers/{id}/tabs/{tabId}/proxy-ticket.",
+      "handler": "ProxyHandler.MintTicket",
+      "group": "servers",
+      "external": false
+    },
+    {
       "method": "DELETE",
       "path": "/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link",
       "auth": "session",
@@ -4864,10 +4874,10 @@
     }
   ],
   "counts": {
-    "total": 487,
+    "total": 488,
     "byAuth": {
       "none": 35,
-      "session": 439,
+      "session": 440,
       "user API key": 10,
       "warp key": 3
     },
@@ -4899,7 +4909,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 74,
+      "servers": 75,
       "settings": 28,
       "setup": 2,
       "share": 1,

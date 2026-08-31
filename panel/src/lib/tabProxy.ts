@@ -9,11 +9,13 @@
 //     the prefix entirely - which is what BlueMap and Dynmap emit, so the two
 //     most deployed map plugins were the two that could not be shown.
 //   - A different hostname is a different ORIGIN, so a tenant's JavaScript
-//     cannot reach the panel session token in the panel origin's localStorage.
+//     reaches neither the panel's pages nor the session cookie, which is
+//     host-only to the panel's host and never sent here.
 //
-// Auth is cookie-only on the content host: the ticket is minted by a separate
-// call to that host (mintTabProxyAuth), and no builder here ever puts a session
-// token or a ticket in a URL.
+// Auth is cookie-only on the content host: the ticket is obtained from Core on
+// the PANEL's origin and handed to this host by a separate call
+// (mintTabProxyAuth), and no builder here ever puts a session token or a ticket
+// in a URL.
 
 // tabContentSrc is the iframe src for a proxied tab. It FAILS CLOSED: without a
 // proxyOrigin there is no host that may serve this content, and falling back to

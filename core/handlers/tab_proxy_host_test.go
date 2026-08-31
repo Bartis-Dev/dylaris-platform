@@ -359,13 +359,13 @@ func TestHostGate_ReadOnlyTicket(t *testing.T) {
 // every panel route answering there would put them one fetch away from a
 // tenant's own JavaScript.
 func TestTabProxyHostMux_ContentHostNeverReachesTheRouter(t *testing.T) {
-	h, ah := newHostGateHandler(t, true, true)
+	h, _ := newHostGateHandler(t, true, true)
 	reachedNext := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reachedNext = true
 		w.WriteHeader(http.StatusTeapot)
 	})
-	mux := TabProxyHostMux(h.state, h, ah, next)
+	mux := TabProxyHostMux(h.state, h, next)
 
 	for _, path := range []string{"/", "/api/servers", "/api/system/core-info", "/login", "/__dyl/", "/__dyl/other"} {
 		reachedNext = false
@@ -378,10 +378,10 @@ func TestTabProxyHostMux_ContentHostNeverReachesTheRouter(t *testing.T) {
 }
 
 func TestTabProxyHostMux_OtherHostsPassThrough(t *testing.T) {
-	h, ah := newHostGateHandler(t, true, true)
+	h, _ := newHostGateHandler(t, true, true)
 	reachedNext := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reachedNext = true })
-	mux := TabProxyHostMux(h.state, h, ah, next)
+	mux := TabProxyHostMux(h.state, h, next)
 
 	for _, host := range []string{"panel.example.com", "api.example.com", "share.example.com", "localhost:25500"} {
 		reachedNext = false
@@ -395,10 +395,10 @@ func TestTabProxyHostMux_OtherHostsPassThrough(t *testing.T) {
 // No suffix means no content hosts, so the mux must not even wrap - a
 // deployment without the feature carries no extra layer on every request.
 func TestTabProxyHostMux_UnconfiguredReturnsTheHandlerUntouched(t *testing.T) {
-	h, ah := newHostGateHandler(t, true, true)
+	h, _ := newHostGateHandler(t, true, true)
 	h.state.TabProxyHostSuffix = ""
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	if got := TabProxyHostMux(h.state, h, ah, next); got == nil {
+	if got := TabProxyHostMux(h.state, h, next); got == nil {
 		t.Fatal("returned nil")
 	}
 }
@@ -454,4 +454,79 @@ func TestTabProxyOriginHelpers(t *testing.T) {
 	if got := TabProxyContentOrigin("https://panel.example.com", "", "abcdefghij0123456789"); got != "" {
 		t.Errorf("unconfigured content origin = %q, want empty", got)
 	}
+}
+
+// --- the mint, after the session stopped being something the panel can send ---
+
+// The panel used to reach the mint cross-origin with its session as a Bearer
+// header, which worked only because the session lived in localStorage. It lives
+// in an HttpOnly, host-only cookie now, so a fetch to a content host carries no
+// credential whatsoever - and the mint stopped being an authorization decision.
+//
+// The decision moved to the panel's own origin, where the session still is. What
+// arrives here is the ticket that decision produced, and this asserts the only
+// two things this end may still judge: that it is a ticket at all, and that it
+// is for THIS tab.
+func TestAllowMint_TakesATicketForThisTab(t *testing.T) {
+	h, ah := newHostGateHandler(t, true, true)
+	tab := proxiedTab("private", "tok")
+
+	ticket, err := ah.IssueTabProxyTicket("owner", false, tab.ServerID, tab.ID, false)
+	if err != nil {
+		t.Fatalf("IssueTabProxyTicket: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	got, ok := h.allowMint(rec, mintReq(ticket), tab)
+	if !ok {
+		t.Fatalf("a ticket minted for this exact tab was refused: %d %s", rec.Code, rec.Body.String())
+	}
+	if got != ticket {
+		t.Error("allowMint returned something other than the ticket it was given")
+	}
+}
+
+func TestAllowMint_RefusesEverythingElse(t *testing.T) {
+	h, ah := newHostGateHandler(t, true, true)
+	tab := proxiedTab("private", "tok")
+
+	otherTab, err := ah.IssueTabProxyTicket("owner", false, tab.ServerID, 99, false)
+	if err != nil {
+		t.Fatalf("IssueTabProxyTicket: %v", err)
+	}
+	// Same secret, same signature, different purpose. Accepting it would turn a
+	// 24h panel session into a permanent key to every tab - which is the whole
+	// reason the ticket carries a purpose at all.
+	session, err := ah.IssueToken("owner", false, "")
+	if err != nil {
+		t.Fatalf("IssueToken: %v", err)
+	}
+
+	cases := []struct {
+		name, bearer string
+		want         int
+	}{
+		{"nothing at all", "", http.StatusUnauthorized},
+		{"a panel session", session, http.StatusUnauthorized},
+		{"gibberish", "not-a-jwt", http.StatusUnauthorized},
+		{"a ticket for another tab", otherTab, http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			if _, ok := h.allowMint(rec, mintReq(tc.bearer), tab); ok {
+				t.Fatal("the mint accepted it")
+			}
+			if rec.Code != tc.want {
+				t.Errorf("status = %d, want %d", rec.Code, tc.want)
+			}
+		})
+	}
+}
+
+func mintReq(bearer string) *http.Request {
+	r := httptest.NewRequest("GET", "https://abcdefghij0123456789.share.example.com/__dyl/mint", nil)
+	if bearer != "" {
+		r.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	return r
 }

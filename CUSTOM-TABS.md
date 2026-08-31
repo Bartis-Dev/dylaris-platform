@@ -33,8 +33,9 @@ it - both projects tell their own users to use a subdomain for the same reason.
 
 **A separate hostname is a separate origin.** The page inside a tab is software
 you or your customer chose, not software Dylaris wrote. On the panel's own
-hostname its JavaScript could read the panel's session token out of the
-browser's storage. On its own hostname it cannot.
+hostname its JavaScript would sit inside the panel and act as whoever is signed
+in. On its own hostname it reaches neither the panel's pages nor its session,
+which is a cookie scoped to the panel's hostname alone.
 
 ---
 
@@ -308,9 +309,12 @@ The content is not being served at the root. Check that your proxy passes the
 original `Host` header and does not strip a path.
 
 **"This page is private" although I am signed in.**
-Expected when you open a private share link directly. The page cannot see your
-panel session - it is not on that hostname - so it sends you to the panel, which
-can. Open the tab from the panel once and the link works from then on.
+Expected, and it is not a misconfiguration. Your session is a cookie scoped to
+the panel's hostname, so nothing on the share hostname can see it or prove who
+you are. A PUBLIC link needs no proof and works for anyone; a private tab has to
+be opened from the panel, which is the one place that can authorize it. Opening
+it there authorizes that tab's hostname for a few minutes, so a private share
+link is a shortcut for someone who has just used the panel, never a way in.
 
 **The application inside the tab wants me to log in and never stays logged in.**
 Cookies are not passed through a proxied tab, in either direction. That is

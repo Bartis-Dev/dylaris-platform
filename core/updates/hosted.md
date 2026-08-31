@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The panel was briefly unreachable after yesterday's release, showing a
+  placeholder page instead. It is back; nothing on your side needed changing.
+- Custom tabs such as a map viewer would not open from the panel. They load
+  again.
+
 ## 2026.08.31
 
 ### Features

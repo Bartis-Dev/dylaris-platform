@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **486 routes** in 50 sections: 217 GET, 144 POST, 37 PUT, 36 PATCH, 53 DELETE.
+- **487 routes** in 50 sections: 217 GET, 145 POST, 37 PUT, 36 PATCH, 53 DELETE.
 - **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **91** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **91** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **8** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (74)
+- [/api/servers](#apiservers) (75)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -698,6 +698,7 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/tabs` | session | `tabs.write` | - | `ServerTabsHandler.Create` | adds a custom tab. |
 | PATCH | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Update` | edits a custom tab, applying the same proxied-tab gates as creation. |
 | DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}` | session | `tabs.write` | - | `ServerTabsHandler.Delete` | removes a custom tab from the server in the path. |
+| POST | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-ticket` | session | `tabs.read` | - | `ProxyHandler.MintTicket` | issues a tab-proxy ticket on the PANEL's origin, where the session is: POST /api/servers/{id}/tabs/{tabId}/proxy-ticket. |
 | POST | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RotateShareLink` | (re)generate the unguessable slug for a proxied page tab. |
 | DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RevokeShareLink` | null the slug so the standalone page 404s. |
 | POST | `/api/servers/{id:[0-9]+}/transfer` | session | `server.settings.write` | RequireGatewayEnabled | `ServerHandler.TransferServer` | (tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on. |

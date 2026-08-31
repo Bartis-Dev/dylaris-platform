@@ -1,30 +1,25 @@
 package handlers
 
-// ProxyHandler serves the WS5 custom-tab reverse proxy: it streams a server
-// container's HTTP/WebSocket through Core over the existing gRPC mesh so the
-// browser only ever talks to Core on the panel origin. Two entry points:
-// InDashboard (session-authed) and Public (share-token, Task 9). Both share
-// serve().
+// ProxyHandler serves the custom-tab reverse proxy: it streams a server
+// container's HTTP/WebSocket through Core over the existing gRPC mesh, so the
+// browser talks to Core and never to the container.
 //
-// Auth is cookie-only (Task 8 fast-follow, closing two Important review
-// findings): MintProxyAuth runs behind the normal /api subrouter's
-// AuthMiddleware (inheriting 2FA-setup-lock + demo-read-only gating for
-// free) and, after re-checking overview access + the feature gate, mints a
-// short-lived (5min) tab-proxy-scoped ticket and stamps it as an HttpOnly,
-// path-scoped dyl_tabproxy cookie. InDashboard then trusts ONLY that cookie -
-// it never accepts a session JWT via header/query, so the 24h session token
-// is never carried in this endpoint's URL.
+// This file is the shared plumbing - serve/serveHTTP/serveWS, the share-token
+// lookup, and the ticket check. The entry points live in tab_proxy_host.go,
+// because a tab is served on its OWN host now rather than under a path on the
+// panel's.
 //
-// Public (Task 9) is the standalone share-link twin of the same idea: a
-// public-visibility link is served anonymously (subject to the
-// TabProxyAllowPublicLinks flag), while a private-visibility link requires
-// the SAME dyl_tabproxy ticket cookie, minted by MintPublicProxyAuth
-// (registered on the /api subrouter behind AuthMiddleware, mirroring
-// MintProxyAuth) and Path-scoped to this share token's proxy prefix instead
-// of the in-dashboard one. Public never mints or sets the cookie itself -
-// it only validates it via the same ParseTabProxyTicket InDashboard uses,
-// so there is exactly one place that ever parses a tab-proxy ticket's
-// signature/claims.
+// Auth on the content plane is cookie-only, and deliberately nothing else: the
+// dyl_tabproxy ticket, and never a session by header or query. Two consequences
+// worth keeping in mind while reading:
+//
+//   - The ticket is not a hint about access, it IS the access. Nothing
+//     downstream re-checks who the viewer is.
+//   - Exactly one function parses one, ParseTabProxyTicket, so there is one
+//     place where a ticket's signature and claims are judged.
+//
+// Where a ticket comes from is in tab_proxy_host.go: MintTicket decides on the
+// panel's origin, HostMint stores it on the tab's.
 
 import (
 	"database/sql"

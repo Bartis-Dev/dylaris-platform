@@ -80,14 +80,14 @@ export default function CustomTabsPage() {
     // then keep it fresh. A failing background refresh must never tear down a
     // frame that is already working, so only the first mint may show the error.
     useEffect(() => {
-        const origin = selected?.proxyOrigin || '';
-        if (!origin) return;
+        const tab = selected;
+        if (!tab?.proxyOrigin) return;
         let cancelled = false;
         setAuthState('pending');
         setAuthError(null);
 
         const mint = async (isInitial: boolean) => {
-            const res = await mintTabProxyAuth(origin);
+            const res = await mintTabProxyAuth(tab);
             if (cancelled) return;
             if (res.success) { setAuthState('ready'); return; }
             if (!isInitial) return;

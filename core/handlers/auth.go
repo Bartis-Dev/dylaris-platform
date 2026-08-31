@@ -62,8 +62,8 @@ func (h *AuthHandler) IssueToken(username string, isAdmin bool, pwdHash string) 
 const tabProxyTicketTTL = 5 * time.Minute
 
 // IssueTabProxyTicket signs a short-lived, tab-proxy-scoped JWT. The caller
-// (ProxyHandler.MintProxyAuth) has already run this request through
-// AuthMiddleware plus checkServerAccess("overview") for this exact
+// (ProxyHandler.MintTicket, on the panel's own origin) has already run this
+// request through AuthMiddleware plus the tabs.read capability for this exact
 // server/tab, so the ticket just carries that already-verified identity +
 // scope forward: username/isAdmin, the server+tab it is valid for, and
 // whether the underlying session is read-only (demo account). It is signed
