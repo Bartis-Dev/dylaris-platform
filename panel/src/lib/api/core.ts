@@ -1,15 +1,15 @@
 import { handleUnauthorized } from "./session";
 
 // Resolve the Core API base URL. Order of precedence:
-//   1. window.__DYLARIS_CONFIG__.apiUrl - runtime shim from /config.js. It is
-//      NOT baked into the build, so a self-hoster can point a prebuilt image at
-//      their own API (or leave it empty for same-origin) without rebuilding.
+//   1. window.__DYLARIS_CONFIG__.apiUrl - injected by Core into each page it
+//      serves, from PANEL_API_URL. NOT baked into the build, so a self-hoster
+//      can point a prebuilt image at a second API hostname without rebuilding.
 //      NEXT_PUBLIC_* is inlined at build time and can't be changed afterwards.
 //   2. NEXT_PUBLIC_API_URL - build-time env, for people who build the panel
 //      themselves and for local dev (.env).
-//   3. Same-origin /api - the production default: the API is reached on the
-//      same host that serves the panel (the usual reverse-proxy layout where
-//      /api is routed to Core). In development we instead fall back to
+//   3. Same-origin /api - the production default, and now the shape of the
+//      software: Core serves the panel and the API together, so there is one
+//      origin and nothing to configure. In development we instead fall back to
 //      localhost:25500 since the panel dev server and Core run on different
 //      ports.
 function resolveApiUrl(): string {

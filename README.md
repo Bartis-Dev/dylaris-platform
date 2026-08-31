@@ -296,7 +296,7 @@ Notable details:
 - **`node` needs the Docker socket** (`/var/run/docker.sock`) — that is how it launches Minecraft containers on its host. Treat any host running a Node as trusted.
 - **`redis`/Valkey runs in-memory** (`--save "" --appendonly no`) — it is used as a coordination bus, not the source of truth (Postgres is). Losing it loses transient queue state, not your servers.
 - **`timescaledb` has a healthcheck** (single-host) so Core waits for the DB to accept connections on first boot.
-- **The Panel needs a browser-reachable Core URL** via `PANEL_API_URL`, written into `/config.js` by the panel's entrypoint at container **start** (no rebuild needed), because the browser, not the container, calls the API. `NEXT_PUBLIC_API_URL` is the separate build-time fallback baked into the JS bundle (used by the owner's SaaS CI build).
+- **The panel is served by Core**, compiled into the binary, so the pages and `/api` share an origin and there is nothing to point at anything. `PANEL_API_URL` is only for the split-hostname layout; Core renders it into the page at request time, so it takes effect on restart without a rebuild.
 - **Swarm defaults to an external/managed Postgres** (set `DB_HOST`/`DB_PORT`/`DB_SSLMODE` on `core`). The bundled single-replica DB is an opt-in commented block: uncomment it (and the `timescaledb_data` volume), label the DB host so its node-local volume stays put (`dylaris.db=true`), and leave `DB_HOST` unset so it falls back to `timescaledb`. For real HA, use a managed/replicated PostgreSQL.
 
 ## Configuration reference
@@ -530,12 +530,12 @@ owned node. Already-paired nodes keep reconnecting with their per-node secret.
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `PANEL_API_URL` | *(same origin)* | No | **Browser-reachable** Core API base URL, **including the `/api` path** (e.g. `https://api.example.com/api`) — the panel appends route paths to it verbatim, so a value without `/api` 404s every call. Runtime (not build-time): the container's entrypoint writes it into `/config.js` on every start, so it takes effect without a rebuild. If unset, the panel defaults to the **same origin** it is served from (`https://<panel-host>/api`), the usual reverse-proxy layout where `/api` is routed to Core. See the shim details below. |
+| `PANEL_API_URL` | *(same origin)* | No | **Browser-reachable** Core API base URL, **including the `/api` path** (e.g. `https://api.example.com/api`) — the panel appends route paths to it verbatim, so a value without `/api` 404s every call. Runtime (not build-time): Core injects it into each page it serves, so it takes effect on restart without a rebuild. If unset, the panel defaults to the **same origin** it is served from (`https://<panel-host>/api`), the usual reverse-proxy layout where `/api` is routed to Core. See the shim details below. |
 
-The panel resolves its API URL in this order: `window.__DYLARIS_CONFIG__.apiUrl` (runtime) → `NEXT_PUBLIC_API_URL` (build-time) → same origin (`/api`). The runtime value lives in **`/config.js`**; the container's entrypoint (`panel/docker-entrypoint.sh`) regenerates that file from `PANEL_API_URL` on every start, so set the env var rather than bind-mounting `/app/public/config.js` directly - the entrypoint overwrites it on the next restart:
+The panel resolves its API URL in this order: `window.__DYLARIS_CONFIG__.apiUrl` (runtime) → `NEXT_PUBLIC_API_URL` (build-time) → same origin (`/api`). Core writes the runtime value into every HTML response it serves, as a nonced inline script directly after `<head>`, so it is set before the bundle runs. There is no `/config.js` file to mount or edit:
 
 ```js
-// what the entrypoint writes when PANEL_API_URL=https://api.example.com/api
+// what Core injects when PANEL_API_URL=https://api.example.com/api
 window.__DYLARIS_CONFIG__ = { apiUrl: "https://api.example.com/api" };
 ```
 
