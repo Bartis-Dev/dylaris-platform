@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.19
+
+### Features
+- Beam now notices updates while you are working. It re-checks in the background
+  and marks the settings button with a dot when a new version is waiting, instead
+  of only looking once at startup on a screen you had already left.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.31.18
 
 ### Features

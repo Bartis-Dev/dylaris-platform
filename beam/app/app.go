@@ -63,6 +63,11 @@ type App struct {
 	readableMu sync.Mutex
 	readable   map[string]map[string]string
 
+	// updates caches whether a newer build is waiting, so the launcher injected
+	// into every proxied page can render its dot without a network call on the
+	// request path. See update_watch.go.
+	updates updateWatcher
+
 	// healthCheckStop is closed when the current health-check goroutine
 	// should exit (Logout, SetSession on a new account). nil while no
 	// check is running. The goroutine is owned exclusively by App and
@@ -327,6 +332,9 @@ func (a *App) checkShellToken(tok string) bool {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Bound to the app's lifetime, so the ticker stops with the window rather
+	// than outliving it.
+	a.startUpdateWatch(ctx)
 }
 
 // UpdateGate is the force-update decision the app-shell frontend reads to

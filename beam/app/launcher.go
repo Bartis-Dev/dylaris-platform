@@ -48,6 +48,18 @@ const launcherStyles = `
 .dot:hover { color: #D8DDE6; border-color: #3A414D; background: #171A21; }
 .dot:focus-visible { outline: 2px solid #7048C8; outline-offset: 2px; }
 .dot.dragging { cursor: grabbing; opacity: .85; }
+/* An update is waiting. A dot on the button rather than anything that covers the
+   panel: this is a "when you get a moment" signal, and the one update that
+   cannot wait has its own blocking screen. */
+.dot.has-update::after {
+  content: '';
+  position: absolute;
+  top: -2px; right: -2px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #7048C8;
+  border: 2px solid #12141A;
+}
 .dot svg { width: 17px; height: 17px; display: block; }
 @media (prefers-reduced-motion: reduce) { .dot { transition: none; } }
 `
@@ -73,8 +85,10 @@ const launcherScript = `
   var btn = document.createElement('button');
   btn.className = 'dot';
   btn.type = 'button';
-  btn.title = 'Dylaris Beam settings';
-  btn.setAttribute('aria-label', 'Dylaris Beam settings');
+  var hasUpdate = __HAS_UPDATE__;
+  btn.title = hasUpdate ? 'Dylaris Beam settings - an update is available' : 'Dylaris Beam settings';
+  btn.setAttribute('aria-label', btn.title);
+  if (hasUpdate) btn.classList.add('has-update');
   btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
   root.appendChild(btn);
 
@@ -129,9 +143,19 @@ const launcherScript = `
 
 // launcherTag returns the injected script element, nonce-stamped so a
 // nonce-strict policy admits it.
-func launcherTag(nonce string) string {
+//
+// hasUpdate is stamped in rather than fetched by the script: the launcher runs
+// inside somebody else's application and must not make calls of its own, and the
+// value is re-stamped on every proxied page anyway - so it refreshes as the user
+// navigates, which is often enough for a notice that is not urgent.
+func launcherTag(nonce string, hasUpdate bool) string {
 	body := strings.ReplaceAll(launcherScript, "__STYLES__", goStringLiteral(launcherStyles))
 	body = strings.ReplaceAll(body, "__SETTINGS__", beamSettingsRoute)
+	flag := "false"
+	if hasUpdate {
+		flag = "true"
+	}
+	body = strings.ReplaceAll(body, "__HAS_UPDATE__", flag)
 	attr := ""
 	if nonce != "" {
 		attr = ` nonce="` + nonce + `"`

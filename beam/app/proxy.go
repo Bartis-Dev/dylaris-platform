@@ -277,7 +277,7 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 				}
 				// The only route into Beam's own settings while the panel is
 				// reachable; see launcher.go.
-				body = injectBeforeBodyEnd(body, launcherTag(nonce))
+				body = injectBeforeBodyEnd(body, launcherTag(nonce, app.updates.get()))
 				resp.Body = io.NopCloser(bytes.NewReader(body))
 				resp.ContentLength = int64(len(body))
 				resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
