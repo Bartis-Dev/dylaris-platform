@@ -67,6 +67,13 @@ func (h *NodeHandler) nodeExists(nodeID int) bool {
 func isExternalPlatformNode(n models.Node) bool { return n.IsExternal() && n.OwnerID == nil }
 func isBYONNode(n models.Node) bool             { return n.OwnerID != nil }
 
+// ownedBYONNode is the "Your machines" predicate: a BYON node belonging to this
+// caller. An empty caller matches nothing, so a request that arrived without an
+// identity gets an empty list rather than the fleet.
+func ownedBYONNode(uid string) func(models.Node) bool {
+	return func(n models.Node) bool { return isBYONNode(n) && uid != "" && *n.OwnerID == uid }
+}
+
 // filterNodes keeps the nodes keep() accepts, preserving order. Returns an
 // empty slice rather than nil so the JSON stays [] and never null.
 func filterNodes(nodes []models.Node, keep func(models.Node) bool) []models.Node {
@@ -135,7 +142,17 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 			}
 			nodes = filterNodes(nodes, isExternalPlatformNode)
 		case "byon":
-			nodes = filterNodes(nodes, isBYONNode)
+			// Owned by the CALLER, not merely of the BYON kind. The tab this
+			// answers is titled "Your machines", and an admin asking for it got
+			// every tenant's machine in the fleet under that heading - the
+			// customer's box at home listed as the operator's own.
+			//
+			// Scoped for admins too, which is the part that was missing: the
+			// non-admin branch above already narrows by owner, so the kind
+			// filter here looked like it finished the job while only the
+			// unprivileged half of it was ever enforced. An admin who needs the
+			// whole fleet asks for the unscoped list, which is still theirs.
+			nodes = filterNodes(nodes, ownedBYONNode(byonCallerID(r)))
 		default:
 			sendJSONError(w, "Unknown scope", 400)
 			return

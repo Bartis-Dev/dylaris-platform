@@ -103,12 +103,22 @@ const launcherScript = `
   function stored() {
     try { var v = parseInt(localStorage.getItem(KEY) || '', 10); return isNaN(v) ? null : v; } catch (e) { return null; }
   }
+  // Bottom RIGHT until the user moves it. The left corner is where the panel
+  // keeps its sidebar - so the default position put this on top of the panel's
+  // own controls, which is both hard to see and the one place a stray click is
+  // expensive.
+  function defaultX() { return Math.max(MARGIN, window.innerWidth - SIZE - MARGIN); }
   function place(x) {
     btn.style.left = clamp(x) + 'px';
     btn.style.bottom = MARGIN + 'px';
   }
-  place(stored() === null ? MARGIN : stored());
-  window.addEventListener('resize', function () { place(parseInt(btn.style.left, 10) || MARGIN); });
+  place(stored() === null ? defaultX() : stored());
+  // An untouched button stays anchored to the right edge as the window changes
+  // size; a placed one only gets clamped back into view. Re-deriving the
+  // default here is what keeps "bottom right" true after a resize.
+  window.addEventListener('resize', function () {
+    place(stored() === null ? defaultX() : (parseInt(btn.style.left, 10) || defaultX()));
+  });
 
   // A drag must not also be a click. The threshold is what separates "moved it"
   // from "pressed it", and without it every reposition would also open settings.
@@ -133,11 +143,18 @@ const launcherScript = `
   });
   btn.addEventListener('click', function () { if (!moved) window.location.href = '__SETTINGS__'; });
 
-  // The panel replaces its own body on navigation, so re-attach rather than
-  // assuming one insertion holds for the life of the document.
+  // Re-attach rather than assuming one insertion holds for the life of the
+  // document: this button lives inside somebody else's single-page app, and
+  // anything that rebuilds a subtree can take it with it.
+  //
+  // The subtree matters. This used to watch documentElement with subtree:false,
+  // which fires only when <head> or <body> THEMSELVES are swapped - something
+  // React does not do. A removal from INSIDE body, which is the only way this
+  // node can actually disappear, reached the observer never, so the button
+  // stayed gone until a full page load.
   function attach() { if (document.body && !host.isConnected) document.body.appendChild(host); }
   attach();
-  new MutationObserver(attach).observe(document.documentElement, { childList: true, subtree: false });
+  new MutationObserver(attach).observe(document.documentElement, { childList: true, subtree: true });
 })();
 `
 

@@ -580,21 +580,24 @@ export default function App() {
       {/* Deploying a node from here is only meaningful because the app is
           running ON the machine that would host it - which is the one thing a
           browser cannot know. The checks are the valuable half: Docker missing,
-          not started, or not permitted all look identical from the panel. */}
+          not started, or not permitted all look identical from the panel.
+
+          Reached ONLY from the panel's My Infrastructure page, via #deploy - it
+          is not a section of this settings screen. Setting up a machine belongs
+          where the rest of the infrastructure is managed; what has to happen
+          here is the privileged part, because the bindings that write a compose
+          file and start a container are deliberately absent from the proxied
+          panel. So the panel owns the entry point and this screen owns the act. */}
+      {deployOpen && (
       <div className="settings-card" style={{ marginBottom: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
           <div className="settings-title" style={{ margin: 0 }}>Run a node on this machine</div>
-          <button type="button" className="btn btn-secondary" onClick={() => (deployOpen ? setDeployOpen(false) : openDeploy())}>
-            {deployOpen ? 'Hide' : 'Set up'}
+          <button type="button" className="btn btn-secondary" onClick={() => { window.location.href = '/'; }}>
+            Back to panel
           </button>
         </div>
-        {!deployOpen && (
-          <div style={{ fontSize: '0.8em', opacity: 0.7, marginTop: '0.3rem' }}>
-            Checks Docker and writes a ready-to-run compose file for this computer.
-          </div>
-        )}
 
-        {deployOpen && (
+        {(
           <div style={{ marginTop: '0.85rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
               <span style={{ fontSize: '0.8em', opacity: 0.7 }}>
@@ -698,6 +701,7 @@ export default function App() {
           </div>
         )}
       </div>
+      )}
 
       <div className="settings-card">
         <div className="settings-title">

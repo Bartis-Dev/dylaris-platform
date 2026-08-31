@@ -88,3 +88,49 @@ func TestLauncherStampsTheUpdateFlag(t *testing.T) {
 		t.Error("the placeholder was left in the script")
 	}
 }
+
+// Where the button starts.
+//
+// It defaulted to the LEFT margin, which is where the panel keeps its sidebar:
+// the button landed on top of the panel's own controls, hard to pick out and in
+// the one corner where a stray click costs something. The default is the right
+// edge now, and it stays there through a resize until the user drags it.
+func TestLauncherDefaultsToTheBottomRight(t *testing.T) {
+	got := launcherTag("", false)
+	if !strings.Contains(got, "function defaultX()") {
+		t.Fatal("no default position is computed at all")
+	}
+	if !strings.Contains(got, "window.innerWidth - SIZE - MARGIN") {
+		t.Error("the default is not derived from the right edge")
+	}
+	if !strings.Contains(got, "place(stored() === null ? defaultX() : stored())") {
+		t.Error("an unplaced button does not start at the default")
+	}
+	// The resize handler has to re-derive it. Clamping alone would leave a
+	// never-moved button wherever the previous window size put it, so "bottom
+	// right" would stop being true the moment the window changed.
+	if !strings.Contains(got, "place(stored() === null ? defaultX() :") {
+		t.Error("a resize does not re-anchor an unplaced button to the right edge")
+	}
+}
+
+// The re-attach guard has to watch the node the button actually lives in.
+//
+// It observed documentElement with subtree:false, which fires only when <head>
+// or <body> THEMSELVES are swapped - something React does not do. A removal from
+// inside body, the only way this node can really disappear, reached the observer
+// never, and the button stayed gone until a full page load.
+func TestLauncherReattachWatchesTheSubtree(t *testing.T) {
+	got := launcherTag("", false)
+	if strings.Contains(got, "subtree: false") {
+		t.Error("the observer still ignores everything inside body, where the button is")
+	}
+	if !strings.Contains(got, "observe(document.documentElement, { childList: true, subtree: true })") {
+		t.Error("the re-attach observer does not cover the subtree")
+	}
+	// And it must still be idempotent: the callback runs on every mutation
+	// batch of a busy SPA, so it may only touch the DOM when the host is gone.
+	if !strings.Contains(got, "!host.isConnected") {
+		t.Error("attach() would re-append on every mutation")
+	}
+}

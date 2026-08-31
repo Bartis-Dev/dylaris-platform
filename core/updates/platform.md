@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.2
+
+### Features
+- Setting a node up on this machine has moved out of Beam's settings and onto My
+  Infrastructure, beside the rest of your machines. Beam still runs the checks
+  and writes the file. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- "Your machines" showed an admin every tenant's BYON machine rather than their
+  own. It is scoped to the signed-in account now; the full fleet is still on the
+  node list. `core`
+- Beam asked for a sign-in on every launch. It held the session in memory only,
+  so closing the app threw it away. Update Beam to get this.
+- Beam's settings button could vanish for the rest of a session and started in
+  the bottom left, under the sidebar. It defaults to the bottom right now and
+  puts itself back. Update Beam to get this.
+
 ## 2026.09.01
 
 ### Features

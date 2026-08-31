@@ -55,6 +55,12 @@ type App struct {
 	cookieMu sync.Mutex
 	cookies  http.CookieJar
 
+	// sessionFingerprint is the last cookie set written to disk. Guards the
+	// write in persistPanelSession, which runs on every proxied response; see
+	// session_store.go.
+	sessionMu          sync.Mutex
+	sessionFingerprint string
+
 	// readable holds the Set-Cookie lines the webview IS allowed to have, keyed
 	// by PANEL and then by cookie name, so they can be replayed into the page;
 	// see readableCookieScript in proxy.go. Per panel because the app can hold
@@ -1341,6 +1347,15 @@ func (a *App) panelCookies() http.CookieJar {
 			// inside the proxy.
 			jar, _ = cookiejar.New(&cookiejar.Options{})
 		}
+		// Refill from disk before anyone reads it. Done here rather than in
+		// main because this is the only place a jar comes into existence -
+		// forgetPanelSession drops it and the next request builds another, so a
+		// one-shot restore at startup would be skipped on exactly that path.
+		stored := readStoredSessions()
+		restoreInto(jar, stored)
+		a.sessionMu.Lock()
+		a.sessionFingerprint = stored.fingerprint()
+		a.sessionMu.Unlock()
 		a.cookies = jar
 	}
 	return a.cookies
@@ -1355,8 +1370,12 @@ func (a *App) panelCookies() http.CookieJar {
 // fail and at worst send it somewhere it does not belong.
 func (a *App) forgetPanelSession() {
 	a.cookieMu.Lock()
-	defer a.cookieMu.Unlock()
 	a.cookies = nil
+	a.cookieMu.Unlock()
+	// Take it off disk too. Dropping only the in-memory jar would sign the user
+	// out until the next launch, which is not what "clear local data" means and
+	// leaves the token sitting in a file after they asked for it to be gone.
+	a.clearStoredSession()
 }
 
 // The panel list, exposed to the app-shell settings page.

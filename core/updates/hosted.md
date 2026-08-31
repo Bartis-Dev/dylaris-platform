@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.2
+
+### Features
+- Setting a node up on the computer you are sitting at has moved out of Beam's
+  settings and onto My Infrastructure, beside your other machines.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Beam asked you to sign in again every time you opened it. It kept your session
+  in memory only, so closing the app threw it away.
+- Beam's settings button could disappear for the rest of a session, and it
+  started in the bottom left corner underneath the sidebar. It now sits in the
+  bottom right and comes back on its own.
+
 ## 2026.09.01
 
 ### Features

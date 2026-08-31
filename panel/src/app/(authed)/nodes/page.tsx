@@ -28,6 +28,7 @@ import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
 import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
 import ExternalNodesPanel from '@/components/infra/ExternalNodesPanel';
 import TrafficPools from '@/components/infra/TrafficPools';
+import RunNodeHereCard from '@/components/infra/RunNodeHereCard';
 
 // ---------------------------------------------------------------------------
 // "My infrastructure" - hardware that is not in the cluster, in three tabs.
@@ -529,6 +530,8 @@ function MyNodesInner() {
                         )}
 
                         <div className="border-t border-(--base-03) pt-3 space-y-2">
+                            <RunNodeHereCard />
+
                             <div className="mono-label">Your machines</div>
                             {loading ? (
                                 <SkeletonCard height="h-16" />

@@ -233,6 +233,10 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 			// at it; the webview keeps only the readable sign-in hint.
 			captureShellCookies(resp, app.panelCookies(), app.resolvePanelTarget())
 			app.rememberReadableCookies(app.resolvePanelTarget(), resp)
+			// Write the session through, so closing the app does not sign the
+			// user out. Cheap on the common path: it compares a fingerprint and
+			// only touches the disk when the cookie set actually changed.
+			app.persistPanelSession()
 			// The Panel ships no security headers of its own, so beam is
 			// the only place a CSP / framing policy is applied. Drop the
 			// report-only variant and X-Frame-Options (the latter is

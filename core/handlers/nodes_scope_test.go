@@ -91,3 +91,45 @@ func TestFilterNodesKeepsOrderAndNeverReturnsNil(t *testing.T) {
 		t.Error("filterNodes returned nil, want an empty slice so the JSON stays []")
 	}
 }
+
+// "Your machines" means MINE, and that has to hold for an admin too.
+//
+// Measured on a live install: the same BYON machine appeared in the customer's
+// account and again in the admin's, both under the heading "Your machines". The
+// non-admin branch of GetNodes already narrowed by owner, so scope=byon only
+// filtered by KIND - it looked like it finished the job while enforcing the
+// unprivileged half of it. An admin who wants the fleet asks for the unscoped
+// list, which is still theirs.
+func TestOwnedBYONNodeIsScopedToTheCaller(t *testing.T) {
+	me := "11111111-1111-1111-1111-111111111111"
+	someoneElse := "22222222-2222-2222-2222-222222222222"
+
+	nodes := []models.Node{
+		{Name: "my-desktop", OwnerID: &me},
+		{Name: "a-customers-box", OwnerID: &someoneElse},
+		{Name: "swarm-1"},
+		{Name: "office-box", Tags: "external"},
+	}
+
+	got := filterNodes(nodes, ownedBYONNode(me))
+	if len(got) != 1 || got[0].Name != "my-desktop" {
+		t.Fatalf("scope=byon returned %+v, want only my-desktop - another tenant's machine is listed as mine", got)
+	}
+
+	// The other direction, which is the one that was actually broken: asking as
+	// somebody who owns nothing returns nothing, not everything.
+	if got := filterNodes(nodes, ownedBYONNode("33333333-3333-3333-3333-333333333333")); len(got) != 0 {
+		t.Errorf("a caller who owns no machine got %+v", got)
+	}
+}
+
+// No identity on the request is not a wildcard. Reading the caller out of the
+// context can yield "", and a predicate that treated that as "match anything"
+// would hand the whole fleet to an unauthenticated path.
+func TestOwnedBYONNodeMatchesNothingWithoutACaller(t *testing.T) {
+	owner := "44444444-4444-4444-4444-444444444444"
+	nodes := []models.Node{{Name: "someones-box", OwnerID: &owner}}
+	if got := filterNodes(nodes, ownedBYONNode("")); len(got) != 0 {
+		t.Errorf("an empty caller matched %+v", got)
+	}
+}
