@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.18
+
+### Features
+- Beam's settings now list your panels, with Dylaris always at the top so it
+  cannot be lost. Panels you add can be named, edited and removed, and saving
+  under a name you already used replaces that entry.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.31.17
 
 ### Features

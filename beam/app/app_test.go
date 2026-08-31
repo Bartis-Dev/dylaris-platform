@@ -84,7 +84,23 @@ func panelOriginTestApp(t *testing.T) *App {
 	t.Setenv("AppData", tmp)         // Windows
 	t.Setenv("XDG_CONFIG_HOME", tmp) // Linux
 	t.Setenv("HOME", tmp)            // macOS / Linux fallback
+	// Launching with DYLARIS_PANEL_URL set is what this simulates, and that now
+	// moves the built-in list entry too - otherwise panelList would offer
+	// panel.dylaris.com and activePanel would resolve to it, so an app "started"
+	// against a test panel would report the production one as its origin.
+	withBuiltInPanel(t, "https://panel.example.test", "")
 	return &App{panelURL: "https://panel.example.test"}
+}
+
+// withBuiltInPanel points the built-in entry somewhere else for one test and
+// puts it back afterwards. Package-level state, so restoring it is not optional:
+// a leaked value would make every later test in the binary see a panel it never
+// configured.
+func withBuiltInPanel(t *testing.T, panelURL, apiURL string) {
+	t.Helper()
+	oldPanel, oldAPI := builtInPanelURL, builtInAPIURL
+	setBuiltInDefaults(panelURL, apiURL)
+	t.Cleanup(func() { setBuiltInDefaults(oldPanel, oldAPI) })
 }
 
 func TestIsPanelOrigin(t *testing.T) {

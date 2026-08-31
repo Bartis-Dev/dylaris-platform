@@ -15,6 +15,10 @@ import (
 // the app had forgotten where it was pointed - the one thing a desktop client
 // must not do on update.
 func TestPanelsMigrateFromTheSingleURL(t *testing.T) {
+	// No built-in entry, so these describe the STORED list on its own. The
+	// built-in one has its own test below.
+	withBuiltInPanel(t, "", "")
+
 	t.Run("an old config becomes a one-entry list", func(t *testing.T) {
 		s := userSettings{PanelURL: "https://panel.example.com", APIURL: "https://api.example.com"}
 		got := s.panelList()
@@ -54,9 +58,76 @@ func TestPanelsMigrateFromTheSingleURL(t *testing.T) {
 	})
 }
 
+// The rule this decides: the panel this build is FOR is always in the list, at
+// the top, and cannot be removed.
+//
+// Not a UI rule, because the UI is not the only writer. A list that could lose
+// it leaves a client that cannot find the service it was installed to reach,
+// with no way back except reinstalling - and "I was trying things out in
+// settings" is exactly when that happens.
+func TestTheBuiltInPanelIsAlwaysPresentAndFirst(t *testing.T) {
+	withBuiltInPanel(t, "https://panel.dylaris.test", "")
+
+	t.Run("it is prepended to whatever is stored", func(t *testing.T) {
+		s := userSettings{Panels: []savedPanel{{Name: "Mine", URL: "https://mine.example.com"}}}
+		got := s.panelList()
+		if len(got) != 2 {
+			t.Fatalf("panelList() = %+v, want the built-in entry plus the stored one", got)
+		}
+		if got[0].URL != "https://panel.dylaris.test" || got[0].Name != OfficialPanelName {
+			t.Errorf("first entry = %+v, want the built-in one", got[0])
+		}
+		if got[1].Name != "Mine" {
+			t.Errorf("the stored entry was lost: %+v", got[1])
+		}
+	})
+
+	t.Run("removing it from storage does not remove it", func(t *testing.T) {
+		s := userSettings{Panels: []savedPanel{{Name: "Mine", URL: "https://mine.example.com"}}}
+		if !s.panelList()[0].IsOfficial() {
+			t.Error("the built-in entry was not restored")
+		}
+	})
+
+	// Someone who added it by hand before it was built in must not end up with
+	// two rows for one host - they would share a cookie jar while looking like
+	// separate places to be signed in.
+	t.Run("a stored row for the same host is folded in, not duplicated", func(t *testing.T) {
+		s := userSettings{Panels: []savedPanel{
+			{Name: "whatever I called it", URL: "https://panel.dylaris.test", APIURL: "https://api.example.com"},
+		}}
+		got := s.panelList()
+		if len(got) != 1 {
+			t.Fatalf("panelList() = %+v, want one entry", got)
+		}
+		if got[0].APIURL != "https://api.example.com" {
+			t.Errorf("their API override was discarded: %+v", got[0])
+		}
+	})
+
+	// The one that would be a real regression: a self-hoster whose stored choice
+	// goes stale must not be silently repointed at the official panel.
+	t.Run("the fallback prefers what the user configured", func(t *testing.T) {
+		s := userSettings{
+			Panels: []savedPanel{{Name: "Mine", URL: "https://mine.example.com"}},
+			Active: "https://gone.example.com",
+		}
+		if got := s.activePanel(); got.URL != "https://mine.example.com" {
+			t.Errorf("activePanel() = %+v, want the user's own panel", got)
+		}
+	})
+
+	t.Run("with nothing configured it is the active one", func(t *testing.T) {
+		if got := (userSettings{}).activePanel(); got.URL != "https://panel.dylaris.test" {
+			t.Errorf("activePanel() = %+v, want the built-in entry", got)
+		}
+	})
+}
+
 // The active panel has to survive a list that changed under it. Pointing at an
 // entry that was removed would leave the window proxying nothing.
 func TestActivePanelFallsBackToTheFirstEntry(t *testing.T) {
+	withBuiltInPanel(t, "", "")
 	s := userSettings{
 		Panels: []savedPanel{{URL: "https://a.example.com"}, {URL: "https://b.example.com"}},
 		Active: "https://gone.example.com",

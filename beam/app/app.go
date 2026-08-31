@@ -1361,13 +1361,16 @@ func (a *App) forgetPanelSession() {
 func (a *App) ListPanels() map[string]interface{} {
 	s := loadSettings()
 	list := s.panelList()
-	out := make([]map[string]string, 0, len(list))
+	out := make([]map[string]interface{}, 0, len(list))
 	for _, p := range list {
-		out = append(out, map[string]string{
+		out = append(out, map[string]interface{}{
 			"name":    p.DisplayName(),
 			"rawName": p.Name,
 			"url":     p.URL,
 			"apiUrl":  p.APIURL,
+			// Reported rather than inferred client-side: the built-in entry moves
+			// with DYLARIS_PANEL_URL, so its URL is not a constant the UI knows.
+			"official": p.IsOfficial(),
 		})
 	}
 	return map[string]interface{}{"panels": out, "active": s.activePanel().URL}
@@ -1405,7 +1408,12 @@ func (a *App) SavePanels(token string, panels []savedPanel, active string) error
 		}
 		cleaned = append(cleaned, savedPanel{Name: strings.TrimSpace(p.Name), URL: u, APIURL: api})
 	}
-	if len(cleaned) == 0 {
+	// Empty is fine when this build HAS a built-in entry: panelList puts it back,
+	// so the list is never actually empty and refusing here would only stop
+	// someone from removing the last panel they added. With no built-in entry
+	// (the open-source build) an empty list really would leave the app with
+	// nowhere to go, and the refusal still stands.
+	if len(cleaned) == 0 && officialPanel().URL == "" {
 		return fmt.Errorf("keep at least one panel")
 	}
 

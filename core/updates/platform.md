@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.18
+
+### Features
+- Beam's panel settings are one list now. The panel this build is for is always
+  the first entry and cannot be removed or repointed; the ones you add sit under
+  it with Edit and Remove, and the form at the top names them.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.31.17
 
 ### Features

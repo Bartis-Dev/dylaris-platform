@@ -47,7 +47,17 @@ type SavedPanel = {
   rawName?: string;
   url: string;
   apiUrl?: string;
+  /**
+   * The built-in entry for the panel this build is for. Reported by the Go side
+   * rather than guessed from the name, because the name is only a label and the
+   * URL moves with DYLARIS_PANEL_URL. It has no Edit and no Remove.
+   */
+  official?: boolean;
 };
+
+// Must match panels.go's OfficialPanelName. Only used to stop someone naming
+// their own entry the same thing, which would make the list unreadable.
+const OFFICIAL_NAME = 'Dylaris Official';
 
 declare global {
   interface Window {
@@ -86,14 +96,17 @@ export default function App() {
   // mount. The API URL is optional (empty = same-origin /api).
   const [defaultUrl, setDefaultUrl] = useState('');
   const [inputUrl, setInputUrl] = useState('');
-  const [apiDefaultUrl, setApiDefaultUrl] = useState('');
   const [apiInputUrl, setApiInputUrl] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [savingError, setSavingError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
   const [panels, setPanels] = useState<SavedPanel[]>([]);
   const [activePanel, setActivePanel] = useState('');
-  const [adding, setAdding] = useState('');
+  // The form at the top is BOTH "add" and "edit". editingUrl names the entry it
+  // will replace, or '' for a new one - so Edit fills the same fields the user
+  // already knows rather than opening a second dialogue somewhere else.
+  const [inputName, setInputName] = useState('');
+  const [editingUrl, setEditingUrl] = useState('');
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [gate, setGate] = useState<UpdateGate | null>(null);
 
@@ -126,10 +139,9 @@ export default function App() {
         setDefaultUrl(fallback);
         const url = (await bindings?.GetPanelURL?.()) || fallback;
         setInputUrl(url);
-        const apiFallback = (await bindings?.GetDefaultAPIURL?.()) || '';
-        setApiDefaultUrl(apiFallback);
-        // GetAPIURL falls back to the build default; "" only when none is compiled in.
-        setApiInputUrl((await bindings?.GetAPIURL?.()) ?? apiFallback);
+        // GetAPIURL already falls back to the build default; "" only when none
+        // is compiled in, which means same-origin /api.
+        setApiInputUrl((await bindings?.GetAPIURL?.()) ?? '');
         const list = await bindings?.ListPanels?.();
         if (list) { setPanels(list.panels ?? []); setActivePanel(list.active ?? ''); }
         bindings?.GetUpdateInfo?.().then(u => setUpdate(u)).catch(() => {});
@@ -246,25 +258,36 @@ export default function App() {
     window.location.href = '/';
   };
 
-  const addPanel = async () => {
-    const url = adding.trim();
-    if (!url) return;
-    if (await persistPanels([...panels, { name: url, url }], activePanel || url)) setAdding('');
+  // Fills the form at the top from an existing entry. The official one is not
+  // editable: its URL is what this build is for, and letting it be repointed is
+  // the one edit that can leave the app unable to find the service.
+  const editPanel = (p: SavedPanel) => {
+    if (p.official) return;
+    setEditingUrl(p.url);
+    setInputName(p.rawName ?? '');
+    setInputUrl(p.url);
+    setApiInputUrl(p.apiUrl ?? '');
+    setSavingError(null);
+  };
+
+  const clearForm = () => {
+    setEditingUrl('');
+    setInputName('');
+    setInputUrl('');
+    setApiInputUrl('');
+    setSavingError(null);
   };
 
   const removePanel = async (url: string) => {
-    const next = panels.filter(p => p.url !== url);
-    if (next.length === 0) {
-      setSavingError('Keep at least one panel.');
-      return;
-    }
+    const target = panels.find(p => p.url === url);
+    if (target?.official) return;
+    const next = panels.filter(p => p.url !== url && !p.official);
+    if (editingUrl === url) clearForm();
     // Removing the ACTIVE one has to move it, or the window would go on
-    // proxying a panel the list no longer contains.
-    await persistPanels(next, url === activePanel ? next[0].url : activePanel);
-  };
-
-  const renamePanel = (url: string, name: string) => {
-    setPanels(prev => prev.map(p => (p.url === url ? { ...p, rawName: name, name: name || p.url } : p)));
+    // proxying a panel the list no longer contains. The official entry is
+    // always in the list, so there is always somewhere to land.
+    const nextActive = url === activePanel ? (next[0]?.url ?? defaultUrl) : activePanel;
+    await persistPanels(next, nextActive);
   };
 
   // The session lives in the app shell, not in the webview, so clearing site
@@ -283,9 +306,12 @@ export default function App() {
     setTimeout(() => setCleared(false), 2000);
   };
 
-  // Persist the URL, then hand the window back to the Panel. The proxy
-  // re-reads the saved URL on the next request, so '/' now resolves to
-  // the freshly chosen Panel.
+  // Adds the entry, or replaces one, then hands the window back to the Panel.
+  //
+  // Replacing happens on the NAME, not the URL: re-using a name is how someone
+  // corrects the address of a panel they already listed, and creating a second
+  // row called "Test" pointing somewhere else is never what they meant. Editing
+  // an entry also replaces the row it came from, whatever its name became.
   const handleSave = async () => {
     setSavingError(null);
     let candidate = inputUrl.trim();
@@ -302,9 +328,28 @@ export default function App() {
     if (apiCandidate && !/^https?:\/\//i.test(apiCandidate)) {
       apiCandidate = 'https://' + apiCandidate;
     }
+    const name = inputName.trim();
+    if (name.toLowerCase() === OFFICIAL_NAME.toLowerCase()) {
+      setSavingError(`"${OFFICIAL_NAME}" is the built-in entry and cannot be reused as a name.`);
+      return;
+    }
+
+    // The official entry is not stored by us - the app re-adds it - so it is
+    // filtered out of everything written back.
+    const others = panels.filter(p => !p.official);
+    const replaces = (p: SavedPanel) =>
+      (editingUrl && p.url === editingUrl) ||
+      (!!name && (p.rawName ?? '').trim().toLowerCase() === name.toLowerCase()) ||
+      p.url === candidate;
+
+    const entry: SavedPanel = { name: name || candidate, rawName: name, url: candidate, apiUrl: apiCandidate };
+    const next = others.some(replaces)
+      ? others.map(p => (replaces(p) ? entry : p))
+      : [...others, entry];
+
+    if (!(await persistPanels(next, candidate))) return;
     try {
-      await getBindings()?.SavePanelURL?.(shellToken, candidate);
-      await getBindings()?.SaveAPIURL?.(shellToken, apiCandidate);
+      await getBindings()?.SwitchPanel?.(shellToken, candidate);
     } catch (err) {
       setSavingError(err instanceof Error ? err.message : String(err));
       return;
@@ -370,7 +415,7 @@ export default function App() {
         </div>
       )}
 
-      {panels.length > 1 && (
+      {panels.length > 0 && (
         <div className="settings-card" style={{ marginBottom: '1rem' }}>
           <div className="settings-title">Panels</div>
           <div style={{ fontSize: '0.8em', opacity: 0.7, marginTop: '0.3rem' }}>
@@ -389,16 +434,12 @@ export default function App() {
                     border: active ? '1px solid rgba(112,72,200,0.45)' : '1px solid transparent',
                   }}
                 >
-                  <input
-                    type="text"
-                    className="url-input"
-                    style={{ flex: 1, minWidth: 0, margin: 0, padding: '0.3rem 0.5rem', fontSize: '0.85em' }}
-                    value={p.rawName ?? ''}
-                    placeholder={p.url}
-                    onChange={e => renamePanel(p.url, e.target.value)}
-                    onBlur={() => persistPanels(panels, activePanel)}
-                    aria-label={`Name for ${p.url}`}
-                  />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: '0.9em' }}>{p.name || p.url}</span>
+                    <span style={{ display: 'block', fontSize: '0.75em', opacity: 0.6, wordBreak: 'break-all' }}>
+                      {p.url}
+                    </span>
+                  </span>
                   {active ? (
                     <span style={{ fontSize: '0.75em', opacity: 0.8, whiteSpace: 'nowrap' }}>in use</span>
                   ) : (
@@ -406,15 +447,32 @@ export default function App() {
                       Switch
                     </button>
                   )}
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ padding: '0.3rem 0.55rem', fontSize: '0.8em' }}
-                    onClick={() => removePanel(p.url)}
-                    aria-label={`Remove ${p.url}`}
-                  >
-                    Remove
-                  </button>
+                  {/* The official entry has no Edit or Remove. It is the address
+                      this build exists for, so repointing or dropping it is the
+                      one change that can leave the app unable to find the
+                      service - and the app re-adds it anyway. */}
+                  {!p.official && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: '0.3rem 0.55rem', fontSize: '0.8em' }}
+                        onClick={() => editPanel(p)}
+                        aria-label={`Edit ${p.name || p.url}`}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: '0.3rem 0.55rem', fontSize: '0.8em' }}
+                        onClick={() => removePanel(p.url)}
+                        aria-label={`Remove ${p.name || p.url}`}
+                      >
+                        Remove
+                      </button>
+                    </>
+                  )}
                 </li>
               );
             })}
@@ -423,14 +481,34 @@ export default function App() {
       )}
 
       <div className="settings-card">
-        <div className="settings-title">Panel URL</div>
+        <div className="settings-title">
+          {editingUrl ? 'Edit panel' : 'Add a panel'}
+        </div>
+
+        <div className="settings-title" style={{ marginTop: '0.75rem' }}>
+          Name{' '}
+          <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional - saving under an existing name replaces it)</span>
+        </div>
+        <input
+          type="text"
+          className="url-input"
+          value={inputName}
+          onChange={e => setInputName(e.target.value)}
+          placeholder="Production"
+          disabled={!loaded}
+          onKeyDown={e => {
+            if (e.key === 'Enter') handleSave();
+            if (e.key === 'Escape') window.location.href = '/';
+          }}
+        />
+
+        <div className="settings-title" style={{ marginTop: '1rem' }}>Panel URL</div>
         <input
           type="text"
           className="url-input"
           value={inputUrl}
           onChange={e => setInputUrl(e.target.value)}
           placeholder="https://panel.example.com"
-          autoFocus
           disabled={!loaded}
           onKeyDown={e => {
             if (e.key === 'Enter') handleSave();
@@ -457,13 +535,11 @@ export default function App() {
         {savingError && <div className="error">{savingError}</div>}
 
         <div className="settings-actions">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => { setInputUrl(defaultUrl); setApiInputUrl(apiDefaultUrl); }}
-          >
-            Use default
-          </button>
+          {editingUrl && (
+            <button type="button" className="btn btn-secondary" onClick={clearForm}>
+              Cancel edit
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-secondary"
@@ -480,26 +556,10 @@ export default function App() {
             Cancel
           </button>
           <button type="button" className="btn btn-primary" onClick={handleSave}>
-            Save &amp; connect
+            {editingUrl ? 'Save & connect' : 'Add & connect'}
           </button>
         </div>
 
-        <div className="settings-title" style={{ marginTop: '1.25rem' }}>Add another panel</div>
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
-          <input
-            type="text"
-            className="url-input"
-            style={{ flex: 1, minWidth: 0, margin: 0 }}
-            value={adding}
-            onChange={e => setAdding(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') addPanel(); }}
-            placeholder="https://panel.example.com"
-            aria-label="URL of another panel"
-          />
-          <button type="button" className="btn btn-secondary" onClick={addPanel} disabled={!adding.trim()}>
-            Add
-          </button>
-        </div>
       </div>
     </div>
   );

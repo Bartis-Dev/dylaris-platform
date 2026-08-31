@@ -59,6 +59,10 @@ func main() {
 		apiURL = defaultAPIURL
 	}
 	app.apiURL = apiURL
+	// The built-in list entry follows the same two values, so pointing this app
+	// somewhere else with DYLARIS_PANEL_URL moves the entry too rather than
+	// leaving an unremovable row for a panel this build is not for.
+	setBuiltInDefaults(panelURL, apiURL)
 
 	err := wails.Run(&options.App{
 		Title:  "Dylaris Beam",
