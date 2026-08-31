@@ -204,8 +204,10 @@ var ExemptRoutes = map[string]bool{
 	// Overlay addresses for the deploy snippet. Read-only RFC1918 values that
 	// authorize nothing without a warp key, needed by exactly the tenants who
 	// mint one on /nodes.
-	"/api/warp/deploy-config": true, // authed; no per-owner data to filter
-	"/api/store/status":       true, // authed; panel-user session
+	"/api/warp/deploy-config":    true, // authed; no per-owner data to filter
+	"/api/store/status":          true, // authed; panel-user session
+	"/api/store/account-summary": true, // authed; the caller's OWN account only
+	"/api/store/billing-consent": true, // authed; the caller's OWN account only
 
 	// Versions: read for any authed user (software list itself is PUBLIC above).
 	"/api/versions": true, // authed; version info

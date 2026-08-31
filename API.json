@@ -4294,11 +4294,31 @@
     },
     {
       "method": "GET",
+      "path": "/api/store/account-summary",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "session-authed.",
+      "handler": "StoreHandler.AccountSummary",
+      "group": "store",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/store/backup-defaults",
       "auth": "none",
       "authorization": "public",
       "description": "store-key.",
       "handler": "StoreHandler.BackupDefaults",
+      "group": "store",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/store/billing-consent",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "session-authed.",
+      "handler": "StoreHandler.SetBillingConsent",
       "group": "store",
       "external": false
     },
@@ -4874,10 +4894,10 @@
     }
   ],
   "counts": {
-    "total": 488,
+    "total": 490,
     "byAuth": {
       "none": 35,
-      "session": 440,
+      "session": 442,
       "user API key": 10,
       "warp key": 3
     },
@@ -4918,7 +4938,7 @@
       "status": 1,
       "storage": 1,
       "storage-connections": 6,
-      "store": 7,
+      "store": 9,
       "system": 4,
       "tabproxy": 1,
       "ticket-canned-responses": 1,

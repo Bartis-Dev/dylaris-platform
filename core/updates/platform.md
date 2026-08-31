@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.15
+
+### Features
+- The Dylaris Store page shows the subscription itself: which units, how much of
+  the traffic and backup allowance is gone, and two switches deciding whether
+  running out bills you or stops you. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.31.14
 
 ### Features

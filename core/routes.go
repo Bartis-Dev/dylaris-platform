@@ -1508,6 +1508,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	storeHandler := handlers.NewStoreHandler(appState)
 	api.HandleFunc("/store/link/start", authHandler.AuthMiddleware(storeHandler.LinkStart)).Methods("POST")
 	api.HandleFunc("/store/status", authHandler.AuthMiddleware(storeHandler.Status)).Methods("GET")
+	// The tenant's own subscription and the two billing switches. Session-authed
+	// and deliberately carrying no uuid: the account acted on is the one the
+	// session authenticated, which is what keeps a shared-key channel from
+	// becoming a way to read and change anyone's billing.
+	api.HandleFunc("/store/account-summary", authHandler.AuthMiddleware(storeHandler.AccountSummary)).Methods("GET")
+	api.HandleFunc("/store/billing-consent", authHandler.AuthMiddleware(storeHandler.SetBillingConsent)).Methods("POST")
 	api.HandleFunc("/store/link/verify", authLimiter.Limit(20, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.LinkVerify))).Methods("POST")
 	api.HandleFunc("/store/verify-user", authLimiter.Limit(60, storeHandler.VerifyUser)).Methods("GET")
 	api.HandleFunc("/store/usage", authLimiter.Limit(60, storeHandler.GetUsage)).Methods("GET")

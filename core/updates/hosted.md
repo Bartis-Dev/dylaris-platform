@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.15
+
+### Features
+- The panel now shows your subscription: how much of your traffic and backup
+  allowance is used, and whether going over bills you or stops you. Both
+  switches can be turned on and off from there.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.31.12
 
 ### Features

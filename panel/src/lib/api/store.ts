@@ -35,3 +35,72 @@ export async function startStoreLink(): Promise<{ success: boolean; redirectUrl?
         return handleError(err) as { success: boolean; redirectUrl?: string; message?: string };
     }
 }
+
+// The tenant's own subscription, usage and billing consent.
+//
+// Assembled by the store and passed through Core, which names the account from
+// the session rather than from anything the caller sends. reachable=false is a
+// real state and not an error: the panel keeps working while the storefront is
+// quiet, and saying so beats rendering an account that looks empty.
+export interface StoreUsageBlock {
+    usedGb: number;
+    includedGb: number;
+    ceilingGb?: number;
+    pct?: number;
+}
+
+export interface StoreBackupBlock extends StoreUsageBlock {
+    ownStorageGb: number;
+    bookableGb: number;
+    blockGb: number;
+    blocksUsed: number;
+}
+
+export interface StoreAccountSummary {
+    success: boolean;
+    enabled: boolean;
+    reachable?: boolean;
+    message?: string;
+    linked?: boolean;
+    email?: string;
+    storeUrl?: string;
+    subscribed?: boolean;
+    status?: string;
+    nodes?: number;
+    routeOnly?: number;
+    stripe?: boolean;
+    trafficMeterConfigured?: boolean;
+    backupMeterConfigured?: boolean;
+    trafficBillingEnabled?: boolean;
+    backupBillingEnabled?: boolean;
+    trafficCutoffAt?: string | null;
+    traffic?: StoreUsageBlock & { warn?: number; cutOff?: boolean };
+    backup?: StoreBackupBlock;
+}
+
+// GET /store/account-summary
+export async function getStoreAccountSummary(): Promise<StoreAccountSummary> {
+    try {
+        const res = await fetch(`${API_URL}/store/account-summary`, { headers: getAuthHeader() });
+        return (await handleResponse(res)) as StoreAccountSummary;
+    } catch (err) {
+        return handleError(err) as StoreAccountSummary;
+    }
+}
+
+// POST /store/billing-consent - an omitted field is left alone, so the two
+// switches never overwrite each other.
+export async function setStoreBillingConsent(
+    change: { traffic?: boolean; backup?: boolean },
+): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/store/billing-consent`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(change),
+        });
+        return (await handleResponse(res)) as { success: boolean; message?: string };
+    } catch (err) {
+        return handleError(err) as { success: boolean; message?: string };
+    }
+}

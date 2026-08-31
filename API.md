@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **487 routes** in 50 sections: 217 GET, 145 POST, 37 PUT, 36 PATCH, 53 DELETE.
+- **489 routes** in 50 sections: 218 GET, 146 POST, 37 PUT, 36 PATCH, 53 DELETE.
 - **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **91** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **93** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **8** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -177,7 +177,7 @@ can still show what exists.
 - [/api/status](#apistatus) (1)
 - [/api/storage](#apistorage) (1)
 - [/api/storage-connections](#apistorage-connections) (6)
-- [/api/store](#apistore) (7)
+- [/api/store](#apistore) (9)
 - [/api/system](#apisystem) (4)
 - [/api/tabproxy](#apitabproxy) (1)
 - [/api/ticket-canned-responses](#apiticket-canned-responses) (1)
@@ -794,7 +794,9 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+| GET | `/api/store/account-summary` | session | _no capability_ | - | `StoreHandler.AccountSummary` | session-authed. |
 | GET | `/api/store/backup-defaults` | **none** | _public_ | Limit | `StoreHandler.BackupDefaults` | store-key. |
+| POST | `/api/store/billing-consent` | session | _no capability_ | - | `StoreHandler.SetBillingConsent` | session-authed. |
 | POST | `/api/store/link/start` | session | _no capability_ | - | `StoreHandler.LinkStart` | authed panel user. |
 | POST | `/api/store/link/verify` | **none** | _public_ | Limit, LimitBody | `StoreHandler.LinkVerify` | store-key. |
 | POST | `/api/store/provision` | **none** | _public_ | Limit, LimitBody | `StoreHandler.Provision` | store-key. |

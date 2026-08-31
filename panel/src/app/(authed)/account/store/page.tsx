@@ -3,7 +3,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Store, ExternalLink, CircleCheck, CircleAlert, Loader2 } from 'lucide-react';
-import { getStoreStatus, startStoreLink, type StoreStatus } from '@/lib/api/store';
+import { getStoreStatus, startStoreLink, getStoreAccountSummary, type StoreStatus, type StoreAccountSummary } from '@/lib/api/store';
+import StoreAccountCard from '@/components/StoreAccountCard';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
 
@@ -15,6 +16,7 @@ export default function StoreConnectPage() {
     const router = useRouter();
     const { featureFlags } = useAppData();
     const [status, setStatus] = useState<StoreStatus | null>(null);
+    const [summary, setSummary] = useState<StoreAccountSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [redirecting, setRedirecting] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -28,6 +30,10 @@ export default function StoreConnectPage() {
         const s = await getStoreStatus();
         setStatus(s);
         setLoading(false);
+        // Only for a linked account: the summary is about a store account, and
+        // asking for one that does not exist yet would answer "not linked" a
+        // second time in a different shape.
+        if (s.linked) setSummary(await getStoreAccountSummary());
     }, []);
 
     useEffect(() => { refresh(); }, [refresh]);
@@ -89,6 +95,10 @@ export default function StoreConnectPage() {
                     </button>
                 </div>
             )}
+
+            {status?.linked && (summary
+                ? <StoreAccountCard summary={summary} onChanged={refresh} onError={m => showToast(m, false)} />
+                : <SkeletonCard />)}
 
             {toast && (
                 <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2.5 rounded-md text-sm shadow-lg ${toast.ok ? 'bg-(--success) text-white' : 'bg-(--error) text-white'}`}>
