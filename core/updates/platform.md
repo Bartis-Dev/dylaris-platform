@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A node Core has no record of was told to re-pair with a recovery token, which
+  is minted per node and cannot be issued for one that is not listed - a dead
+  end. It now says to clear the cached identity on the node instead. `core`
+
 ## 2026.08.31.10
 
 ### Features

@@ -257,8 +257,18 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			// the door, and it is checked first below, so this only closes the
 			// automatic cluster-proof path.
 			if auth.SecretProof != "" && auth.EnrollToken == "" {
-				const msg = "this node already holds an identity Core does not know; " +
-					"re-pair it with NODE_RECOVERY_TOKEN (panel: Settings -> Nodes -> Reset pairing)"
+				// Says what is actually REACHABLE from here, which the first
+				// version of this message did not. A recovery token is minted
+				// per node, from that node's row in the panel - and the branch
+				// we are in is the one where Core has no row for it, so
+				// "Reset pairing" points at a screen where the node is not
+				// listed. That is a dead end an operator can only leave by
+				// touching the node's disk, so the message has to say so.
+				const msg = "Core has no record of this node. A recovery token is issued " +
+					"per node and cannot be minted for one that is not listed, so clear the " +
+					"cached identity on the node (.node_id and .node_secret in its storage " +
+					"directory) and restart it; it will pair again. If the node IS listed in " +
+					"the panel, use Settings -> Nodes -> Reset pairing and NODE_RECOVERY_TOKEN instead."
 				sendFail(msg)
 				return fmt.Errorf("acl: node %s presents a secret proof for an unknown identity; refusing to mint a new one", tokenPrefix(auth.NodeToken))
 			}

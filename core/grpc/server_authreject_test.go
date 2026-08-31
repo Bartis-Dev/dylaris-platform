@@ -227,8 +227,14 @@ func TestAPairedNodeIsNeverReEnrolledUnderANewIdentity(t *testing.T) {
 		t.Errorf("Core created %d new node(s) for a node that already had one; "+
 			"that is the row-per-30-seconds leak", acl.platformEnrolls)
 	}
-	if !strings.Contains(buf.String()+failMessages(stream.sent), "NODE_RECOVERY_TOKEN") {
-		t.Error("the refusal does not name the recovery path, so the operator is told nothing")
+	// The refusal has to name something the operator can actually DO. The first
+	// version named "Reset pairing", which is a per-node action on a screen where
+	// this node is not listed - a dead end reported on 2026-08-31 by the one
+	// person following it. Clearing the cached identity is the way out of this
+	// branch, so that is what it must say.
+	msg := buf.String() + failMessages(stream.sent)
+	if !strings.Contains(msg, ".node_secret") {
+		t.Error("the refusal does not name the reachable action (clearing the cached identity)")
 	}
 }
 
