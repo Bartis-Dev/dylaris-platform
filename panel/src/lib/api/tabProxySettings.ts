@@ -5,6 +5,10 @@ import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/c
 export interface TabProxySettings {
     enabled: boolean;
     allowPublicLinks: boolean;
+    // Who sees the Custom Tabs navbar entry. Set HERE and not in Settings ->
+    // Modules: that row is derived from this value, so the module tab shows it
+    // read-only and points back at Features.
+    audience: 'admin' | 'all';
     // Both per USER. Per server alone is not a ceiling (a user with twenty
     // servers holds twenty times it), and a server-wide count would let whoever
     // creates a tab first spend the allowance of everyone sharing that server.

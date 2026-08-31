@@ -72,7 +72,7 @@ export default function FeaturesTab() {
 
     // WS5 custom-tab reverse proxy toggles - same save-on-click/blur pattern
     // as the platform flags above, but its own admin settings endpoint.
-    const [tabProxy, setTabProxy] = useState<TabProxySettings>({ enabled: false, allowPublicLinks: false, maxPerUserPerServer: 3, maxPerUserTotal: 10, maxShareLinksPerUser: 20 });
+    const [tabProxy, setTabProxy] = useState<TabProxySettings>({ enabled: false, allowPublicLinks: false, audience: 'all', maxPerUserPerServer: 3, maxPerUserTotal: 10, maxShareLinksPerUser: 20 });
     const [tabProxySaving, setTabProxySaving] = useState(false);
     const tabProxySnapshot = useRef<TabProxySettings | null>(null);
 
@@ -511,6 +511,30 @@ export default function FeaturesTab() {
                         </span>
                     </p>
                 )}
+                </SettingsGroup>
+                <SettingsGroup title="Who sees the Custom Tabs page">
+                    <div className="flex bg-(--base-03) p-0.5 rounded-md w-fit">
+                        {(['all', 'admin'] as const).map(a => (
+                            <button
+                                key={a}
+                                type="button"
+                                onClick={() => setTabProxy({ ...tabProxy, audience: a })}
+                                className={`px-3 py-1 text-xs rounded-sm transition-colors ${
+                                    tabProxy.audience === a
+                                        ? 'bg-(--accent) text-white'
+                                        : 'text-(--base-07) hover:text-(--base-09)'
+                                }`}
+                            >
+                                {a === 'all' ? 'Everyone' : 'Admins only'}
+                            </button>
+                        ))}
+                    </div>
+                    <p className="text-xs text-(--base-06)">
+                        Controls the Custom Tabs entry in the navigation bar. It is set here
+                        rather than under Settings &rarr; Modules, because that row follows this
+                        value - editing it there would be undone the next time this card is saved.
+                        Individual tabs are still governed by who may see the server they belong to.
+                    </p>
                 </SettingsGroup>
                 <SettingsGroup title="Per-user limits">
                     <div className="grid grid-cols-3 gap-3">

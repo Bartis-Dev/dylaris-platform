@@ -201,6 +201,20 @@ func (f *FeatureFlags) TabProxyMaxPerUserTotal(ctx context.Context) int {
 	return 10
 }
 
+// TabProxyAudience is who the Custom Tabs navbar entry is shown to: "admin" or
+// "all". Default "all" - the tabs are a tenant-facing feature and a server owner
+// who has one is the person meant to open it.
+//
+// It lives here rather than on the module row because the module row is DERIVED
+// from it (handlers/custom_tabs_module.go). Two editable copies of one answer is
+// how the row and the gate come to disagree.
+func (f *FeatureFlags) TabProxyAudience(ctx context.Context) string {
+	if v := f.GetString(ctx, "tab_proxy_audience", "all"); v == "admin" || v == "all" {
+		return v
+	}
+	return "all"
+}
+
 // TabProxyMaxShareLinksPerUser caps active share links per user. Default 20.
 func (f *FeatureFlags) TabProxyMaxShareLinksPerUser(ctx context.Context) int {
 	if v := f.GetInt(ctx, "tab_proxy_max_share_links_per_user", 20); v > 0 {

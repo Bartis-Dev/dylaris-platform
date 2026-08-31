@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.10
+
+### Features
+- Who sees the Custom Tabs entry in the navigation bar is now set under
+  Settings -> Features, beside the rest of the custom-tab settings. The Modules
+  screen shows the value but no longer lets you edit it there, because that row
+  follows this one. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.31.9
 
 ### Features

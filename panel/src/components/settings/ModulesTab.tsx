@@ -44,6 +44,7 @@ const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library'
 // and widens from admin-only to everyone with "Open authoring to users".
 const DERIVED_MODULES = new Map([
     ['Modpacks', 'Settings -> Features -> Modpacks'],
+    ['Custom Tabs', 'Settings -> Features -> Custom-tab reverse proxy'],
 ]);
 
 interface SortableModuleCardProps {
