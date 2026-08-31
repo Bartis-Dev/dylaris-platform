@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { countThatFit } from './Navbar';
+import { countThatFit, visibleCountFor } from './Navbar';
 
 describe('countThatFit', () => {
     const TRIGGER = 60;
@@ -50,5 +50,44 @@ describe('countThatFit', () => {
         // clientWidth is 0 for one frame before layout. Reading that as "nothing
         // fits" would flash an empty nav on every mount.
         expect(countThatFit([100, 100], 0, TRIGGER)).toBe(2);
+    });
+});
+
+describe('visibleCountFor', () => {
+    // Measured in a browser on 2026-08-31 at a 1440px viewport, where two
+    // entries that fit with room to spare were both collapsed into "More".
+    const ROW = 376;      // the whole navigation row
+    const PINNED = 106;   // "Servers", pinned, incl. gap
+    const TRIGGER = 89;   // the "More" button, incl. gap
+    const ITEMS = [PINNED, 100, 146]; // pinned first, then Admin, Infrastructure
+
+    it('gives the entries the whole row minus the pinned entry', () => {
+        expect(visibleCountFor(ROW, ITEMS, true, TRIGGER)).toBe(2);
+    });
+
+    /**
+     * The latch this function exists to prevent.
+     *
+     * The pinned entry and the "More" trigger are SIBLINGS of the clipped
+     * strip, not children of it. Measuring the strip therefore reported a box
+     * that the trigger had just shrunk - so collapsing made the next
+     * measurement agree with the collapse, and no amount of widening could
+     * undo it. Only a reload, which starts with everything visible and no
+     * trigger drawn, could.
+     */
+    it('does not depend on whether the trigger is currently drawn', () => {
+        const stripWhileCollapsed = ROW - PINNED - TRIGGER;
+        const stripWhileExpanded = ROW - PINNED;
+
+        // What the old code computed, from the same physical layout:
+        expect(countThatFit(ITEMS.slice(1), stripWhileCollapsed - PINNED, TRIGGER)).toBe(0);
+        expect(countThatFit(ITEMS.slice(1), stripWhileExpanded - PINNED, TRIGGER)).toBe(0);
+
+        // The row width is the same in both states, so the answer is too.
+        expect(visibleCountFor(ROW, ITEMS, true, TRIGGER)).toBe(2);
+    });
+
+    it('handles a row with no pinned entry', () => {
+        expect(visibleCountFor(ROW, [100, 146], false, TRIGGER)).toBe(2);
     });
 });

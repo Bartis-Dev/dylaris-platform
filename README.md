@@ -824,6 +824,22 @@ cd panel && npm run dev      # dev server
 cd panel && npm run build    # production build
 ```
 
+The dev server is a SECOND origin, and Core has to be told about it. `next dev`
+proxies `/api` to Core so the session cookie works, but the browser still sends
+`Origin: http://localhost:3000`, and Core's CSRF gate compares that against
+`FRONTEND_URL`. Leave them disagreeing and reads work while every WRITE and the
+SSE ticket answer 403 "Cross-origin request refused" - which reads as settings
+that silently refuse to save and a panel that only updates on reload. So while
+developing the panel, run Core with:
+
+```
+FRONTEND_URL=http://localhost:3000    # and use :3000, not :25500
+```
+
+Set `DEV_CORE_ORIGIN` if Core is not on `http://localhost:25500`. Testing the
+SHIPPED panel (the bundle inside Core) is the other mode: leave `FRONTEND_URL`
+at Core's own URL and use that, not the dev server.
+
 CI (`ci.yml`) gates every build job on: the Go test matrix, **staticcheck**, a
 `-race` gate over every Go module, a `db-tests` job against a real Postgres, and
 panel `npx vitest run` - all must pass before an image is built.

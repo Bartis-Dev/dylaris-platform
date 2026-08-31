@@ -69,6 +69,30 @@ export function countThatFit(widths: number[], available: number, triggerWidth: 
   return widths.length;
 }
 
+/**
+ * How many collapsible entries to show, from the width of the WHOLE row.
+ *
+ * rowWidth must be the navigation row, not the clipped strip inside it: the
+ * pinned entry and the "More" trigger are SIBLINGS of that strip. Measuring the
+ * strip made this a latch - the trigger is drawn only once something has
+ * collapsed, so the box shrank BECAUSE it collapsed, and every later
+ * measurement then agreed with the collapse. Only a reload, which starts with
+ * everything visible and no trigger, could undo it.
+ *
+ * itemWidths includes the pinned entry first when hasPinned, matching the
+ * measuring bench, and it is subtracted exactly once here.
+ */
+export function visibleCountFor(
+  rowWidth: number,
+  itemWidths: number[],
+  hasPinned: boolean,
+  triggerWidth: number,
+): number {
+  const widths = [...itemWidths];
+  const pinnedWidth = hasPinned ? widths.shift() ?? 0 : 0;
+  return countThatFit(widths, rowWidth - pinnedWidth, triggerWidth);
+}
+
 export default function Navbar({ children, brand }: NavbarProps) {
   const { modules, featureFlags } = useAppData();
   const pathname = usePathname();
@@ -93,7 +117,8 @@ export default function Navbar({ children, brand }: NavbarProps) {
   // all. Only when even that is not enough does the menu collect.
   const iconOnly = layout !== 'wide';
 
-  const stripRef = useRef<HTMLDivElement>(null);
+  // On the ROW, not on the clipped strip inside it - see visibleCountFor.
+  const rowRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(rest.length);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -106,24 +131,24 @@ export default function Navbar({ children, brand }: NavbarProps) {
   // repair. Measuring the rendered row could only ever see what was still
   // rendered, so the count could shrink and never grow again.
   useLayoutEffect(() => {
-    const strip = stripRef.current;
+    const row = rowRef.current;
     const bench = measureRef.current;
-    if (!strip || !bench) return;
+    if (!row || !bench) return;
 
     const measure = () => {
       const items = Array.from(bench.querySelectorAll<HTMLElement>('[data-measure-item]'));
       if (items.length === 0) return;
       const gap = 4;
       const widths = items.map(i => i.offsetWidth + gap);
-      const pinnedWidth = pinned ? widths.shift() ?? 0 : 0;
       const trigger = bench.querySelector<HTMLElement>('[data-measure-trigger]');
-      const fits = countThatFit(widths, strip.clientWidth - pinnedWidth, (trigger?.offsetWidth ?? 40) + gap);
+      const fits = visibleCountFor(
+        row.clientWidth, widths, !!pinned, (trigger?.offsetWidth ?? 40) + gap);
       setVisibleCount(prev => (prev === fits ? prev : fits));
     };
 
     measure();
     const ro = new ResizeObserver(measure);
-    ro.observe(strip);
+    ro.observe(row);
     ro.observe(bench);
     return () => ro.disconnect();
   }, [rest.length, iconOnly, pinned]);
@@ -221,14 +246,14 @@ export default function Navbar({ children, brand }: NavbarProps) {
       {/* Navigation modules. Never scrolled out of reach: the strip used to be
           overflow-x-auto with the scrollbar hidden, so entries past the fold
           were unreachable AND invisible. */}
-      <div className="flex items-center gap-1 flex-1 min-w-0">
+      <div ref={rowRef} className="flex items-center gap-1 flex-1 min-w-0">
         {pinned && renderItem(pinned)}
 
         {/* Only the collapsible half is clipped. The trigger sits OUTSIDE it,
             because a dropdown anchored inside an overflow-hidden box is drawn
             and then cut off - which is what made the old menu look like a
             button that did nothing. */}
-        <div ref={stripRef} className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
+        <div className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
           {visible.map(m => renderItem(m))}
         </div>
 

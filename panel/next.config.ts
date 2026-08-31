@@ -11,6 +11,12 @@ import type { NextConfig } from "next";
 // result: the browser discards a Set-Cookie from a cross-origin fetch, and sends
 // nothing back afterwards.
 //
+// That is only half of it, and the other half is Core's. The browser still sends
+// Origin: http://localhost:3000, and Core's CSRF gate compares that against
+// FRONTEND_URL - so Core must be run with FRONTEND_URL=http://localhost:3000
+// while developing here, or reads work and every write answers 403. See the
+// development section of the README.
+//
 // So dev proxies /api to Core instead of pointing the browser at it. That makes
 // development same-origin, which is what production is, so the dev loop exercises
 // the same cookie path rather than one that only worked while the token sat in
