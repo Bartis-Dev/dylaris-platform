@@ -431,7 +431,7 @@ func installFromLocalFile(destDir, srcPath string) error {
 	}
 	// Assume it's a JAR or similar — place it as server.jar
 	log.Printf("Copying JAR from library: %s", srcPath)
-	return copyFile(srcPath, filepath.Join(destDir, "server.jar"))
+	return copyFileForTenant(srcPath, filepath.Join(destDir, "server.jar"))
 }
 
 // installFromURL downloads a file from a URL and places it in destDir.
@@ -687,10 +687,40 @@ func copyWalk(src, dst string, skipProtected bool) error {
 		}
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
+			if err := os.MkdirAll(target, info.Mode()); err != nil {
+				return err
+			}
+			if skipProtected {
+				chownForMC(target)
+			}
+			return nil
 		}
-		return copyFile(path, target)
+		if err := copyFile(path, target); err != nil {
+			return err
+		}
+		// Only on the copyDir path, and the distinction is the point. copyTree
+		// carries the protected entries deliberately - it is a whole-server MOVE
+		// - and handing .active_server or .dylaris-backups to the container's uid
+		// would give away exactly what running non-root took away. A moved
+		// server's sub-server directory is chowned at its next start instead.
+		if skipProtected {
+			chownForMC(target)
+		}
+		return nil
 	})
+}
+
+// copyFileForTenant is copyFile plus the ownership the container needs.
+//
+// For the direct single-file copies, which all land inside a server's own data.
+// copyFile itself deliberately does NOT chown: copyTree reaches it too, and that
+// path copies the node's own files on purpose.
+func copyFileForTenant(src, dst string) error {
+	if err := copyFile(src, dst); err != nil {
+		return err
+	}
+	chownForMC(dst)
+	return nil
 }
 
 // downloadFile downloads a URL to a local file path.

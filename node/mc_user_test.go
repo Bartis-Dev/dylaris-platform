@@ -121,3 +121,52 @@ func TestEveryContainerBuildSiteSetsTheUser(t *testing.T) {
 		t.Error("nothing hands the world to the container's uid at start; a non-root server cannot write it")
 	}
 }
+
+// copyTree exists to MOVE a whole server to another storage path, protected
+// entries included - .active_server, .node_config.json, .dylaris-backups - and
+// it shares its walker with copyDir, which is the user-facing duplicate.
+//
+// So the ownership has to be applied on one path and not the other. Chowning in
+// copyFile, the obvious place, would reach both: a storage move would hand the
+// tenant's container the very files running non-root took away from it, and
+// nothing would look wrong until a plugin rewrote .active_server.
+func TestOnlyTheDuplicatingCopyHandsFilesOver(t *testing.T) {
+	b, err := os.ReadFile("installer.go")
+	if err != nil {
+		t.Fatalf("read installer.go: %v", err)
+	}
+	src := string(b)
+
+	body, ok := cutFunc(src, "func copyFile(src, dst string) error {")
+	if !ok {
+		t.Fatal("copyFile is gone; move this assertion with it")
+	}
+	if strings.Contains(body, "chownForMC") {
+		t.Error("copyFile chowns, so copyTree does too - a storage move would hand " +
+			".active_server and .dylaris-backups to the tenant's uid")
+	}
+
+	walk, ok := cutFunc(src, "func copyWalk(src, dst string, skipProtected bool) error {")
+	if !ok {
+		t.Fatal("copyWalk is gone")
+	}
+	if !strings.Contains(walk, "chownForMC") {
+		t.Error("copyWalk never hands a duplicated file to the container's uid")
+	}
+	if !strings.Contains(walk, "if skipProtected {") {
+		t.Error("copyWalk chowns unconditionally; copyTree must be excluded")
+	}
+}
+
+// cutFunc returns a function's source, from its header to the next one.
+func cutFunc(src, header string) (string, bool) {
+	i := strings.Index(src, header)
+	if i < 0 {
+		return "", false
+	}
+	body := src[i+len(header):]
+	if j := strings.Index(body, "\nfunc "); j > 0 {
+		body = body[:j]
+	}
+	return body, true
+}

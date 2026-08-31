@@ -749,7 +749,7 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	} else {
-		if err := copyFile(srcPath, dstPath); err != nil {
+		if err := copyFileForTenant(srcPath, dstPath); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	}

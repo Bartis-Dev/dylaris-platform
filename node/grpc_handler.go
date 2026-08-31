@@ -824,7 +824,7 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 			return errorMsg(reqID, 500, fmt.Sprintf("copy dir: %v", err))
 		}
 	} else {
-		if err := copyFile(srcPath, dstPath); err != nil {
+		if err := copyFileForTenant(srcPath, dstPath); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("copy file: %v", err))
 		}
 	}
