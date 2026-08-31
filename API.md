@@ -135,15 +135,15 @@ can still show what exists.
 
 ## At a glance
 
-- **485 routes** in 50 sections: 217 GET, 143 POST, 37 PUT, 36 PATCH, 53 DELETE.
+- **486 routes** in 50 sections: 217 GET, 144 POST, 37 PUT, 36 PATCH, 53 DELETE.
 - **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **90** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **91** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **8** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
 - [/api/admin](#apiadmin) (108)
-- [/api/auth](#apiauth) (19)
+- [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
 - [/api/backup-runs](#apibackup-runs) (3)
@@ -327,6 +327,7 @@ can still show what exists.
 | POST | `/api/auth/resend-verification` | **none** | _public_ | Limit, LimitBody | `RegistrationHandler.ResendVerification` | public. |
 | POST | `/api/auth/reset-password` | **none** | _public_ | Limit, LimitBody | `PasswordResetHandler.ResetPassword` | public. |
 | GET | `/api/auth/security-questions/pool` | **none** | _public_ | - | `SecurityQuestionsHandler.GetPool` | public. |
+| POST | `/api/auth/session-token` | session | _no capability_ | Limit | `AuthHandler.SessionToken` | hands the caller a bearer copy of their own session, and ONLY inside the Beam desktop client. |
 | POST | `/api/auth/validate-reset-token` | **none** | _public_ | Limit, LimitBody | `PasswordResetHandler.ValidateResetToken` | public. |
 | POST | `/api/auth/verify-email` | **none** | _public_ | Limit, LimitBody | `RegistrationHandler.VerifyEmail` | public. |
 

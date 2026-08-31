@@ -11,6 +11,7 @@ import type { FileBrowserAdapter, FileEntry } from '@dylaris/ui-filebrowser';
 import { uploadFiles as apiUploadFiles, getUserLimits as apiGetUserLimits } from '@/lib/api';
 import { isFatalBeamUploadError, cleanBeamGrpcMessage } from './beamUploadErrors';
 import { devLog } from '@/lib/devLog';
+import { API_URL } from '@/lib/api/core';
 import {
     reportUploadStart,
     reportUploadProgress,
@@ -136,9 +137,24 @@ async function doSyncSession(): Promise<void> {
         devLog('beam.session', 'warn', 'syncSessionWithWails: Wails app or SetSession binding unavailable');
         return;
     }
-    const token = localStorage.getItem('authToken') || localStorage.getItem('token');
+    // The one place the panel still needs a real bearer, and the reason the
+    // endpoint below exists: Wails' NATIVE side calls Core directly, with no
+    // cookie jar and no browser, so a cookie is of no use to it.
+    //
+    // Core refuses that endpoint with 404 anywhere but this webview's own
+    // origin, so a page in an ordinary browser cannot use it to turn the
+    // HttpOnly cookie back into a token it could carry away. That restriction is
+    // the whole security argument; see SessionToken in core/handlers/auth.go.
+    let token = '';
+    try {
+        const res = await fetch(`${API_URL}/auth/session-token`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        token = (res.ok && data?.token) || '';
+    } catch {
+        token = '';
+    }
     if (!token) {
-        devLog('beam.session', 'warn', 'syncSessionWithWails: no auth token in localStorage');
+        devLog('beam.session', 'warn', 'syncSessionWithWails: Core did not issue a session token');
         return;
     }
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin + '/api';

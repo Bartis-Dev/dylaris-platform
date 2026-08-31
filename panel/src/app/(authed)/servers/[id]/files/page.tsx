@@ -66,15 +66,12 @@ export default function ServerFilesPage() {
         setDownloading(true);
         try {
             const platform = detectBeamPlatform();
-            const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-            // Match the rest of the panel: Bearer token only, no
-            // credentials:'include'. Asking for credentials triggers the
-            // stricter CORS path which Core (intentionally) doesn't
-            // allow — the browser then aborts the response with a bare
-            // "NetworkError" and we'd never see the real error.
-            const res = await fetch(`${API_URL}/beam/download?platform=${platform}`, {
-                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-            });
+            // No headers and no credentials:'include'. This is same-origin, so
+            // the cookie goes by default; asking for credentials explicitly
+            // would trigger the stricter CORS path which Core deliberately does
+            // not allow, and the browser then aborts with a bare "NetworkError"
+            // that hides the real one.
+            const res = await fetch(`${API_URL}/beam/download?platform=${platform}`);
             if (!res.ok) {
                 let msg = `Download failed (HTTP ${res.status}).`;
                 try {

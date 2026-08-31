@@ -1,43 +1,58 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { API_URL } from './core';
 import { backupDownloadUrl } from './types';
+import { getLibraryDownloadUrl } from './files';
+import { downloadTicketAttachmentURL } from './tickets';
 
-// The backup archive link is a plain anchor navigation, which cannot send the
-// Authorization header. The URL must therefore carry the token in the
-// querystring (the GET-only fallback AuthMiddleware accepts for downloads), or
-// the request 401s. These tests pin that contract.
+// Download links must carry NO credential.
+//
+// They used to, and had to: a plain anchor navigation cannot send an
+// Authorization header, so the token rode in the querystring through the
+// GET-only fallback AuthMiddleware accepts. That put a live JWT into access
+// logs, browser history and the Referer header of whatever the page navigated
+// to next.
+//
+// It is unnecessary now. The session is a same-origin cookie, so the browser
+// attaches it to an anchor navigation, a window.open and a fetch alike. This
+// file exists to keep it that way: the failure mode of a regression here is
+// silent, because putting the token back in the URL WORKS - it just leaks.
 
 afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-function stubLocalStorage(store: Record<string, string>) {
+// A token in storage must change nothing. Older builds left one behind, and a
+// helper that reached for it again would reintroduce the leak on exactly the
+// installs that upgraded.
+function stubLegacyTokenInStorage() {
     vi.stubGlobal('window', {});
     vi.stubGlobal('localStorage', {
-        getItem: (k: string) => (k in store ? store[k] : null),
+        getItem: (k: string) => (k === 'authToken' || k === 'token' ? 'left-over-jwt' : null),
     });
 }
 
-describe('backupDownloadUrl', () => {
-    it('appends the authToken so a plain anchor navigation authenticates', () => {
-        stubLocalStorage({ authToken: 'jwt-abc' });
-        expect(backupDownloadUrl(8)).toBe(`${API_URL}/backup-runs/8/download?token=jwt-abc`);
-    });
+describe('download URLs carry no credential', () => {
+    const urls: Array<[string, () => string]> = [
+        ['backup archive', () => backupDownloadUrl(8)],
+        ['library file', () => getLibraryDownloadUrl('mods/thing.jar')],
+        ['ticket attachment', () => downloadTicketAttachmentURL(4, 9)],
+    ];
 
-    it('falls back to the legacy "token" key when authToken is absent', () => {
-        stubLocalStorage({ token: 'legacy-xyz' });
-        expect(backupDownloadUrl(3)).toBe(`${API_URL}/backup-runs/3/download?token=legacy-xyz`);
-    });
+    for (const [name, build] of urls) {
+        it(`${name}: no token parameter`, () => {
+            const url = build();
+            expect(url).not.toContain('token=');
+            expect(url).not.toContain('left-over-jwt');
+        });
 
-    it('URL-encodes a token that contains reserved characters', () => {
-        stubLocalStorage({ authToken: 'a+b/c=d' });
-        expect(backupDownloadUrl(1)).toContain(`?token=${encodeURIComponent('a+b/c=d')}`);
-    });
+        it(`${name}: unchanged by a token left in storage`, () => {
+            const clean = build();
+            stubLegacyTokenInStorage();
+            expect(build()).toBe(clean);
+        });
+    }
 
-    it('still emits the token param (empty) when there is no browser storage', () => {
-        // node/SSR: no window -> guard yields an empty token, but the ?token= key
-        // stays so the shape is stable and the server sees an (invalid) GET token
-        // rather than no auth channel at all.
-        expect(backupDownloadUrl(5)).toBe(`${API_URL}/backup-runs/5/download?token=`);
+    it('the backup URL is still the right endpoint', () => {
+        expect(backupDownloadUrl(8)).toBe(`${API_URL}/backup-runs/8/download`);
     });
 });

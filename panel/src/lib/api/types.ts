@@ -190,10 +190,10 @@ export interface SftpCredentials {
 }
 
 async function fetchAPI(endpoint: string, options: RequestInit = {}) {
-    const token = localStorage.getItem('token');
+    // No Authorization: the session cookie is sent automatically on these
+    // same-origin requests.
     const headers = {
         'Content-Type': 'application/json',
-        ...(token && { 'Authorization': `Bearer ${token}` }),
         ...options.headers,
     };
 
@@ -620,13 +620,10 @@ export interface BackupRestore {
 export const listBackupRestores = (serverId: number): Promise<{ success: boolean; restores?: BackupRestore[] }> =>
     fetchAPI(`/servers/${serverId}/backup-restores`);
 export const backupDownloadUrl = (runId: number) => {
-    // Plain anchor navigation cannot send the Authorization header, so carry the
-    // token in the querystring — the same GET-only fallback AuthMiddleware accepts
-    // for downloads (it sets no-referrer/no-store when a ?token= is used). Every
-    // other download link in the panel does this; this one used to omit it and 401'd.
-    const token = (typeof window !== 'undefined'
-        && (localStorage.getItem('authToken') || localStorage.getItem('token'))) || '';
-    return `${API_BASE}/backup-runs/${runId}/download?token=${encodeURIComponent(token)}`;
+    // A plain anchor cannot send an Authorization header, which is why this
+    // used to carry ?token=. It no longer needs to: the link is same-origin, so
+    // the browser attaches the session cookie by itself.
+    return `${API_BASE}/backup-runs/${runId}/download`;
 };
 
 export interface ProxyEndpoint {

@@ -29,7 +29,11 @@ var ExemptRoutes = map[string]bool{
 	// Clears the session cookie and nothing else. Unauthenticated on purpose:
 	// the state most in need of clearing is a session that can no longer
 	// authenticate.
-	"/api/auth/logout":         true,
+	"/api/auth/logout": true,
+	// Authenticated, but capability-free: it returns the CALLER's own session
+	// and nothing else, and is refused with 404 anywhere but the Beam desktop
+	// client's webview origin.
+	"/api/auth/session-token":  true,
 	"/api/status":              true,
 	"/api/setup/status":        true,
 	"/api/setup/admin":         true,

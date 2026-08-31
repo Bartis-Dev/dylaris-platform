@@ -1249,6 +1249,16 @@
     },
     {
       "method": "POST",
+      "path": "/api/auth/session-token",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "hands the caller a bearer copy of their own session, and ONLY inside the Beam desktop client.",
+      "handler": "AuthHandler.SessionToken",
+      "group": "auth",
+      "external": false
+    },
+    {
+      "method": "POST",
       "path": "/api/auth/validate-reset-token",
       "auth": "none",
       "authorization": "public",
@@ -4854,16 +4864,16 @@
     }
   ],
   "counts": {
-    "total": 486,
+    "total": 487,
     "byAuth": {
       "none": 35,
-      "session": 438,
+      "session": 439,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
       "admin": 108,
-      "auth": 19,
+      "auth": 20,
       "authz": 3,
       "backup-jobs": 4,
       "backup-runs": 3,

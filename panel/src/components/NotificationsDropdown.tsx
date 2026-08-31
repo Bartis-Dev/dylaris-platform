@@ -28,9 +28,7 @@ interface Notification {
 
 async function checkBeamRelayMissing(ctx: CheckContext): Promise<Notification | null> {
     try {
-        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
         const res = await fetch(`${API_URL}/settings/beam`, {
-            headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) return null;
         const data = await res.json();

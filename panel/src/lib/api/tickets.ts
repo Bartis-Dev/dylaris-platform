@@ -383,12 +383,9 @@ export async function uploadTicketAttachment(ticketId: number, file: File, messa
 }
 
 export function downloadTicketAttachmentURL(ticketId: number, attachmentId: number): string {
-    // Direct anchor link — auth header travels in cookies on browser request.
-    // Token also goes in querystring for SSE-style endpoints; download is a
-    // simple GET so we rely on the Bearer the AuthMiddleware also accepts.
-    const token = (typeof window !== 'undefined'
-        && (localStorage.getItem('authToken') || localStorage.getItem('token'))) || '';
-    return `${API_URL}/tickets/${ticketId}/attachments/${attachmentId}/download?token=${encodeURIComponent(token)}`;
+    // A plain anchor navigation, and it needs no credential in it: the link is
+    // same-origin, so the browser attaches the session cookie by itself.
+    return `${API_URL}/tickets/${ticketId}/attachments/${attachmentId}/download`;
 }
 
 export async function deleteTicketAttachment(ticketId: number, attachmentId: number) {

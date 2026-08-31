@@ -61,15 +61,25 @@ export function coreOrigin(): string {
 // all, where a pending promise means a permanently dead page.
 export const GATE_TIMEOUT_MS = 10000;
 
-// Returns a plain object so callers can spread it into header objects:
-//   { ...getAuthHeader(), 'Content-Type': 'application/json' }
-// A Headers instance does not iterate as own properties — spreading it
-// silently drops Authorization, which broke 2FA verify and similar flows.
-export const getAuthHeader = (): Record<string, string> => {
-  if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem("authToken") || localStorage.getItem("token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
+// Returns an EMPTY object, and keeps existing because ~300 call sites spread it
+// into their headers.
+//
+// The session is an HttpOnly cookie now. fetch sends cookies on same-origin
+// requests by default, and since Core serves the panel there is no other kind -
+// so authentication happens without any call site doing anything, and the panel
+// never holds the credential it used to read out of localStorage.
+//
+// Kept rather than removed for two reasons. Deleting it would be a ~300-file
+// diff whose only content is removing a spread, and every one of those files
+// would then need re-reviewing for a change that does nothing. And it is the
+// hook if a future caller genuinely needs an explicit credential - one place to
+// put it, rather than a new pattern invented at whichever call site needs it
+// first.
+//
+// A Headers instance would not work here: it does not iterate as own
+// properties, so spreading it silently drops everything. That cost a broken 2FA
+// verify once, and the shape is kept for it.
+export const getAuthHeader = (): Record<string, string> => ({});
 
 // Error Handler Helper
 export const handleResponse = async (response: Response) => {

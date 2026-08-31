@@ -82,9 +82,7 @@ export async function listTicketBackups() {
 }
 
 export function downloadTicketBackupURL(name: string): string {
-    const token = (typeof window !== 'undefined'
-        && (localStorage.getItem('authToken') || localStorage.getItem('token'))) || '';
-    return `${API_URL}/admin/tickets/backups/${encodeURIComponent(name)}/download?token=${encodeURIComponent(token)}`;
+    return `${API_URL}/admin/tickets/backups/${encodeURIComponent(name)}/download`;
 }
 
 export async function deleteTicketBackup(name: string) {

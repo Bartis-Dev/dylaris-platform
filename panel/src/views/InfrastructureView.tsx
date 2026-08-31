@@ -59,9 +59,7 @@ async function fetchNodeStorage(nodeId: number): Promise<{ storage: StorageInfo[
     capacity: [] as DiskPathStatus[],
   };
   try {
-    const token = localStorage.getItem('authToken') || localStorage.getItem('token');
     const res = await fetch(`${API_URL}/nodes/${nodeId}/storage`, {
-      headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
     if (!data.success) return fallback;

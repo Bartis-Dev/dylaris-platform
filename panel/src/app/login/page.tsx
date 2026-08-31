@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import LoginForm from "@/components/LoginForm";
 import { getSetupStatus } from '@/lib/api/setup';
 import { demoLogin } from '@/lib/api/auth';
+import { hasSession } from '@/lib/api/sessionState';
 
 function LoginPageInner() {
   const router = useRouter();
@@ -27,8 +28,7 @@ function LoginPageInner() {
         router.replace('/setup');
         return;
       }
-      const token = localStorage.getItem('token') || localStorage.getItem('authToken');
-      if (token) {
+      if (hasSession()) {
         const target = sessionStorage.getItem('postLoginRedirect') || '/servers';
         sessionStorage.removeItem('postLoginRedirect');
         router.push(target);

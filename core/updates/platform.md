@@ -16,10 +16,11 @@ Newest release first. The format is fixed and checked in CI - see the
 - The panel is served by Core. It is compiled into the binary as a static
   bundle, so there is one image, one port and one version instead of two, and
   the API is on the same origin as the pages by construction. `core`
-- Sessions can now travel as an HttpOnly cookie instead of a header, which the
-  same-origin panel made possible. Core sets one at login and clears it at the
-  new `POST /api/auth/logout`; the Authorization header keeps working
-  unchanged. `core`
+- The session is an HttpOnly cookie and the panel no longer stores a token
+  anywhere. A script that runs on the page can no longer read the credential and
+  carry it off; download links stop putting a JWT in the URL. The Authorization
+  header keeps working for API keys and anything driving this API
+  programmatically. `core`
 - Backups on our storage are now kept for one week after suspension rather than
   three months. Backups on a bucket a tenant connected themselves are never
   deleted at any deadline. `core`

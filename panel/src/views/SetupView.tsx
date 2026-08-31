@@ -265,10 +265,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         setSelectedMajor('');
         setSelectedBuild('');
         try {
-            const token = localStorage.getItem('token') || localStorage.getItem('authToken');
-            const res = await fetch(`${API_URL}/versions?software=${software}`, {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-            });
+            const res = await fetch(`${API_URL}/versions?software=${software}`);
             // A non-2xx with a valid JSON body would otherwise fall through to
             // "no versions" and look identical to an upstream with nothing to
             // offer. Turn it into the error path so the message below fires.

@@ -1,3 +1,4 @@
+import { forgetSessionHint, purgeLegacyTokens } from '@/lib/api/sessionState';
 import { API_URL, GATE_TIMEOUT_MS, getAuthHeader, handleResponse, handleError } from './core';
 
 export const login = async (username: string, password: string, totpCode?: string) => {
@@ -22,12 +23,12 @@ export const login = async (username: string, password: string, totpCode?: strin
     const data: any = await res.json().catch(() => null);
 
     if (res.ok) {
-      // Store the token under BOTH keys ("token" and "authToken") so neither
-      // older nor newer code paths break when reading.
-      if (data?.token && typeof window !== 'undefined') {
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('authToken', data.token);
-      }
+      // The token is NOT stored. Core set an HttpOnly cookie on this response
+      // and the browser is already holding it; keeping a second, readable copy
+      // would hand back exactly what the cookie exists to take away.
+      //
+      // It is still in the body, for the Beam desktop client and anything else
+      // driving this API programmatically. The panel simply ignores it.
       return { success: true, ...(data ?? {}) };
     }
 
@@ -174,21 +175,30 @@ export const updateProfile = async (data: any) => {
     // just changed it stays signed in; everyone ELSE holding a session for
     // this account is signed out, which is the whole point. Both keys, because
     // login writes both.
-    if (out?.token && typeof window !== 'undefined') {
-      localStorage.setItem('token', out.token);
-      localStorage.setItem('authToken', out.token);
-    }
+    // Nothing to store: Core replaced the session cookie on this same response,
+    // so this tab keeps working and every other session for the account is
+    // ended by the password fingerprint. Which is the whole point.
     return out;
   } catch (err) {
     return handleError(err);
   }
 };
 
-export const logout = () => {
-  if (typeof window !== 'undefined') {
-    // Remove both token keys: login writes 'token' and 'authToken'.
-    localStorage.removeItem('token');
-    localStorage.removeItem('authToken');
+// Signing out is now a SERVER call: the session cookie is HttpOnly, so the panel
+// cannot delete what it cannot read. The local hint is dropped first so the UI
+// switches immediately rather than waiting on the round trip.
+//
+// Best-effort on the network. A failed logout leaves a cookie the user cannot
+// see and did not want, which is bad - but blocking the sign-out on it would
+// leave them staring at a signed-in panel they asked to leave, which is worse.
+// The next request 401s and clears it.
+export const logout = async (): Promise<void> => {
+  forgetSessionHint();
+  purgeLegacyTokens();
+  try {
+    await fetch(`${API_URL}/auth/logout`, { method: 'POST' });
+  } catch {
+    // See above.
   }
 };
 // Read-only demo session, no credentials. The account is forced GET-only
@@ -203,10 +213,9 @@ export const demoLogin = async (): Promise<{ success: boolean; username?: string
     const res = await fetch(`${API_URL}/auth/demo-login`, { method: 'POST' });
     const data: any = await res.json().catch(() => null);
     if (res.ok && data?.token) {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('authToken', data.token);
-      }
+      // Cookie again; nothing stored. A demo session IS a session as far as the
+      // panel is concerned, and giving it a second path would mean every reader
+      // had to know about both.
       return { success: true, username: data.username };
     }
     return { success: false, message: data?.message || 'No demo account is available.' };

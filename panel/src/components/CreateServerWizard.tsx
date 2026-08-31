@@ -23,10 +23,7 @@ interface StoragePathInfo {
 
 async function fetchNodeStorage(nodeId: number): Promise<StoragePathInfo[]> {
     try {
-        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-        const res = await fetch(`${API_URL}/nodes/${nodeId}/storage`, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetch(`${API_URL}/nodes/${nodeId}/storage`);
         const data = await res.json();
         return data.success ? (data.storage || []) : [];
     } catch {

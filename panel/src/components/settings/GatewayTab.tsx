@@ -1046,10 +1046,7 @@ const XDP_DEFAULTS: XDPConfig = {
 
 async function getXDPConfig(): Promise<{ success: boolean; config?: XDPConfig; present?: boolean }> {
     try {
-        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-        const res = await fetch(`${API_URL}/admin/xdp/config`, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetch(`${API_URL}/admin/xdp/config`);
         return await res.json();
     } catch {
         return { success: false };
@@ -1058,10 +1055,9 @@ async function getXDPConfig(): Promise<{ success: boolean; config?: XDPConfig; p
 
 async function saveXDPConfig(cfg: XDPConfig): Promise<{ success: boolean; message?: string }> {
     try {
-        const token = localStorage.getItem('authToken') || localStorage.getItem('token');
         const res = await fetch(`${API_URL}/admin/xdp/config`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(cfg),
         });
         return await res.json();

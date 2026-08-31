@@ -64,9 +64,11 @@ interface BeamSettings {
     dailyUploadBytes?: number | null;
 }
 
+// Empty: the session is an HttpOnly cookie and fetch sends it on same-origin
+// requests by itself. Kept as a function so the call sites below read the same
+// as the rest of the panel.
 function authHeader(): Record<string, string> {
-    const token = localStorage.getItem('authToken') || localStorage.getItem('token');
-    return { Authorization: `Bearer ${token}` };
+    return {};
 }
 
 async function getBeamSettings(): Promise<BeamSettings | null> {

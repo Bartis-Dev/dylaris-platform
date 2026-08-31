@@ -103,8 +103,6 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
 
   useEffect(() => {
     setLines([]);
-    const token = localStorage.getItem('token') || localStorage.getItem('authToken') || '';
-
     const pendingLines: string[] = [];
     let historyLoaded = false;
 
@@ -124,9 +122,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     })().catch(() => { /* ticket mint failed — history still loads below */ });
 
     const historyUrl = `${API_URL}/servers/${server.id}/console/history${activeSubServer ? `?sub_server=${encodeURIComponent(activeSubServer)}` : ''}`;
-    fetch(historyUrl, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    })
+    fetch(historyUrl)
       .then(r => r.json())
       .then((data: { lines?: string[] }) => {
         historyLoaded = true;

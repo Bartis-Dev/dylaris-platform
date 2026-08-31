@@ -180,3 +180,45 @@ func TestCookieAuthAcceptsTheHostItWasAddressedTo(t *testing.T) {
 		t.Error("a foreign origin matched the request host")
 	}
 }
+
+// The bearer-copy endpoint is guarded by a PAIR of conditions, and the test is
+// here because either alone would be forgeable from the wrong side.
+//
+// A browser sets Origin itself, so a page cannot claim to be the Beam webview -
+// but a non-browser caller can send any Origin it likes. Host is whatever the
+// caller resolved, and wails.localhost resolves to loopback for everyone - but a
+// browser page cannot choose which Host its own origin's requests carry.
+// Requiring both means a caller has to simultaneously BE the webview and be
+// addressing it.
+func TestWailsOriginNeedsBothTheOriginAndTheHost(t *testing.T) {
+	tests := []struct {
+		name, host, origin string
+		want               bool
+	}{
+		{name: "windows webview", host: "wails.localhost", origin: "http://wails.localhost", want: true},
+		{name: "mac and linux scheme", host: "wails.localhost", origin: "wails://wails.localhost", want: true},
+		{name: "webview with a port", host: "wails.localhost:34115", origin: "http://wails.localhost", want: true},
+		// A page in a normal browser: it cannot set Origin, so this shape is
+		// only reachable by a non-browser caller - which the Host then stops.
+		{name: "right origin, real panel host", host: "panel.example.com", origin: "http://wails.localhost", want: false},
+		// A caller who resolved wails.localhost but is a page somewhere else.
+		{name: "right host, foreign origin", host: "wails.localhost", origin: "https://evil.test", want: false},
+		{name: "neither", host: "panel.example.com", origin: "https://panel.example.com", want: false},
+		{name: "no origin at all", host: "wails.localhost", origin: "", want: false},
+		// Not a suffix match: an attacker-registered lookalike must not pass.
+		{name: "lookalike host", host: "notwails.localhost", origin: "http://notwails.localhost", want: false},
+		{name: "subdomain of the webview host", host: "x.wails.localhost", origin: "http://x.wails.localhost", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "http://x/api/auth/session-token", nil)
+			r.Host = tt.host
+			if tt.origin != "" {
+				r.Header.Set("Origin", tt.origin)
+			}
+			if got := isWailsOrigin(r); got != tt.want {
+				t.Errorf("isWailsOrigin = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

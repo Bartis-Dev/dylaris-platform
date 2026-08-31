@@ -895,6 +895,58 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
+// SessionToken POST /api/auth/session-token - hands the caller a bearer copy of
+// their own session, and ONLY inside the Beam desktop client.
+//
+// This exists because one consumer genuinely cannot use the cookie. Beam runs
+// the panel in a webview and its NATIVE side calls Core directly, with no cookie
+// jar and no browser; it needs a real bearer and it needs a long-lived one,
+// because the app stays open.
+//
+// It is also, read plainly, a way to turn an HttpOnly cookie back into a
+// readable token - which is the one thing HttpOnly is for. An XSS on the panel
+// can already ACT with the cookie; what it cannot do is take the credential
+// away and use it elsewhere, later, from another machine. An unrestricted
+// endpoint here would hand that back.
+//
+// So it is restricted to the origin that has the problem. A page in a normal
+// browser cannot claim to be the Beam webview: the browser sets Origin itself,
+// and the request must ALSO have been addressed to wails.localhost. Everyone
+// else keeps a session they can use and cannot copy.
+//
+// No new token type and no new lifetime: it re-issues the ordinary session for
+// the authenticated user, so every rule that ends a session early - the password
+// fingerprint, the deleted account, the row-derived authorization - applies to
+// it unchanged.
+func (h *AuthHandler) SessionToken(w http.ResponseWriter, r *http.Request) {
+	if !isWailsOrigin(r) {
+		// Deliberately not "forbidden for you": the endpoint should read as
+		// absent from anywhere it does not apply, so nothing invites a caller
+		// to go looking for a way in.
+		sendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
+	username, _ := r.Context().Value("username").(string)
+	if username == "" || h.state.Store == nil {
+		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	user, err := h.state.Store.GetUserByUsername(username)
+	if err != nil || user == nil {
+		sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
+		return
+	}
+	token, err := h.IssueToken(user.Username, user.IsAdmin, user.Password)
+	if err != nil {
+		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
+		return
+	}
+	// Never cached, never referred onward: this response body IS a credential.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "token": token})
+}
+
 // StatusHandler GET /api/status - liveness for the login page. needsSetup is
 // always false and the panel ignores it; the first-run wizard is gated by
 // /api/setup instead.

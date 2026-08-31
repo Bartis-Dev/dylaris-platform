@@ -22,6 +22,7 @@ import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
 import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
+import { hasSession, purgeLegacyTokens } from '@/lib/api/sessionState';
 
 // The player head shown beside the username. Encoded because the name is stored
 // user input: without it a value carrying a slash would address a different
@@ -387,8 +388,16 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
                 router.replace('/setup');
                 return;
             }
-            const token = localStorage.getItem('token') || localStorage.getItem('authToken');
-            if (!token) {
+            // Anyone upgrading has a JWT sitting in localStorage from before the
+            // session moved into a cookie. It authenticates nothing any more and
+            // it is exactly the thing this change removes, so it goes on the
+            // first authenticated load rather than sitting there until it
+            // expires.
+            purgeLegacyTokens();
+            // The session cookie is HttpOnly, so this asks Core's readable
+            // companion flag instead. A hint, never authorization: every request
+            // below is still decided by the server.
+            if (!hasSession()) {
                 const target = window.location.pathname + window.location.search;
                 sessionStorage.setItem('postLoginRedirect', target);
                 router.push('/login');

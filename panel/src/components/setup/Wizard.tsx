@@ -92,8 +92,8 @@ export default function SetupWizard() {
             return;
         }
         if (res.token) {
-            localStorage.setItem('token', res.token);
-            localStorage.setItem('authToken', res.token);
+            // Nothing stored: creating the first admin logs you in through the
+            // same HttpOnly cookie a normal login sets.
         }
         router.replace('/servers');
     };

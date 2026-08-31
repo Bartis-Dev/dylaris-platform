@@ -70,9 +70,10 @@ export default function LibraryView() {
             // header, so carry the token in the querystring the same way downloadFile
             // does for getDownloadUrl. Without it the endpoint 401s and the tab shows
             // the JSON error instead of downloading.
-            const token = localStorage.getItem('authToken') || localStorage.getItem('token') || '';
+            // A new tab on the same origin carries the session cookie, so the
+            // URL needs no credential in it.
             const url = getLibraryDownloadUrl(currentPath ? `${currentPath}/${name}` : name);
-            window.open(`${url}&token=${encodeURIComponent(token)}`, '_blank');
+            window.open(url, '_blank');
         }
     };
 

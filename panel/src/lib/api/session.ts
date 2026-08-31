@@ -1,3 +1,6 @@
+import { API_URL } from "@/lib/api/core";
+import { forgetSessionHint, hasSession } from "@/lib/api/sessionState";
+
 // Shared handling for an expired session. Both API paths (the core.ts
 // handleResponse helpers and the legacy fetchAPI wrapper in types.ts) funnel
 // their 401 responses through here so the behavior is identical.
@@ -11,11 +14,20 @@
 export function handleUnauthorized(response: Response): boolean {
   if (response.status !== 401 || typeof window === "undefined") return false;
 
-  const hadToken = !!(localStorage.getItem("authToken") || localStorage.getItem("token"));
-  if (!hadToken) return false;
+  // A 401 while a session EXISTED means it expired mid-use; a 401 with none is
+  // a failed login, which the caller handles. The hint cookie is what tells the
+  // two apart now - the token it used to check is not readable any more, and
+  // that is the point.
+  if (!hasSession()) return false;
 
-  localStorage.removeItem("token");
-  localStorage.removeItem("authToken");
+  // Optimistic only. The real cookie is HttpOnly and only Core can drop it;
+  // this stops the panel rendering an authenticated shell for the moment before
+  // the navigation. The server-side clear rides along with the redirect below.
+  forgetSessionHint();
+  void fetch(`${API_URL}/auth/logout`, { method: 'POST' }).catch(() => {
+    // Best-effort: the session is already expired, so there is nothing left to
+    // protect and nothing useful to tell the user about a failed cleanup.
+  });
   try {
     // Return the user where they were after re-login (login page reads this).
     sessionStorage.setItem("postLoginRedirect", window.location.pathname + window.location.search);

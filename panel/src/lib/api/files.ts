@@ -120,8 +120,8 @@ export function uploadFiles(path: string, files: FileList, onProgress: (p: numbe
         xhr.onerror = () => resolve({ success: false, message: 'Connection error' });
 
         xhr.open('POST', `${API_URL}/files/upload`, true);
-        const token = localStorage.getItem("authToken");
-        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        // No Authorization header: XMLHttpRequest sends cookies on same-origin
+        // requests by default, and the session is a cookie now.
         xhr.send(formData);
     });
 }
@@ -153,8 +153,8 @@ export function uploadLibraryFiles(path: string, files: FileList, onProgress: (p
         xhr.onerror = () => resolve({ success: false, message: 'Connection error' });
 
         xhr.open('POST', `${API_URL}/library/upload`, true);
-        const token = localStorage.getItem("authToken");
-        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        // No Authorization header: XMLHttpRequest sends cookies on same-origin
+        // requests by default, and the session is a cookie now.
         xhr.send(formData);
     });
 }
@@ -171,8 +171,11 @@ export async function downloadFile(
     onProgress?: (loaded: number, total: number) => void
 ): Promise<void> {
     const url = getDownloadUrl(path, serverUuid);
-    const token = localStorage.getItem('authToken') || localStorage.getItem('token') || '';
-    const res = await fetch(`${url}&token=${encodeURIComponent(token)}`);
+    // No ?token=: the download is same-origin, so the session cookie is sent
+    // with it. Putting a JWT in a URL was always the thing to avoid - it lands
+    // in access logs and in the Referer header - and there is no longer a
+    // reason to.
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`Download failed: ${res.status}`);
 
     const total = parseInt(res.headers.get('Content-Length') || '0', 10);
@@ -211,7 +214,6 @@ export async function selectiveDownload(
     serverUuid?: string,
     onProgress?: (loaded: number, total: number) => void
 ): Promise<void> {
-    const token = localStorage.getItem('authToken') || localStorage.getItem('token') || '';
     const params = new URLSearchParams();
     if (serverUuid) params.set('server_uuid', serverUuid);
     params.set('base_path', basePath);
@@ -220,7 +222,7 @@ export async function selectiveDownload(
     } else {
         for (const p of selectedPaths) params.append('selected', p);
     }
-    params.set('token', token);
+
     const url = `${API_URL}/files/download/selective?${params.toString()}`;
 
     const res = await fetch(url);
