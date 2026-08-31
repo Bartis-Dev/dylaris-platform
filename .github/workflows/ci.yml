@@ -340,11 +340,11 @@ jobs:
       # This is an npm workspaces monorepo (root package.json declares
       # "workspaces": ["packages/*", "panel"]) and the lockfile lives at the
       # repo root, not panel/package-lock.json. `npm ci` is intentionally not
-      # used here: panel/Dockerfile documents that this lockfile was generated
-      # on Windows and misses platform-specific optional native binaries
-      # (lightningcss/swc) for other OS/libc targets, so it does a plain
-      # `npm install --workspaces --include-workspace-root` instead. Mirrored
-      # here for the same reason.
+      # used here: the lockfile was generated on Windows and misses the
+      # platform-specific optional native binaries (lightningcss/swc) for other
+      # OS/libc targets, so it does a plain
+      # `npm install --workspaces --include-workspace-root` instead. The root
+      # Dockerfile's panel-build stage says the same and does the same.
       - name: Install dependencies
         run: npm install --workspaces --include-workspace-root
 
@@ -362,7 +362,6 @@ jobs:
     outputs:
       core: ${{ steps.filter.outputs.core }}
       node: ${{ steps.filter.outputs.node }}
-      panel: ${{ steps.filter.outputs.panel }}
       log-shipper: ${{ steps.filter.outputs.log-shipper }}
       version: ${{ steps.rel.outputs.VERSION }}
       notes: ${{ steps.filter.outputs.notes }}
@@ -382,9 +381,9 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
-          # The root Dockerfile builds ALL THREE Go images (build-service.yml
-          # defaults to it; only the panel passes one of its own), so a change
-          # to it has to rebuild all three. It was watched by nothing: the Go
+          # The root Dockerfile builds ALL THREE Go images AND the panel
+          # bundle inside the Core one, so a change to it has to rebuild all
+          # three. It was watched by nothing: the Go
           # toolchain bump that fixed reachable standard-library CVEs reached
           # only the core image, because a file under core/ happened to change
           # in the same push. node and log-shipper kept shipping the old
@@ -405,11 +404,6 @@ jobs:
               - 'proto/**'
               - 'pkg/**'
               - 'Dockerfile'
-            # Still its own filter, but only to decide whether the vitest job
-            # needs to run. Nothing builds an image from it.
-            panel:
-              - 'panel/**'
-              - 'packages/**'
             log-shipper:
               - 'log-shipper/**'
               - 'docker/mc-server/**'
