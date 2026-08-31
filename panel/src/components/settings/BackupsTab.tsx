@@ -11,7 +11,8 @@ import {
     listStorageConnections,
     type StorageConnection, type BackupConnectionConfig,
 } from '@/lib/api';
-import { LimitField } from '@/components/settings/LimitField';
+import { LimitField, LimitHelp } from '@/components/settings/LimitField';
+import HelpTip from '@/components/ui/HelpTip';
 import { SkeletonHeader, SkeletonCard, SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { useBusy } from '@/lib/useBusy';
@@ -161,8 +162,20 @@ function NodeLocalQuotaPanel({
             </div>
 
             <div className="flex items-center gap-3">
-                <label className="input-label whitespace-nowrap" htmlFor="backup-quota-per-server">
+                <label className="input-label whitespace-nowrap flex items-center gap-1.5" htmlFor="backup-quota-per-server">
                     Backup quota per server
+                    <HelpTip label="About the backup quota">
+                        <p className="mb-2">
+                            How much the backup folder of <strong>one</strong> server may hold on the
+                            node it runs on.
+                        </p>
+                        {LimitHelp}
+                        <p className="mt-2">
+                            Enforced by Core before it approves a run, not by the filesystem. A
+                            process writing into that folder by other means is not stopped by this
+                            number.
+                        </p>
+                    </HelpTip>
                 </label>
                 {/* One control, not a number field plus an "unlimited" checkbox.
                     The old pair could not say "none": ticking unlimited WROTE 0,
@@ -456,7 +469,27 @@ export default function BackupsTab() {
 
                             {editing.provider === 'local' && (
                                 <div className="form-group">
-                                    <label className="input-label">Base Path</label>
+                                    <label className="input-label flex items-center gap-1.5">
+                                        Base Path
+                                        <HelpTip label="About the base path">
+                                            <p className="mb-2">
+                                                A path <strong>inside the Core container</strong>, not on your
+                                                desktop and not on a node.
+                                            </p>
+                                            <p className="mb-2">
+                                                It has to be a mounted volume. A path that only exists in the
+                                                container&apos;s own filesystem passes every test on this page and
+                                                then loses every archive the next time the container is
+                                                recreated - which is any update. The test warns you when it can
+                                                tell, but it cannot always tell.
+                                            </p>
+                                            <p>
+                                                Running more than one Core replica? Then this must be the same
+                                                network mount on all of them, or a restore will look for an
+                                                archive the other replica wrote and find nothing.
+                                            </p>
+                                        </HelpTip>
+                                    </label>
                                     <input
                                         type="text"
                                         value={(editing.config as unknown as LocalConfig).basePath || ''}
@@ -494,7 +527,24 @@ export default function BackupsTab() {
                                         </p>
                                     </div>
                                     <div className="form-group">
-                                        <label className="input-label">Prefix</label>
+                                        <label className="input-label flex items-center gap-1.5">
+                                            Prefix
+                                            <HelpTip label="About the prefix">
+                                                <p className="mb-2">
+                                                    Where in the bucket the archives go. It nests{' '}
+                                                    <strong>under the prefix the connection already has</strong>,
+                                                    so a connection with <code>dylaris/</code> and a prefix of{' '}
+                                                    <code>server-backups</code> writes to{' '}
+                                                    <code>dylaris/server-backups/</code>.
+                                                </p>
+                                                <p>
+                                                    That matters if the bucket credential is restricted to a
+                                                    prefix: the test writes a probe object here, and a token that
+                                                    may not write at this exact path fails the test while the same
+                                                    connection works everywhere else.
+                                                </p>
+                                            </HelpTip>
+                                        </label>
                                         <input
                                             type="text"
                                             value={(editing.config as unknown as BackupConnectionConfig).prefix ?? ''}
@@ -559,7 +609,25 @@ export default function BackupsTab() {
                             )}
 
                             <div className="flex items-center justify-between pt-2 border-t border-(--base-03)">
-                                <label className="input-label">Use as Default</label>
+                                <label className="input-label flex items-center gap-1.5">
+                                    Use as Default
+                                    <HelpTip label="About the default target">
+                                        <p className="mb-2">
+                                            Where a job writes when it has not picked a target itself. Only one
+                                            row holds it - turning it on here turns it off wherever it was.
+                                        </p>
+                                        <p className="mb-2">
+                                            Those jobs look this up on <strong>every run</strong>, not once when
+                                            they were created. Moving the default therefore moves where they
+                                            write from their next run on. Archives already written stay where
+                                            they are and are still restorable.
+                                        </p>
+                                        <p>
+                                            A customer who set their own default keeps it - theirs is asked
+                                            first, and this one is the fallback.
+                                        </p>
+                                    </HelpTip>
+                                </label>
                                 <button
                                     type="button"
                                     onClick={() => setEditing({ ...editing, isDefault: !editing.isDefault })}

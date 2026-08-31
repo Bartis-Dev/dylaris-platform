@@ -115,14 +115,50 @@ export default function FileManagerTab() {
                 description="Separate ceilings for admins and regular users."
                 form={form}
             >
-                <SettingsGroup title="Admin limits" first>
+                <SettingsGroup
+                    title="Admin limits"
+                    first
+                    help={
+                        <>
+                            <p className="mb-2">
+                                The largest single file an admin may move through the browser file
+                                manager. Uploads and downloads are capped separately.
+                            </p>
+                            <p className="mb-2">
+                                This is always a ceiling: there is no &quot;unlimited&quot; here and no
+                                &quot;none&quot;. The smallest you can set is 1, and a value that never
+                                got saved falls back to the built-in default rather than to zero.
+                            </p>
+                            <p>
+                                It governs the browser only. The Beam desktop app has its own upload
+                                limits under Beam, and SFTP has none of these at all.
+                            </p>
+                        </>
+                    }
+                >
                     <div className="grid grid-cols-2 gap-4">
                         <LimitField id="fm-admin-up" label="Upload limit" bytes={s.adminUploadLimit} onChange={v => set('adminUploadLimit', v)} />
                         <LimitField id="fm-admin-down" label="Download limit" bytes={s.adminDownloadLimit} onChange={v => set('adminDownloadLimit', v)} />
                     </div>
                 </SettingsGroup>
 
-                <SettingsGroup title="User limits">
+                <SettingsGroup
+                    title="User limits"
+                    help={
+                        <>
+                            <p className="mb-2">
+                                The same two ceilings for everyone who is not an admin. They are read
+                                per request from the caller&apos;s own role, so a user promoted to admin
+                                gets the admin ceiling on their next transfer, with nothing to
+                                re-save.
+                            </p>
+                            <p>
+                                Set these below the admin pair, not above: nothing stops you, and the
+                                result is a support ticket that reads like a permissions bug.
+                            </p>
+                        </>
+                    }
+                >
                     <div className="grid grid-cols-2 gap-4">
                         <LimitField id="fm-user-up" label="Upload limit" bytes={s.userUploadLimit} onChange={v => set('userUploadLimit', v)} />
                         <LimitField id="fm-user-down" label="Download limit" bytes={s.userDownloadLimit} onChange={v => set('userDownloadLimit', v)} />

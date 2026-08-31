@@ -6,6 +6,7 @@ import { Globe, Plus, Pencil, Trash2, X, CircleCheck, CircleAlert, Loader2 } fro
 import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import SettingsPage from '@/components/settings/SettingsPage';
+import HelpTip from '@/components/ui/HelpTip';
 
 interface RegionFormState {
     id: string;
@@ -202,7 +203,26 @@ export default function RegionsTab() {
                         </div>
                         <div className="p-6 space-y-4">
                             <div className="flex flex-col gap-[5px]">
-                                <label className="input-label">Region ID</label>
+                                <label className="input-label flex items-center gap-1.5">
+                                    Region ID
+                                    <HelpTip label="About the region ID">
+                                        <p className="mb-2">
+                                            This string is a <strong>join key</strong>, not a label. Nodes and
+                                            servers carry it, the gateway tags traffic with it, and the traffic
+                                            breakdown is grouped by it.
+                                        </p>
+                                        <p className="mb-2">
+                                            So it has to match exactly what the gateway side uses for the same
+                                            place. A typo does not fail anywhere - it quietly produces a second
+                                            region that nothing else knows about, and the traffic recorded under
+                                            it belongs to no one.
+                                        </p>
+                                        <p>
+                                            It cannot be renamed afterwards, because everything already stamped
+                                            with it would keep pointing at the old string.
+                                        </p>
+                                    </HelpTip>
+                                </label>
                                 <input
                                     type="text"
                                     value={form.id}

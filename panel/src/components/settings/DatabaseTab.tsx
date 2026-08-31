@@ -13,6 +13,7 @@ import {
     DBMigrationJob, DBTargetForm, VerifyReport, DBMigrationPhase, HypertableStatus,
 } from '@/lib/api/dbmigration';
 import { systemEvents } from '@/lib/systemEvents';
+import HelpTip from '@/components/ui/HelpTip';
 
 const EMPTY_FORM: DBTargetForm = {
     host: '', port: '5432', user: 'dylaris', password: '', dbName: 'dylaris',
@@ -228,7 +229,26 @@ export default function DatabaseTab() {
 
             {/* Target connection form */}
             <div className="card p-5 space-y-4">
-                <div className="mono-label flex items-center gap-2"><ServerCog size={13} /> Target connection</div>
+                <div className="mono-label flex items-center gap-2">
+                    <ServerCog size={13} /> Target connection
+                    <HelpTip label="About the migration">
+                        <p className="mb-2">
+                            This copies everything into the database you describe here. It does
+                            <strong> not switch over</strong>: Core keeps running on the current
+                            database the whole time and after the copy finishes.
+                        </p>
+                        <p className="mb-2">
+                            Making the new one live is a separate, manual step - set the{' '}
+                            <code>DB_*</code> environment variables to point at it and restart Core.
+                            Until you do, anything written after the copy started stays on the old
+                            database only.
+                        </p>
+                        <p>
+                            So plan the cutover: run the copy, verify, put the platform into
+                            maintenance, run it once more, then restart with the new variables.
+                        </p>
+                    </HelpTip>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <Field label="Host" value={form.host} onChange={v => set('host', v)} placeholder="db.example.internal" />
@@ -237,7 +257,27 @@ export default function DatabaseTab() {
                     <Field label="Password" value={form.password} onChange={v => set('password', v)} type="password" placeholder="••••••••" />
                     <Field label="Database name" value={form.dbName} onChange={v => set('dbName', v)} placeholder="dylaris" />
                     <div>
-                        <label className="input-label">SSL mode</label>
+                        <label className="input-label flex items-center gap-1.5">
+                            SSL mode
+                            <HelpTip label="About the SSL mode">
+                                <p className="mb-2">
+                                    <code>disable</code> - no TLS. Only defensible when the database
+                                    is reachable over a private network you trust end to end.
+                                </p>
+                                <p className="mb-2">
+                                    <code>require</code> encrypts but verifies nothing, so it stops
+                                    passive listening and not an attacker in the middle.
+                                    <code> verify-ca</code> checks the certificate is signed by a CA
+                                    you trust, and <code>verify-full</code> also checks the hostname
+                                    matches.
+                                </p>
+                                <p>
+                                    Over the public internet use <code>verify-full</code>. Managed
+                                    providers all support it; a self-signed certificate does not, and
+                                    that is the usual reason someone reaches for <code>require</code>.
+                                </p>
+                            </HelpTip>
+                        </label>
                         <select className="input-field w-full mt-1" value={form.sslMode} onChange={e => set('sslMode', e.target.value)}>
                             <option value="disable">disable</option>
                             <option value="require">require</option>

@@ -31,6 +31,7 @@ import {
     Pencil, X, AlertTriangle, SlidersHorizontal, Cpu, KeyRound, Copy,
     ShieldCheck, Plus, Trash2, Ticket, RotateCcw,
 } from 'lucide-react';
+import HelpTip from '@/components/ui/HelpTip';
 
 // Shape of GET /nodes/{id}/deploy-bundle — the secret-free node + link deploy
 // ENV for an already-enrolled node (see WarpTab's mint+reveal pattern).
@@ -240,7 +241,7 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
             {revealed && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setRevealed(null)}>
                     <div className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Deploy bundle — {revealed.nodeId.slice(0, 8)}</h3></div>
+                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Setup values — {revealed.nodeId.slice(0, 8)}</h3></div>
                         <div className="modal-body space-y-3">
                             <div className="space-y-1">
                                 <label className="mono-label">Node deploy ENV (secret-free)</label>
@@ -455,15 +456,35 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                         <Pencil size={11} />
                         Placement
                     </button>
-                    <button
-                        onClick={onRevealDeployBundle}
-                        disabled={revealingDeployBundle}
-                        className="text-xs text-(--base-06) hover:text-(--accent-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
-                        title="Reveal this node's secret-free node + link deploy ENV"
-                    >
-                        <KeyRound size={11} />
-                        {revealingDeployBundle ? 'Loading…' : 'Deploy bundle'}
-                    </button>
+                    <span className="inline-flex items-center gap-1">
+                        <button
+                            onClick={onRevealDeployBundle}
+                            disabled={revealingDeployBundle}
+                            className="text-xs text-(--base-06) hover:text-(--accent-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+                        >
+                            <KeyRound size={11} />
+                            {revealingDeployBundle ? 'Loading…' : 'Show setup values'}
+                        </button>
+                        <HelpTip label="About the setup values">
+                            <p className="mb-2">
+                                Shows this node&apos;s connection values again: its identity, the TLS
+                                fingerprint to pin, and its link token. They are the same ones the
+                                enrolment gave you once, and this is the only way back to them.
+                            </p>
+                            <p className="mb-2">
+                                You need it when you rebuild the host, move the node to another
+                                machine, or lose the compose file - anything that means writing the
+                                node&apos;s environment out again. In day-to-day operation you never
+                                open it.
+                            </p>
+                            <p>
+                                Treat what it shows as a credential: the link token in it
+                                authenticates that node&apos;s tunnel. It does not contain the cluster
+                                secret. If the node&apos;s own secret is gone rather than mislaid,
+                                re-pairing is the way back, not this.
+                            </p>
+                        </HelpTip>
+                    </span>
                     <button
                         onClick={onResetPairing}
                         disabled={resettingPairing}
@@ -921,7 +942,22 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
 
                     <div className="grid grid-cols-2 gap-4">
                         <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">CPU Overcommit</label>
+                            <label className="input-label flex items-center gap-1.5">
+                                CPU Overcommit
+                                <HelpTip label="About CPU overcommit">
+                                    <p className="mb-2">
+                                        How much CPU may be promised beyond what the host physically
+                                        has. 100% promises exactly the cores present, 200% double-books
+                                        them.
+                                    </p>
+                                    <p>
+                                        Overcommitting CPU is comparatively safe: when everyone wants
+                                        it at once they each get less and everything slows down. That
+                                        is why the usual answer here is higher than for RAM, where the
+                                        same bet ends in a kill rather than a slowdown.
+                                    </p>
+                                </HelpTip>
+                            </label>
                             <div className="relative w-32">
                                 <input
                                     type="number"
@@ -936,7 +972,26 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                             <p className="text-xs text-(--base-06)">CPU is time-shared — 200% is conservative.</p>
                         </div>
                         <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">RAM Overcommit</label>
+                            <label className="input-label flex items-center gap-1.5">
+                                RAM Overcommit
+                                <HelpTip label="About RAM overcommit">
+                                    <p className="mb-2">
+                                        Above 100% you are promising more memory than the host has, on
+                                        the bet that servers do not all use their allocation at once.
+                                    </p>
+                                    <p className="mb-2">
+                                        When that bet loses, the kernel picks a container and kills
+                                        it. The player sees a crash, not a warning, and nothing in the
+                                        panel caused it - so this is the setting whose failure is
+                                        hardest to trace back to the change that made it.
+                                    </p>
+                                    <p>
+                                        Unlike CPU, memory cannot be shared out slowly under pressure.
+                                        Leave it at 100% unless you have measured that your servers
+                                        idle well below their allocation.
+                                    </p>
+                                </HelpTip>
+                            </label>
                             <div className="relative w-32">
                                 <input
                                     type="number"

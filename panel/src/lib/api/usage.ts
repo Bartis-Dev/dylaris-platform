@@ -1,6 +1,7 @@
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
 
-// Effective limits the usage is measured against (0 = unlimited). GB.
+// Effective limits the usage is measured against, on the platform convention:
+// null is no cap, 0 is a cap of none, n is the cap. GB.
 export interface UsageLimits {
     maxNodes: number;
     r2QuotaGb: number;

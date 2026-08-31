@@ -23,6 +23,7 @@ import UserRegionPicker from '@/components/admin/UserRegionPicker';
 import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard } from 'lucide-react';
 import { SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import HelpTip from '@/components/ui/HelpTip';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -1088,7 +1089,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const toNum = (v: string) => (v === '' ? null : parseInt(v, 10));
 
     const saveLimits = async () => {
-        if (!limitsValid) { show('Limits are whole numbers (empty = unset, 0 = unlimited).', false); return; }
+        if (!limitsValid) { show('Limits are whole numbers (empty = no limit, 0 = none).', false); return; }
         setSavingLimits(true);
         const res = await setUserLimitOverrides(user.id, {
             maxNodes: toNum(maxNodes),
@@ -1248,7 +1249,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                         className={`input-field input-mono w-40 ${quotaOk ? '' : 'border-(--error)'}`}
                                     />
                                 </div>
-                                <p className="text-xs text-(--base-05)">Quota 0 = unlimited for this user. Empty = platform default.</p>
+                                <p className="text-xs text-(--base-05)">Empty falls back to the platform default. 0 means this user may store none - it is not a way to switch the quota off.</p>
                                 <div className="flex items-center justify-end gap-3">
                                     {toast && (
                                         <span className={`text-sm ${toast.ok ? 'text-(--success-light)' : 'text-(--error)'}`}>{toast.msg}</span>
@@ -1270,11 +1271,26 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                 and the store writes the same ones on purchase. */}
                             <section className="space-y-3 border-t border-(--base-04) pt-4">
                                 <div>
-                                    <label className="input-label">Limits</label>
+                                    <label className="input-label flex items-center gap-1.5">
+                                        Limits
+                                        <HelpTip label="About these limits">
+                                            <p className="mb-2">
+                                                <strong>Empty</strong> means no limit at all.
+                                                <br />
+                                                <strong>0</strong> means none: they may hold zero of this.
+                                                <br />
+                                                <strong>Any other number</strong> is the cap.
+                                            </p>
+                                            <p>
+                                                Empty and 0 are opposites, and 0 is not a way to switch a limit
+                                                off. This matches every other limit in the panel.
+                                            </p>
+                                        </HelpTip>
+                                    </label>
                                     <p className="text-xs text-(--base-06) mt-0.5">
                                         What this tenant may hold. A purchase writes these too, so an edit here
-                                        is overwritten the next time their subscription changes. Empty = unset.
-                                        0 = unlimited.
+                                        is overwritten the next time their subscription changes. Leave a field
+                                        empty for no limit; 0 means they may hold none.
                                     </p>
                                 </div>
                                 <LimitField label="Max nodes" value={maxNodes} onChange={setMaxNodes} />
@@ -1314,7 +1330,7 @@ function LimitField({ label, value, onChange }: { label: string; value: string; 
                 min={0}
                 value={value}
                 onChange={e => onChange(e.target.value)}
-                placeholder="use plan"
+                placeholder="no limit"
                 className={`input-field input-mono w-40 ${ok ? '' : 'border-(--error)'}`}
             />
         </div>

@@ -8,7 +8,8 @@ import {
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
-import { LimitField } from '@/components/settings/LimitField';
+import { LimitField, LimitHelp } from '@/components/settings/LimitField';
+import HelpTip from '@/components/ui/HelpTip';
 
 const SPEC_RE = /^\d+[dwm]$/;
 const NUM_RE = /^\d+$/;
@@ -100,7 +101,28 @@ export default function BillingTab() {
                 form={form}
                 saveBlockedReason={blockedReason}
             >
-                <SettingsGroup title="Retention" first>
+                <SettingsGroup
+                    title="Retention"
+                    first
+                    help={
+                        <>
+                            <p className="mb-2">
+                                Three points on one timeline, all counted from the event before them:
+                            </p>
+                            <p className="mb-2">
+                                payment missed &rarr; <strong>grace period</strong> &rarr; suspended
+                                &rarr; <strong>node retention</strong> disconnects their node, and
+                                separately <strong>backup retention</strong> deletes their archives.
+                            </p>
+                            <p>
+                                The last one is the only step here that destroys anything, and it is
+                                not undoable. Set it longer than you think you need: a tenant who pays
+                                on day 29 of a 30-day window keeps everything, and one who pays on day
+                                31 has nothing to come back to.
+                            </p>
+                        </>
+                    }
+                >
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <SpecField
                             id="billing-grace"
@@ -132,7 +154,10 @@ export default function BillingTab() {
                 >
                     <div className="flex flex-wrap items-start justify-between gap-4">
                         <div className="min-w-0 max-w-md">
-                            <label className="input-label" htmlFor="billing-r2-quota">Flat quota per tenant</label>
+                            <label className="input-label flex items-center gap-1.5" htmlFor="billing-r2-quota">
+                                Flat quota per tenant
+                                <HelpTip label="About the flat quota">{LimitHelp}</HelpTip>
+                            </label>
                             <p id="billing-r2-quota-hint" className="text-xs text-(--base-06) mt-1">
                                 The fallback for tenants who bought nothing, which is everyone on a
                                 self-hosted install. New backups are refused with a message once

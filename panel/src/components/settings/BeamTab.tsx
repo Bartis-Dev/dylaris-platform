@@ -131,7 +131,9 @@ function bpsToMbit(bps: number | undefined): number {
     return Math.round(bps / MBIT_TO_BPS);
 }
 
-// Upload limits are stored in bytes; the UI edits them in GiB. 0 = unlimited.
+// Upload limits are stored in bytes; the UI edits them in GiB. They are on the
+// platform limit convention - null is no cap, 0 is a cap of none - and the null is
+// carried through by uploadLimitGiB rather than by these two helpers.
 const GIB_TO_BYTES = 1024 * 1024 * 1024;
 function bytesToGiB(bytes: number | undefined): number {
     if (!bytes || bytes <= 0) return 0;

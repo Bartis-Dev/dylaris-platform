@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Gauge, AlertTriangle, Trash2, Globe } from 'lucide-react';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard from '@/components/settings/SettingsCard';
-import { LimitField } from '@/components/settings/LimitField';
+import { LimitField, LimitHelp } from '@/components/settings/LimitField';
+import HelpTip from '@/components/ui/HelpTip';
 import { toast } from '@/components/ui/Toast';
 import { getInfrastructureOverview } from '@/lib/api';
 import {
@@ -204,7 +205,16 @@ export default function TrafficLimitsTab() {
                 ) : (
                     <div className="flex flex-wrap items-center gap-6">
                         <div className="flex items-center gap-3">
-                            <span className="mono-label text-(--base-06) w-28">Included</span>
+                            <span className="mono-label text-(--base-06) w-28 flex items-center gap-1.5">
+                                Included
+                                <HelpTip label="About the included allowance">
+                                    <p className="mb-2">
+                                        The traffic that costs nothing here. Metered billing, if it is
+                                        on, only starts above this.
+                                    </p>
+                                    {LimitHelp}
+                                </HelpTip>
+                            </span>
                             <LimitField
                                 value={c.includedGb}
                                 onChange={v => update(region, kind, { includedGb: v })}
@@ -212,7 +222,20 @@ export default function TrafficLimitsTab() {
                             />
                         </div>
                         <div className="flex items-center gap-3">
-                            <span className="mono-label text-(--base-06) w-28">May buy</span>
+                            <span className="mono-label text-(--base-06) w-28 flex items-center gap-1.5">
+                                May buy
+                                <HelpTip label="About the purchase ceiling">
+                                    <p className="mb-2">
+                                        The most a customer may add on top of the included amount, and
+                                        where their spending stops.
+                                    </p>
+                                    {LimitHelp}
+                                    <p className="mt-2">
+                                        This is the one place a cap of 0 is the useful answer: it lets
+                                        them use what is included and buy nothing beyond it.
+                                    </p>
+                                </HelpTip>
+                            </span>
                             <LimitField
                                 value={c.maxPurchaseGb}
                                 onChange={v => update(region, kind, { maxPurchaseGb: v })}

@@ -40,6 +40,24 @@ export default function AccountPolicyCard() {
                     <SettingsRow
                         label="Cooldown between user renames"
                         htmlFor="account-rename-cooldown"
+                        description="0 means no waiting period."
+                        help={
+                            <>
+                                <p className="mb-2">
+                                    How long a user must wait before changing their username again.
+                                    <strong> 0</strong> means they may change it as often as they like.
+                                </p>
+                                <p className="mb-2">
+                                    The <em>first</em> rename is always free - the clock only starts
+                                    once someone has renamed at all, so raising this does not lock out
+                                    people who have never used it.
+                                </p>
+                                <p>
+                                    Admins are not subject to this, or to the switch above. They can
+                                    always rename anyone, including themselves.
+                                </p>
+                            </>
+                        }
                     >
                         <input
                             id="account-rename-cooldown"

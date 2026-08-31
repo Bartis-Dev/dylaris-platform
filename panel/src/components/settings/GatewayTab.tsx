@@ -11,7 +11,7 @@ import {
 import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skeleton';
 import Spinner from '@/components/Spinner';
-import { LimitField } from '@/components/settings/LimitField';
+import { LimitField, LimitHelp } from '@/components/settings/LimitField';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsLoadError from '@/components/settings/SettingsLoadError';
 import { settingsLoadState } from '@/lib/settingsLoadState';
@@ -843,7 +843,30 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 <SettingsGroup title="Route limits" description="Maximum route allocations and port access.">
 
                 <div>
-                    <h3 className="mono-label mb-3">Route Allocation</h3>
+                    <h3 className="mono-label mb-3 flex items-center gap-1.5">
+                        Route Allocation
+                        <HelpTip label="About route allocation">
+                            <p className="mb-2">
+                                Asked in order, most specific first: a user&apos;s own override, then
+                                the per-user default, then this global figure. The <strong>first one
+                                that exists wins outright</strong> and the rest are not consulted.
+                            </p>
+                            <p className="mb-2">
+                                So &quot;Global Max Routes&quot; is not a ceiling over the others - it
+                                is the fallback for users no more specific rule covers. A per-user
+                                override REPLACES it for that user and can be higher.
+                            </p>
+                            <p className="mb-2">
+                                A scope with no entry is skipped; one that exists has answered, even
+                                when its answer is no limit.
+                            </p>
+                            {LimitHelp}
+                            <p className="mt-2">
+                                Only addresses on your own domains count. A customer pointing their
+                                own domain at the gateway is neither counted nor capped here.
+                            </p>
+                        </HelpTip>
+                    </h3>
                     <div className="space-y-3">
                         {allocationFields.map(({ key, label, desc }) => (
                             <div key={key} className="flex items-center justify-between gap-4 p-3 rounded-md bg-(--base-02)">

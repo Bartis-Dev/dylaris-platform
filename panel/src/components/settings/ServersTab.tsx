@@ -5,7 +5,7 @@ import { Server } from 'lucide-react';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsRow } from '@/components/settings/SettingsCard';
-import { LimitField } from '@/components/settings/LimitField';
+import { LimitField, LimitHelp } from '@/components/settings/LimitField';
 
 const DEFAULTS: ServerLimitSettings = { maxSubServers: 3 };
 
@@ -37,6 +37,19 @@ export default function ServersTab() {
                     label="Max sub-servers per server"
                     htmlFor="max-sub-servers"
                     description="How many sub-servers a user may create inside one server. 0 means none may be created."
+                    help={
+                        <>
+                            <p className="mb-2">
+                                A sub-server is a second world folder inside one server, switched
+                                between without a new server being bought.
+                            </p>
+                            {LimitHelp}
+                            <p className="mt-2">
+                                Lowering it does not delete anything. Sub-servers over the new cap
+                                keep working; the cap is checked when one is created.
+                            </p>
+                        </>
+                    }
                 >
                     <LimitField
                         id="max-sub-servers"

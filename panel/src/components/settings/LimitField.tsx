@@ -89,6 +89,33 @@ export function LimitField({
     );
 }
 
+/**
+ * The convention itself, as help text.
+ *
+ * ONE node shared by every LimitField site rather than a sentence written 21
+ * times. The three states are the whole point of the control and none of them
+ * is legible from the screen: an operator who types 0 cannot see whether that
+ * means "none" or "switched off", and on this platform it used to mean both
+ * depending on which page they were on.
+ */
+export const LimitHelp = (
+    <>
+        <p className="mb-2">This number has <strong>three</strong> meanings, not two.</p>
+        <p className="mb-2">
+            <strong>No limit</strong> - the switch - removes the cap entirely.
+            <br />
+            <strong>0</strong> means <em>none</em>: they may hold zero of this.
+            <br />
+            <strong>Any other number</strong> is the cap.
+        </p>
+        <p>
+            So 0 and &quot;No limit&quot; are opposites here. Every limit in the panel
+            reads the same way, which is why the switch exists instead of a magic
+            number.
+        </p>
+    </>
+);
+
 /** How a limit reads in prose, for summaries and list rows. */
 export function limitLabel(value: number | null, unit?: string): string {
     if (value === null) return 'No limit';

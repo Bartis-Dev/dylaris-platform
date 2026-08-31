@@ -21,6 +21,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
+import HelpTip from '@/components/ui/HelpTip';
 
 interface ModulesTabProps {
     modules: AppModule[];
@@ -281,7 +282,25 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
     return (
         <div>
             <div className="flex justify-between items-center mb-6">
-                <p className="text-sm text-(--base-07)">Manage system features and external links. Drag to reorder. Disabled modules are hidden from the sidebar.</p>
+                <p className="text-sm text-(--base-07) flex items-center gap-1.5">
+                    Manage system features and external links. Drag to reorder. Disabled modules are hidden from the sidebar.
+                    <HelpTip label="About modules">
+                        <p className="mb-2">
+                            A module is an entry in the main navigation, nothing more. This page
+                            decides what the sidebar shows and in which order.
+                        </p>
+                        <p className="mb-2">
+                            <strong>All / Admin here is visibility, not permission.</strong> Hiding a
+                            module removes the link; it does not close the page, and it does not
+                            revoke anything. Who may actually do what is Roles and Access. Treat this
+                            as tidying the sidebar, never as a way to lock something down.
+                        </p>
+                        <p>
+                            A few modules cannot be changed because their audience is fixed in code -
+                            Servers is always visible, Admin and Infrastructure always are not.
+                        </p>
+                    </HelpTip>
+                </p>
                 <button onClick={() => { setModForm({ name: "", type: "iframe", icon: "link", url: "" }); setError(""); setIsModalOpen(true); }} className="btn btn-primary">
                     <Plus size={14} />
                     Add Module
@@ -321,7 +340,23 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
                                     <input required type="text" value={modForm.name} onChange={e => setModForm({ ...modForm, name: e.target.value })} className="input-field w-full" placeholder="e.g. Map" />
                                 </div>
                                 <div className="flex flex-col gap-[5px]">
-                                    <label className="input-label">Type</label>
+                                    <label className="input-label flex items-center gap-1.5">
+                                        Type
+                                        <HelpTip label="About the module type">
+                                            <p className="mb-2">
+                                                <strong>IFrame</strong> embeds a page you host somewhere else,
+                                                inside the panel&apos;s layout. It must allow being framed, or the
+                                                tab opens blank with the reason only in the browser console.
+                                            </p>
+                                            <p>
+                                                <strong>Internal</strong> links to a page of the panel itself, by
+                                                path - but this form does not offer a path field for it, and a
+                                                module cannot be edited after it is created. One made here would
+                                                land on an empty page with no way to correct it, so use IFrame
+                                                unless you know the row will be set up elsewhere.
+                                            </p>
+                                        </HelpTip>
+                                    </label>
                                     <select value={modForm.type} onChange={e => setModForm({ ...modForm, type: e.target.value })} className="input-field w-full">
                                         <option value="iframe">IFrame (External URL)</option>
                                         <option value="internal">Internal (Custom View)</option>

@@ -61,6 +61,21 @@ export default function MaintenanceTab() {
                     <SwitchRow
                         label="Active"
                         description="When on, the banner is shown and the configured block level applies."
+                        help={
+                            <>
+                                <p className="mb-2">
+                                    <strong>You cannot lock yourself out.</strong> Admins are never
+                                    blocked, and sign-in, the status endpoint and this page stay
+                                    reachable for everyone - otherwise nobody could see why they are
+                                    being turned away, or switch it back off.
+                                </p>
+                                <p>
+                                    It gates the panel and its API only. Game servers keep running and
+                                    players already connected stay connected; nothing here stops or
+                                    starts a server.
+                                </p>
+                            </>
+                        }
                         checked={state.active}
                         onChange={v => patch({ active: v })}
                     />
@@ -108,7 +123,24 @@ export default function MaintenanceTab() {
                     </div>
                 </SettingsGroup>
 
-                <SettingsGroup title="Block level">
+                <SettingsGroup
+                    title="Block level"
+                    help={
+                        <>
+                            <p className="mb-2">
+                                How hard the door is shut, from a banner nobody is stopped by to a
+                                full refusal.
+                            </p>
+                            <p>
+                                <strong>Block writes</strong> is the one worth knowing: reads still
+                                answer, so users can look at their servers and see the banner, and
+                                only requests that change something are refused with a 503. It is the
+                                right level for a migration; a full block is for when even reading
+                                would be misleading.
+                            </p>
+                        </>
+                    }
+                >
                     <div className="grid grid-cols-1 gap-2" role="radiogroup" aria-label="Block level">
                         {BLOCK_LEVELS.map(opt => (
                             <label

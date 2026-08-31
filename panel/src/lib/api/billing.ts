@@ -44,7 +44,9 @@ export function limitToSetting(v: number | null): string {
 }
 
 // Per-user retention + limit overrides. Empty string on a spec / null on a numeric
-// field means "use the plan / platform default". A 0 means unlimited for this user.
+// field means "fall back to the platform default". A 0 is a real cap of NONE, not
+// unlimited - services.r2QuotaGB reads it that way and a per-user 0 used to block
+// nothing at all.
 export interface UserBillingOverrides {
     gracePeriod: string;
     r2Retention: string;

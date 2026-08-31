@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.16
+
+### Features
+- Settings now explain themselves. The screens whose right answer is not on the
+  label - overcommit, maintenance block levels, the database migration, backup
+  targets, route allocation, regions - grew a help icon with the reasoning and
+  the consequence behind it. `core`
+- The node card's "Deploy bundle" is now "Show setup values" and says what it is
+  for: getting a node's connection values back when you rebuild the host or lose
+  the compose file. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The per-user limits screen described its own numbers backwards. It said 0 meant
+  unlimited when 0 has always meant none, so an admin setting a tenant to
+  "unlimited" gave them zero. The stored values were never wrong - only the text
+  was - so nothing needs correcting beyond re-reading limits you set from that
+  screen. `core`
+- The per-user backup quota carried the same inverted description, and a test now
+  fails the build if either wording comes back. `core`
+
 ## 2026.08.31.15
 
 ### Features

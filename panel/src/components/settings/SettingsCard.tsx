@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Loader2 } from 'lucide-react';
+import HelpTip from '@/components/ui/HelpTip';
 
 /**
  * The settings box, and the one place a save control is allowed to live.
@@ -46,6 +47,12 @@ export interface SettingsCardProps {
     title: React.ReactNode;
     /** One line under the title. Say what the setting does, not what it is. */
     description?: React.ReactNode;
+    /**
+     * The long answer for the whole card, behind a help icon on its title.
+     * For what the card is FOR - the choice between its modes, the consequence
+     * of getting it wrong - rather than any single field in it.
+     */
+    help?: React.ReactNode;
     icon?: React.ElementType;
     /** Wire this and the card grows a Save/Discard pair in its header. */
     form?: SavableForm;
@@ -72,6 +79,7 @@ export interface SettingsCardProps {
 export default function SettingsCard({
     title,
     description,
+    help,
     icon: Icon,
     form,
     saveLabel = 'Save',
@@ -92,6 +100,11 @@ export default function SettingsCard({
                     <h3 className="settings-card-title">
                         {Icon && <Icon size={14} className="text-(--accent-light) shrink-0" />}
                         {title}
+                        {help && (
+                            <HelpTip label={typeof title === 'string' ? `About ${title}` : 'Help'}>
+                                {help}
+                            </HelpTip>
+                        )}
                     </h3>
                     {description && (
                         <p className="settings-card-description">{description}</p>
@@ -232,6 +245,7 @@ export function SettingsCardSave({
 export function SettingsGroup({
     title,
     description,
+    help,
     children,
     className = '',
     /** First group in a card: no divider above it. */
@@ -239,13 +253,30 @@ export function SettingsGroup({
 }: {
     title?: React.ReactNode;
     description?: React.ReactNode;
+    /**
+     * The long answer for the whole group, behind a help icon on its title.
+     *
+     * Where a group's fields share one explanation - four transfer limits, six
+     * ticket quotas - this is the place for it. Repeating the same paragraph on
+     * each field is how a help icon stops being worth opening.
+     */
+    help?: React.ReactNode;
     children: React.ReactNode;
     className?: string;
     first?: boolean;
 }) {
     return (
         <div className={`${first ? '' : 'settings-group-divided'} ${className}`}>
-            {title && <h4 className="mono-label">{title}</h4>}
+            {title && (
+                <h4 className="mono-label flex items-center gap-1.5">
+                    {title}
+                    {help && (
+                        <HelpTip label={typeof title === 'string' ? `About ${title}` : 'Help'}>
+                            {help}
+                        </HelpTip>
+                    )}
+                </h4>
+            )}
             {description && (
                 <p className="text-xs text-(--base-06) leading-relaxed mt-1">{description}</p>
             )}
@@ -266,12 +297,18 @@ export function SettingsGroup({
 export function SettingsRow({
     label,
     description,
+    help,
     htmlFor,
     children,
     className = '',
 }: {
     label: React.ReactNode;
     description?: React.ReactNode;
+    /**
+     * The long answer, behind a help icon beside the label. See SwitchRow for
+     * why this is not just a longer `description`.
+     */
+    help?: React.ReactNode;
     /** Set when the control has an id, so the label actually focuses it. */
     htmlFor?: string;
     children: React.ReactNode;
@@ -288,13 +325,26 @@ export function SettingsRow({
         </>
     );
 
+    // The trigger sits OUTSIDE the <label>. A button inside a label is still
+    // part of the label's click target, so opening the help would also toggle
+    // the control the label points at.
     return (
         <div className={`flex items-start justify-between gap-4 ${className}`}>
-            {htmlFor ? (
-                <label htmlFor={htmlFor} className="min-w-0 cursor-pointer">{body}</label>
-            ) : (
-                <div className="min-w-0">{body}</div>
-            )}
+            <div className="min-w-0 flex items-start gap-1.5">
+                {htmlFor ? (
+                    <label htmlFor={htmlFor} className="min-w-0 cursor-pointer">{body}</label>
+                ) : (
+                    <div className="min-w-0">{body}</div>
+                )}
+                {help && (
+                    <HelpTip
+                        className="mt-0.5"
+                        label={typeof label === 'string' ? `About ${label}` : 'Help'}
+                    >
+                        {help}
+                    </HelpTip>
+                )}
+            </div>
             <div className="shrink-0 flex items-center gap-2">{children}</div>
         </div>
     );
