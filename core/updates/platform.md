@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.17
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Deleting a route from the admin Routes screen reported success and left the
+  address routing. Route-only addresses are Core's own, and the delete only told
+  the gateway - so the stored row was written straight back a minute later.
+  `core`
+- A customer could not see their own servers. Region access is a staff filter and
+  it was applied to owners too, so an account with no regions assigned - the
+  default for a self-registered one - got an empty list while an admin saw the
+  server running. `core`
+- The sidebar divider now lines up with the sidebar edge in both the expanded and
+  the collapsed state, and runs the full height of the bar. `core`
+- Beam no longer shows a button offering to download Beam. `core`
+
 ## 2026.08.31.16
 
 ### Features

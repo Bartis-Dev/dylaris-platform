@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { downloadBeamApp } from '@/lib/beamDownload';
+import { isWails } from '@/lib/adapters';
 import { toast } from '@/components/ui/Toast';
 
 /**
@@ -16,6 +17,12 @@ import { toast } from '@/components/ui/Toast';
  * Hidden entirely when Beam is not a file-access mode on this install, rather
  * than shown and failing: the endpoint would answer "no download configured",
  * and a button that only ever reports that is worse than no button.
+ *
+ * Hidden inside Beam itself for the same reason. The app proxies this panel, so
+ * the button was on screen offering the user a download of the program they were
+ * already looking at it through. Read at render rather than in an effect because
+ * window.go is injected before the first render in Wails - the same assumption
+ * FileBrowserView documents and relies on.
  */
 export default function BeamDownloadButton() {
     const { fileAccessMode, beamSettings } = useAppData();
@@ -23,7 +30,7 @@ export default function BeamDownloadButton() {
 
     const beamEnabled =
         (fileAccessMode === 'beam' || fileAccessMode === 'both') && beamSettings?.enabled !== false;
-    if (!beamEnabled) return null;
+    if (!beamEnabled || isWails()) return null;
 
     const onClick = async () => {
         if (downloading) return;

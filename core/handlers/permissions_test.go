@@ -122,14 +122,14 @@ func TestFilterServersByRegion(t *testing.T) {
 	}
 
 	t.Run("all-regions returns every server unfiltered", func(t *testing.T) {
-		got := FilterServersByRegion(servers, EffectivePermissions{CanAccessAllRegions: true})
+		got := FilterServersByRegion(servers, EffectivePermissions{CanAccessAllRegions: true}, "staff")
 		if len(got) != len(servers) {
 			t.Fatalf("got %d servers, want %d", len(got), len(servers))
 		}
 	})
 
 	t.Run("explicit regions filter out inaccessible servers, defaulting empty region to default", func(t *testing.T) {
-		got := FilterServersByRegion(servers, EffectivePermissions{AllowedRegions: []string{"eu", "default"}})
+		got := FilterServersByRegion(servers, EffectivePermissions{AllowedRegions: []string{"eu", "default"}}, "staff")
 		if len(got) != 2 {
 			t.Fatalf("got %d servers, want 2: %+v", len(got), got)
 		}
@@ -141,7 +141,7 @@ func TestFilterServersByRegion(t *testing.T) {
 	})
 
 	t.Run("no allowed regions filters everything out", func(t *testing.T) {
-		got := FilterServersByRegion(servers, EffectivePermissions{})
+		got := FilterServersByRegion(servers, EffectivePermissions{}, "staff")
 		if len(got) != 0 {
 			t.Fatalf("got %d servers, want 0: %+v", len(got), got)
 		}
@@ -196,6 +196,47 @@ func TestLoadEffectivePermissions(t *testing.T) {
 		want := EffectivePermissions{Role: "user", CanDeleteServers: true, AllowedRegions: []string{"eu", "us"}}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("got %+v, want %+v", got, want)
+		}
+	})
+}
+
+// The rule the region filter did NOT have, and the one this platform actually
+// needs: a region set never hides a server from the person who owns it.
+//
+// Regions answer "which regions may this STAFF member look at". A customer's set
+// is empty unless an admin filled it in, and a self-registered account gets none
+// by default - so the filter dropped every server such an account had, its own
+// included. Measured during BYON testing: the server was created, it ran, the
+// admin could see it, and its owner got an empty list.
+func TestFilterServersByRegionNeverHidesYourOwnServer(t *testing.T) {
+	servers := []models.Server{
+		{UUID: "mine", Region: "us", OwnerID: "tenant-1"},
+		{UUID: "someone-elses", Region: "us", OwnerID: "tenant-2"},
+	}
+
+	t.Run("an owner with no regions at all still sees their own", func(t *testing.T) {
+		got := FilterServersByRegion(servers, EffectivePermissions{}, "tenant-1")
+		if len(got) != 1 || got[0].UUID != "mine" {
+			t.Fatalf("got %+v, want only the owned server", got)
+		}
+	})
+
+	// And it must not become a way around the filter: ownership widens the view
+	// by exactly the servers you own, nothing more.
+	t.Run("it does not hand over anyone else's", func(t *testing.T) {
+		got := FilterServersByRegion(servers, EffectivePermissions{AllowedRegions: []string{"eu"}}, "tenant-1")
+		for _, s := range got {
+			if s.OwnerID != "tenant-1" {
+				t.Errorf("a server owned by %q leaked through: %+v", s.OwnerID, s)
+			}
+		}
+	})
+
+	// No identity means no ownership exemption - a path that cannot name its
+	// caller keeps the old, narrower behaviour rather than silently widening.
+	t.Run("an anonymous viewer is filtered as before", func(t *testing.T) {
+		if got := FilterServersByRegion(servers, EffectivePermissions{}, ""); len(got) != 0 {
+			t.Fatalf("got %+v, want none", got)
 		}
 	})
 }

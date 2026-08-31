@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"sort"
@@ -115,12 +116,17 @@ func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request
 		http.Error(w, "domain required", http.StatusBadRequest)
 		return
 	}
+	// JSON on the failure path too. http.Error writes text/plain, and the panel
+	// reads res.error out of a JSON body - so a refused delete arrived as an
+	// undefined field and was reported with a generic message that named
+	// nothing.
 	if err := h.state.Gateway.DeleteRoute(domain); err != nil {
-		http.Error(w, "Failed to delete route", http.StatusInternalServerError)
+		log.Printf("AdminDeleteRoute: %s: %v", domain, err)
+		sendJSONError(w, "Failed to delete route", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Route deleted"})
+	json.NewEncoder(w).Encode(map[string]any{"success": true, "message": "Route deleted"})
 }
 
 // BulkDeleteRoutesBySuffix deletes every route whose domain equals OR ends

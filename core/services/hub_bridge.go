@@ -406,7 +406,38 @@ func (g *RedisGateway) DeleteCoreOwnedRoute(domain string) error {
 	return g.redis.SRem(ctx, "sys:index:routes", domain).Err()
 }
 
+// DeleteRoute removes a route whoever owns it.
+//
+// It used to ONLY push to the hub's queue, and that is wrong for half the routes
+// this platform has. A route-only entry is Core's: Core direct-published it to
+// Redis and recorded it in core_link_routes, and the hub has no row for it - so
+// the queue message deleted nothing, RepublishCoreOwnedRoutes wrote the stored
+// row straight back on its next tick, and the address kept routing. Deleting
+// from the admin Routes screen looked like it worked and did nothing, because
+// RPush succeeding is not the hub having acted.
+//
+// So both halves run, in this order:
+//
+//   - The durable row first, then the Redis entry. Same reason
+//     DeleteCoreOwnedRoute gives: the row is what the republisher writes back, so
+//     clearing the cache first leaves a window for it to restore what is being
+//     deleted. Row first makes the worst case a stale cache entry.
+//   - Then the queue message, for a route the HUB owns. Harmless for one it does
+//     not: DeleteRouteByDomain deletes zero rows without erroring and re-syncs.
+//
+// A caller that knows the route is Core's should still use DeleteCoreOwnedRoute -
+// it skips a queue round trip that cannot apply. This one is for the paths that
+// cannot tell, which is every admin-facing delete.
 func (g *RedisGateway) DeleteRoute(domain string) error {
+	stored, err := g.storedRoute(domain)
+	if err != nil {
+		return err
+	}
+	if stored != nil {
+		if err := g.DeleteCoreOwnedRoute(domain); err != nil {
+			return err
+		}
+	}
 	return g.pushToQueue(hubQueueMessage{
 		Action: "delete_route",
 		Domain: domain,

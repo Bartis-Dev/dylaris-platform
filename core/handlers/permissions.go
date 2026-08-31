@@ -73,15 +73,26 @@ func (p EffectivePermissions) CanAccessRegion(regionID string) bool {
 	return false
 }
 
-// FilterServersByRegion drops servers whose region the user can't access.
-// In-place semantics on a copy — pass the original slice safely.
-func FilterServersByRegion(servers []models.Server, p EffectivePermissions) []models.Server {
+// FilterServersByRegion drops servers whose region the user can't access -
+// EXCEPT the ones they own, which are never hidden from them.
+//
+// Regions are a STAFF visibility tool: they answer "support may look at EU
+// only". Applied to an owner they answer a question nobody asked and get it
+// wrong. A customer's region set is empty unless somebody filled it in, and the
+// default for a self-registered account is no regions at all, so this dropped
+// every server the account had - including the one it had just created. The
+// server ran, the admin could see it, and its owner could not. That is what BYON
+// testing hit.
+//
+// viewerID is the caller. Empty means "no identity", which keeps the old
+// behaviour for any path that cannot name one rather than silently widening it.
+func FilterServersByRegion(servers []models.Server, p EffectivePermissions, viewerID string) []models.Server {
 	if p.CanAccessAllRegions {
 		return servers
 	}
 	out := make([]models.Server, 0, len(servers))
 	for _, s := range servers {
-		if p.CanAccessRegion(s.Region) {
+		if (viewerID != "" && s.OwnerID == viewerID) || p.CanAccessRegion(s.Region) {
 			out = append(out, s)
 		}
 	}

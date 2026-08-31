@@ -357,11 +357,22 @@ function UtilityCluster({ children }: { children: React.ReactNode }) {
 // screen at rail width that is supposed to say which product this is. The icon
 // already exists - it is the favicon - so the narrow state now shows the same
 // mark the browser tab does.
+// Its divider has to land exactly on the sidebar's own edge, in BOTH states.
+//
+// Two things stopped it. The block took its width from a hard-coded class per
+// branch instead of the one the context publishes for exactly this - which is
+// how the two could disagree at all. And it sat INSIDE the navbar's px-6, so its
+// border fell 24px to the right of the sidebar edge underneath it, while the
+// sidebar starts at 0. The negative left margin cancels that padding; the
+// negative vertical margins plus self-stretch take the divider the full height
+// of the bar, which items-center otherwise crops to the height of the logo.
 function SidebarBrand() {
-    const { collapsed } = useSidebarCollapse();
-    if (collapsed) {
-        return (
-            <div className="flex items-center justify-center w-14 shrink-0 border-r border-(--base-03) mr-4">
+    const { collapsed, width } = useSidebarCollapse();
+    return (
+        <div
+            className={`${width} shrink-0 self-stretch -my-2.5 -ml-6 mr-6 flex items-center justify-center border-r border-(--base-03)`}
+        >
+            {collapsed ? (
                 <div className="p-1 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center">
                     {/* A plain img rather than next/image: the panel is a static
                         export, so there is no optimizer behind it, and the
@@ -369,17 +380,14 @@ function SidebarBrand() {
                         allows. */}
                     <img src={brandMark.src} alt="Dylaris" width={22} height={22} className="block select-none" draggable={false} />
                 </div>
-            </div>
-        );
-    }
-    return (
-        <div className="flex items-center justify-center w-72 shrink-0 border-r border-(--base-03) mr-6 pr-6">
-            <div className="px-3.5 py-1 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center">
-                <h1 className="text-2xl font-logo tracking-widest select-none">
-                    <span className="text-(--accent-light)">D</span>
-                    <span className="text-(--base-09)">ylaris</span>
-                </h1>
-            </div>
+            ) : (
+                <div className="px-3.5 py-1 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center">
+                    <h1 className="text-2xl font-logo tracking-widest select-none">
+                        <span className="text-(--accent-light)">D</span>
+                        <span className="text-(--base-09)">ylaris</span>
+                    </h1>
+                </div>
+            )}
         </div>
     );
 }

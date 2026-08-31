@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.17
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Your own servers could be missing from your server list while they were running
+  perfectly well. Nothing was wrong with the servers and none of them were lost;
+  the list was hiding them. No action needed on your side.
+- Beam no longer shows a button offering to download Beam.
+
 ## 2026.08.31.15
 
 ### Features
