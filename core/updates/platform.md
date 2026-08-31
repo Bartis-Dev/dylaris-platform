@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The Beam desktop app could not authenticate its native side, so the file
+  browser failed to open a transfer. It sent the panel an address the app is
+  built to reject, and the refusal was silent. `core`
+
 ## 2026.08.31.2
 
 ### Features

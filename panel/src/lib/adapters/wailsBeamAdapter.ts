@@ -54,9 +54,13 @@ function uint8ToBase64(bytes: Uint8Array): string {
 // Shape of the bindings exposed by gateway/beam/app/app.go. We type only
 // the methods the FileBrowser actually calls; everything else stays
 // loosely typed since the rest of the panel doesn't reach into it.
-interface WailsAppBindings {
+export interface WailsAppBindings {
     Login(apiURL: string, username: string, password: string): Promise<{ token: string; username: string; isAdmin: boolean }>;
     SetSession?(apiURL: string, token: string): Promise<void>;
+    // The panel URL the app was pointed at. Declared optional because an older
+    // app build may not expose it; every method on the Go App is bound, so a
+    // current one does.
+    GetPanelURL?(): Promise<string>;
     Logout(): Promise<void>;
     GetBeamConfig(): Promise<{ relay_address: string }>;
     ConnectToServer(serverUUID: string): Promise<void>;
@@ -130,6 +134,33 @@ export function syncSessionWithWails(): Promise<void> {
     return sessionSyncPromise;
 }
 
+// wailsAPIBase is the API base SetSession will actually accept.
+//
+// The Go side refuses any apiURL whose origin is not the panel the app was
+// pointed at (isPanelOrigin), so a compromised page cannot aim the
+// credential-bearing native client somewhere else. window.location.origin is
+// NOT that panel: the app proxies the panel onto wails.localhost on purpose, so
+// the webview never leaves that origin - which means the obvious expression
+// names a host the check can never match, and the handoff is refused every
+// time. NEXT_PUBLIC_API_URL is no rescue either; CI deliberately leaves it empty
+// so the published bundle resolves same-origin.
+//
+// Asking the app which panel it is showing gives the one value that matches, and
+// it is correct by construction now that Core serves the panel and the API
+// together. The old expression stays as the fallback for an app build that does
+// not expose GetPanelURL.
+export async function wailsAPIBase(app: WailsAppBindings): Promise<string> {
+    if (typeof app.GetPanelURL === 'function') {
+        try {
+            const url = (await app.GetPanelURL())?.trim();
+            if (url) return url.replace(/\/+$/, '') + '/api';
+        } catch {
+            // fall through to the build-time value
+        }
+    }
+    return process.env.NEXT_PUBLIC_API_URL || window.location.origin + '/api';
+}
+
 async function doSyncSession(): Promise<void> {
     devLog('beam.session', 'info', 'syncSessionWithWails: start');
     const app = getWailsApp();
@@ -157,7 +188,7 @@ async function doSyncSession(): Promise<void> {
         devLog('beam.session', 'warn', 'syncSessionWithWails: Core did not issue a session token');
         return;
     }
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin + '/api';
+    const apiUrl = await wailsAPIBase(app);
     devLog('beam.session', 'info', `SetSession → ${apiUrl}`);
     try {
         await app.SetSession(apiUrl, token);
