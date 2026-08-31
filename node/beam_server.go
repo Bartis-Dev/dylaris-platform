@@ -1021,6 +1021,9 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		// Close before rename so Windows doesn't reject (no-op on Linux).
 		tmpFile.Close()
 		tmpFile = nil // skip the defer's removal — rename consumed it
+		// Same reason as the SFTP write: handed to the container's uid so a file
+		// uploaded into a running server is one that server can modify.
+		chownForMC(tmpPath)
 		if err := os.Rename(tmpPath, destPath); err != nil {
 			os.Remove(tmpPath)
 			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})

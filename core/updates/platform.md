@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Minecraft servers no longer run as root. A plugin or mod now runs as an
+  unprivileged user that can write its own world and nothing else - not the files
+  the node keeps beside it, and not the host if it ever escapes the container.
+  `node`
+- The node hands each world to that user on the next start, so nothing is needed
+  from you. Set `MC_RUN_AS=0` on the node to keep the old behaviour, or another
+  uid if your server data is already owned by one. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.08.31.5
 
 ### Features

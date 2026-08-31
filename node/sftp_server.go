@@ -393,6 +393,11 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The node writes as root and the server runs as uid 1000, so a file
+	// uploaded into a RUNNING server would be one the server can read and not
+	// modify - which surfaces days later as a plugin that cannot save its own
+	// config. The start-time pass repairs this, but only at the next start.
+	chownForMC(realPath)
 	// Without Redis there is nothing to meter against — behave as before.
 	if v.rdb == nil {
 		return f, nil

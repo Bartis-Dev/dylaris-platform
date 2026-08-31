@@ -701,7 +701,15 @@ func (h *StreamHandler) createUploadTemp(serverUUID, path string) (*os.File, err
 	if err != nil {
 		return nil, err
 	}
-	return os.CreateTemp(filepath.Dir(finalPath), ".upload-*.tmp")
+	f, err := os.CreateTemp(filepath.Dir(finalPath), ".upload-*.tmp")
+	if err != nil {
+		return nil, err
+	}
+	// Chowned as the TEMP file, because the rename that follows carries the
+	// ownership with it. Doing it after the rename would be a second window in
+	// which the finished file is root's.
+	chownForMC(f.Name())
+	return f, nil
 }
 
 func (h *StreamHandler) handleCreate(reqID, serverUUID string, req *pb.CreateFileReq) *pb.NodeMessage {
@@ -726,6 +734,9 @@ func (h *StreamHandler) handleCreate(reqID, serverUUID string, req *pb.CreateFil
 		}
 		f.Close()
 	}
+	// Created by the node as root, into a server that runs as uid 1000. Without
+	// this the panel can create a file the server cannot then write.
+	chownForMC(fullPath)
 
 	return &pb.NodeMessage{
 		RequestId: reqID,

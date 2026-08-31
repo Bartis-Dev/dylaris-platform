@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Your server now runs with fewer privileges inside its container. Plugins and
+  mods still work exactly as before; they can simply no longer reach anything
+  outside your own server files.
+
+### Fixes
+- Nothing.
+
 ## 2026.08.31.5
 
 ### Features

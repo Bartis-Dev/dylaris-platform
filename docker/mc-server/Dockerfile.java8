@@ -2,5 +2,21 @@ FROM eclipse-temurin:8-jre-alpine
 RUN apk add --no-cache ca-certificates tzdata
 COPY log-shipper-linux /usr/local/bin/log-shipper
 RUN chmod +x /usr/local/bin/log-shipper && mkdir -p /data
+
+# The server runs as uid 1000, NOT root, and the uid is the platform's own
+# (`dylaris` in the Core/Node image is 1000 too).
+#
+# It matters because everything in this container is software the TENANT chose -
+# a plugin, a mod, a modpack. As root it could rewrite the files the node keeps
+# beside the world (.active_server, .dylaris-backups) and, on a container escape,
+# arrive on the host as uid 0. As 1000 it can write its own world directory and
+# nothing else: the node chowns the sub-server directory to 1000 and leaves its
+# own files owned by root.
+#
+# The node passes --user as well. Both, deliberately: the image is the guarantee
+# for anyone running it by hand, the node's flag is what an operator can override
+# for legacy data.
+RUN addgroup -g 1000 dylaris && adduser -D -u 1000 -G dylaris dylaris
+USER 1000:1000
 WORKDIR /data
 ENTRYPOINT ["/usr/local/bin/log-shipper"]

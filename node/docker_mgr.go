@@ -912,6 +912,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 
 	cc := &container.Config{
 		Image:      config.Docker.Image,
+		User:       mcUserSpec(),
 		WorkingDir: "/data",
 		Hostname:   containerName,
 		Env:        buildRedisEnv(config.UUID, "", sidecarAddr),
@@ -1103,9 +1104,30 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	cc := &container.Config{
 		Image:      config.Docker.Image,
 		Cmd:        cmdParts,
+		User:       mcUserSpec(),
 		WorkingDir: fmt.Sprintf("/data/%s", config.ActiveSubServer),
 		Hostname:   containerName,
 		Env:        buildRedisEnv(config.UUID, config.ActiveSubServer, sidecarAddr),
+	}
+
+	// The container runs as uid 1000, so the world has to belong to it. Done
+	// HERE rather than at every place that writes a file: this is the one point
+	// every start goes through, so it is both the migration for data that
+	// predates the switch and the repair for anything the node wrote as root
+	// since the last start. It costs one Lstat when nothing has to change.
+	//
+	// Only the sub-server directory. Its PARENT stays root's, which is what
+	// keeps .active_server and .dylaris-backups out of the tenant's reach.
+	if config.ActiveSubServer != "" {
+		// resolveLOCALServerPath, not the host one. There are two path spaces
+		// here and they look alike: hostServerPath is what the host's Docker
+		// daemon needs for the bind, and this code runs INSIDE the node's own
+		// container, where that path does not exist. Handing it the host path
+		// made the chown a silent no-op - Lstat said "not there", which the
+		// function reads as "nothing installed yet".
+		if err := ensureSubServerOwnership(filepath.Join(dm.resolveLocalServerPath(config.UUID), config.ActiveSubServer)); err != nil {
+			log.Printf("mc-user: %v", err)
+		}
 	}
 
 	binds := []string{fmt.Sprintf("%s:/data", hostServerPath)}
