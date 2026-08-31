@@ -158,6 +158,37 @@ func TestOnlyTheDuplicatingCopyHandsFilesOver(t *testing.T) {
 	}
 }
 
+// Every path that STARTS a Minecraft container must run the ownership pass, not
+// just the one that creates it.
+//
+// PowerAction("start") starts an existing container, and its only caller is the
+// reconciler's crash-restart loop - which is precisely where the repair matters
+// most, because a file the container may not write is one of the things that
+// makes it crash in the first place. Skipping it there turns a one-off
+// permission problem into five restarts into the same error and then a server
+// that stays down.
+func TestEveryStartPathRepairsOwnership(t *testing.T) {
+	b, err := os.ReadFile("docker_mgr.go")
+	if err != nil {
+		t.Fatalf("read docker_mgr.go: %v", err)
+	}
+	src := string(b)
+
+	for _, header := range []string{
+		"func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, netName string, autoStart bool) (string, error) {",
+		"func (dm *DockerManager) PowerAction(uuid string, action string) error {",
+	} {
+		body, ok := cutFunc(src, header)
+		if !ok {
+			t.Errorf("%s is gone; move this assertion with it", header)
+			continue
+		}
+		if !strings.Contains(body, "ensureSubServerOwnership") {
+			t.Errorf("%s starts a container without repairing ownership first", header)
+		}
+	}
+}
+
 // cutFunc returns a function's source, from its header to the next one.
 func cutFunc(src, header string) (string, bool) {
 	i := strings.Index(src, header)

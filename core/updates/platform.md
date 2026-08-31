@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A server that crashed while any of its files were still owned by root would be
+  restarted into the same error and then stay down. The node now repairs
+  ownership before EVERY start, not only when it creates the container. `node`
+
 ## 2026.08.31.6
 
 ### Features

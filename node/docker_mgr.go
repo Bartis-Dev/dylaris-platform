@@ -1024,6 +1024,21 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 
 	switch action {
 	case "start":
+		// Repair ownership before starting, the same as the create path does.
+		//
+		// This one starts a container that already exists, and its only caller is
+		// the reconciler's crash-restart loop - which is exactly where it matters:
+		// a file the non-root server may not write is one of the ways it crashes,
+		// and without this the loop restarts it into the same error until it gives
+		// up. The sub-server comes from the container's own working directory, the
+		// same source RestartContainer reads it from.
+		if info, ierr := dm.cli.ContainerInspect(dm.ctx, mcName); ierr == nil {
+			if sub := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); sub != "" && sub != info.Config.WorkingDir {
+				if oerr := ensureSubServerOwnership(filepath.Join(dm.resolveLocalServerPath(uuid), sub)); oerr != nil {
+					log.Printf("mc-user: %v", oerr)
+				}
+			}
+		}
 		err := dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
 		if err != nil && strings.Contains(err.Error(), "already exists") {
 			// A stale network endpoint left by an ungraceful prior exit blocks the

@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- After yesterday's privilege change, a server that crashed could be restarted
+  into the same failure and stay down instead of recovering on its own. It now
+  recovers automatically. `node`
+
 ## 2026.08.31.6
 
 ### Features
