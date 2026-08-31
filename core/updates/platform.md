@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.13
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The Configure and Placement buttons on a node stay put and light up when their
+  editor is open, instead of disappearing. Clicking the lit one closes what it
+  opened. `core`
+
 ## 2026.08.31.12
 
 ### Features

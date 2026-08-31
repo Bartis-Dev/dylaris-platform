@@ -288,6 +288,28 @@ interface NodeCardProps {
     resettingPairing: boolean;
 }
 
+// nodeActionClass styles a node action that OPENS an editor below the row.
+//
+// The active one used to be removed from the row entirely: clicking "Configure"
+// made the Configure button vanish, which reads as the click having broken
+// something rather than having opened the form under it. It stays, lit, and
+// clicking it again closes what it opened - so the control that opened a panel
+// is also the one that closes it.
+//
+// needsAttention is the separate, pre-existing highlight for a node that has
+// never been configured. Being open outranks it: the same button cannot be
+// telling you to look here and showing you are already here.
+export function nodeActionClass(active: boolean, needsAttention: boolean): string {
+    const base = 'text-xs inline-flex items-center gap-1 rounded px-1.5 py-0.5 -mx-1.5 transition-colors';
+    if (active) {
+        return `${base} bg-(--accent)/15 text-(--accent-light) hover:bg-(--accent)/25`;
+    }
+    if (needsAttention) {
+        return `${base} text-(--accent-light) hover:text-(--accent)`;
+    }
+    return `${base} text-(--base-06) hover:text-(--accent-light)`;
+}
+
 function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing }: NodeCardProps) {
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
@@ -415,30 +437,24 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                             Requires gateway
                         </span>
                     )}
-                    {!isConfiguring && (
-                        <button
-                            onClick={onConfigure}
-                            className={`text-xs inline-flex items-center gap-1 transition-colors ${
-                                node.needsConfiguration
-                                    ? 'text-(--accent-light) hover:text-(--accent)'
-                                    : 'text-(--base-06) hover:text-(--accent-light)'
-                            }`}
-                            title="Configure name, region and tags"
-                        >
-                            <SlidersHorizontal size={11} />
-                            Configure
-                        </button>
-                    )}
-                    {!isEditing && (
-                        <button
-                            onClick={onEdit}
-                            className="text-xs text-(--base-06) hover:text-(--accent-light) inline-flex items-center gap-1 transition-colors"
-                            title="Edit placement"
-                        >
-                            <Pencil size={11} />
-                            Placement
-                        </button>
-                    )}
+                    <button
+                        onClick={isConfiguring ? onConfigCancel : onConfigure}
+                        aria-expanded={isConfiguring}
+                        className={nodeActionClass(isConfiguring, !!node.needsConfiguration)}
+                        title="Configure name, region and tags"
+                    >
+                        <SlidersHorizontal size={11} />
+                        Configure
+                    </button>
+                    <button
+                        onClick={isEditing ? onCancel : onEdit}
+                        aria-expanded={isEditing}
+                        className={nodeActionClass(isEditing, false)}
+                        title="Edit placement"
+                    >
+                        <Pencil size={11} />
+                        Placement
+                    </button>
                     <button
                         onClick={onRevealDeployBundle}
                         disabled={revealingDeployBundle}
