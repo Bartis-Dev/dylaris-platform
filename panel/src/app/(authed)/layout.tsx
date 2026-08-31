@@ -18,6 +18,7 @@ import { ConfirmDialogRoot } from '@/components/ui/ConfirmDialog';
 import { ToastRoot } from '@/components/ui/Toast';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
+import BeamDownloadButton from '@/components/BeamDownloadButton';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
 import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
@@ -143,6 +144,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             <div className="relative z-30 shrink-0">
                 <Navbar brand={<SidebarBrand />}>
                     <UtilityCluster>
+                    <BeamDownloadButton />
                     <UploadManagerWidget />
                     {/* UpdatesBell is for everyone now: an admin sees the platform notes and
                         every component, a customer sees the customer notes and their own nodes. */}

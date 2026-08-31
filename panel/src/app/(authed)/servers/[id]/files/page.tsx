@@ -8,34 +8,7 @@ import { API_URL } from '@/lib/api';
 import FileBrowserView from '@/views/FileBrowserView';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
-
-// Platform slugs match gateway/beam/relay/binaries.go validPlatforms.
-type BeamPlatform = 'windows-amd64' | 'linux-amd64' | 'linux-arm64' | 'darwin-amd64' | 'darwin-arm64';
-
-function detectBeamPlatform(): BeamPlatform {
-    if (typeof navigator === 'undefined') return 'windows-amd64';
-    const ua = navigator.userAgent;
-    const platform = (navigator as Navigator & { userAgentData?: { platform?: string; architecture?: string } }).userAgentData?.platform ?? '';
-    const arch = (navigator as Navigator & { userAgentData?: { platform?: string; architecture?: string } }).userAgentData?.architecture ?? '';
-    const isArm = /aarch64|arm64|arm/i.test(ua + ' ' + arch);
-
-    if (/Mac|Darwin/i.test(ua) || /macOS/i.test(platform)) {
-        return isArm ? 'darwin-arm64' : 'darwin-amd64';
-    }
-    if (/Linux/i.test(ua)) {
-        return isArm ? 'linux-arm64' : 'linux-amd64';
-    }
-    return 'windows-amd64';
-}
-
-// Pulls the filename out of a Content-Disposition header, with a safe
-// fallback when the relay didn't set one. Windows binaries get .exe so the
-// OS knows what to do with the saved blob.
-function filenameFor(platform: BeamPlatform, contentDisp: string): string {
-    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(contentDisp);
-    if (m && m[1]) return decodeURIComponent(m[1]);
-    return platform.startsWith('windows') ? `beam-${platform}.exe` : `beam-${platform}`;
-}
+import { downloadBeamApp } from '@/lib/beamDownload';
 
 export default function ServerFilesPage() {
     const paramId = useRouteId('servers');
@@ -65,41 +38,9 @@ export default function ServerFilesPage() {
     const handleBeamDownload = async () => {
         if (downloading) return;
         setDownloading(true);
-        try {
-            const platform = detectBeamPlatform();
-            // No headers and no credentials:'include'. This is same-origin, so
-            // the cookie goes by default; asking for credentials explicitly
-            // would trigger the stricter CORS path which Core deliberately does
-            // not allow, and the browser then aborts with a bare "NetworkError"
-            // that hides the real one.
-            const res = await fetch(`${API_URL}/beam/download?platform=${platform}`);
-            if (!res.ok) {
-                let msg = `Download failed (HTTP ${res.status}).`;
-                try {
-                    const body = await res.json();
-                    if (body?.message) msg = body.message;
-                } catch {
-                    // Response wasn't JSON — keep the generic HTTP message.
-                }
-                showToast(msg, false);
-                return;
-            }
-            const blob = await res.blob();
-            const filename = filenameFor(platform, res.headers.get('Content-Disposition') || '');
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
-            showToast('Beam app downloaded.', true);
-        } catch (e) {
-            showToast(e instanceof Error ? e.message : 'Network error.', false);
-        } finally {
-            setDownloading(false);
-        }
+        const err = await downloadBeamApp();
+        showToast(err ?? 'Beam app downloaded.', err === null);
+        setDownloading(false);
     };
 
     return (

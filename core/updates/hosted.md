@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.9
+
+### Features
+- The Beam desktop app can now be downloaded straight from the navigation bar,
+  instead of only from a server's Files page.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A node that had lost contact could keep re-registering instead of reconnecting,
+  and stayed offline while doing so. It now reports what it needs to recover.
+  `node`
+- The panel no longer squeezes itself below a usable width on a narrow window.
+
 ## 2026.08.31.8
 
 ### Features

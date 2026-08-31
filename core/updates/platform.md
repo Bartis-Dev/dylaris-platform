@@ -8,6 +8,31 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.9
+
+### Features
+- The Beam desktop app can be downloaded from the navigation bar. It used to be
+  reachable only from a server's Files page - the one screen that needs Beam to
+  be useful in the first place. `core`
+- The Custom Tabs module can no longer be deleted from Settings -> Modules. It is
+  seeded by Core and re-created on every start, so deleting it only stranded the
+  tabs that already existed. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A node whose identity Core no longer knew was enrolled again as a brand-new
+  node every thirty seconds. The node refused to adopt the new identity, so it
+  stayed down while the node list filled with rows that were never used. Core
+  now refuses and names the recovery path instead. `core`
+- The panel no longer compresses below 1100px; the page scrolls sideways
+  instead. Narrower than that, navigation entries folded away and dense tables
+  stopped being readable. `core`
+
 ## 2026.08.31.8
 
 ### Features

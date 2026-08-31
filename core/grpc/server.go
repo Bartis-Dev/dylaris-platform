@@ -242,6 +242,26 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			//      the only door for tenants and ownership binding is unchanged.
 			// The enroll token wins when both are present: setting it is an
 			// explicit request for an owned node.
+			// A node that already HOLDS an identity is never a new node.
+			//
+			// secret_proof is only ever sent by a node with a cached secret, so
+			// an unknown token carrying one means Core has LOST that node's row,
+			// not that a machine turned up for the first time. Enrolling it
+			// mints an identity the node then refuses to adopt - correctly,
+			// because swapping identity at runtime orphans its servers and its
+			// scoped Redis users - and it comes back thirty seconds later. That
+			// ran on production on 2026-08-31 and left 249 node rows, 119 of
+			// them within one hour, while the node stayed down throughout.
+			//
+			// An enroll or recovery token is the deliberate act that re-opens
+			// the door, and it is checked first below, so this only closes the
+			// automatic cluster-proof path.
+			if auth.SecretProof != "" && auth.EnrollToken == "" {
+				const msg = "this node already holds an identity Core does not know; " +
+					"re-pair it with NODE_RECOVERY_TOKEN (panel: Settings -> Nodes -> Reset pairing)"
+				sendFail(msg)
+				return fmt.Errorf("acl: node %s presents a secret proof for an unknown identity; refusing to mint a new one", tokenPrefix(auth.NodeToken))
+			}
 			var assignedID, secretHex string
 			var id int
 			var eerr error

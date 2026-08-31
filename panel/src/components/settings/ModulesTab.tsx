@@ -33,7 +33,7 @@ interface ModulesTabProps {
 // even though it is_system=false server-side (it stays toggle-able) - only
 // deletion is blocked, both here (hides the button) and in Core (rejects the
 // request), same as Library.
-const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library', 'Tickets', 'Modpacks']);
+const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library', 'Tickets', 'Modpacks', 'Custom Tabs']);
 
 // Modules whose enabled state AND audience are DERIVED from feature flags rather
 // than set here. Offering the controls would be worse than hiding them: an edit

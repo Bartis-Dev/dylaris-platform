@@ -182,6 +182,10 @@ var builtInModules = map[string]bool{
 	"Infrastructure": true,
 	"Library":        true,
 	"Tickets":        true,
+	// Seeded like Tickets and equally is_system=false so it stays toggle-able.
+	// Deleting it strands whatever tabs already exist and the next restart
+	// re-creates the row anyway.
+	"Custom Tabs": true,
 }
 
 // DeleteModuleHandler DELETE /modules/{id} - RequireCap("settings.write") at the

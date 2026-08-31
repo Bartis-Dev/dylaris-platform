@@ -172,3 +172,74 @@ func TestNodeConnectLogsAuthRejections(t *testing.T) {
 		})
 	}
 }
+
+// acceptingClusterACL takes the cluster-proof door and records how many nodes
+// it was asked to create.
+type acceptingClusterACL struct {
+	rejectingACL
+	platformEnrolls int
+}
+
+func (a *acceptingClusterACL) VerifyClusterProof(string, string) bool { return true }
+
+func (a *acceptingClusterACL) EnrollPlatform(context.Context, string, string) (string, int, string, error) {
+	a.platformEnrolls++
+	return "brand-new-uuid", 7, "aabb", nil
+}
+
+// A node that already HOLDS an identity must never be enrolled as a new one.
+//
+// It presents secret_proof, which only a node with a cached secret sends - so an
+// unknown token plus a proof is a node whose row Core has LOST, not a new
+// machine. Enrolling it there produced the worst possible outcome, measured on
+// production 2026-08-31: Core minted a fresh identity, the node refused to adopt
+// it (correctly - swapping identity at runtime orphans its servers and its Redis
+// users), and thirty seconds later both did it again. 249 node rows, 119 of them
+// in one hour, and the node never came back.
+//
+// The two sides now say the same thing: re-pair with NODE_RECOVERY_TOKEN.
+func TestAPairedNodeIsNeverReEnrolledUnderANewIdentity(t *testing.T) {
+	acl := &acceptingClusterACL{}
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+
+	ctx := peer.NewContext(context.Background(), &peer.Peer{
+		Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 51234},
+	})
+	stream := &fakeNodeStream{ctx: ctx, recv: []*pb.NodeMessage{{Payload: &pb.NodeMessage_Auth{
+		Auth: &pb.NodeAuth{
+			NodeToken:    "d19b65e7-0bbf-43d1-9c62-374c3219733a",
+			SecretProof:  "a-proof-of-the-cached-secret",
+			ClusterProof: "a-valid-cluster-proof",
+			AclSupported: true,
+		},
+	}}}}
+
+	srv := NewServer(NewRegistry(), rejectingLookup{}, "core-test", acl, nil, nil, nil)
+	if err := srv.NodeConnect(stream); err == nil {
+		t.Fatal("a node claiming an unknown identity was accepted")
+	}
+	if acl.platformEnrolls != 0 {
+		t.Errorf("Core created %d new node(s) for a node that already had one; "+
+			"that is the row-per-30-seconds leak", acl.platformEnrolls)
+	}
+	if !strings.Contains(buf.String()+failMessages(stream.sent), "NODE_RECOVERY_TOKEN") {
+		t.Error("the refusal does not name the recovery path, so the operator is told nothing")
+	}
+}
+
+// failMessages joins whatever reasons were sent back to the node.
+func failMessages(sent []*pb.NodeMessage) string {
+	var b strings.Builder
+	for _, m := range sent {
+		if ar := m.GetAuthResult(); ar != nil {
+			b.WriteString(ar.GetMessage())
+			b.WriteString(" ")
+		}
+	}
+	return b.String()
+}
