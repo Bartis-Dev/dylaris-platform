@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.12
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The DNS check no longer reports a missing "API domain". Core serves the panel
+  and the API together, so the browser calls /api on the panel's own domain and
+  there is nothing to create; the row said no API address was set and pointed at
+  a modpack setting that does not decide it. `core`
+- Signing in to the Beam desktop app no longer bounces straight back to the
+  login screen. The app now holds the panel session itself instead of relying on
+  the embedded browser to store it.
+- Beam's "cannot reach the panel" screen retries on its own and offers the app's
+  settings, so a panel that is briefly down recovers without restarting the app.
+
 ## 2026.08.31.11
 
 ### Features

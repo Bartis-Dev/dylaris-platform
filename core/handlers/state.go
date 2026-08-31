@@ -31,6 +31,12 @@ type AppState struct {
 	// links into the UI (verify-email, password-reset, ticket replies, etc).
 	FrontendURL string
 
+	// PanelAPIURL is PANEL_API_URL: the API base Core renders into every page,
+	// and EMPTY for the normal deployment where the panel calls /api on its own
+	// origin. Read by the DNS check, which has to tell "the API is on this
+	// page's own domain" apart from "the operator put it on a second hostname".
+	PanelAPIURL string
+
 	// ExternalTicketDBURL carries the operator-configured connection
 	// string for the external ticket DB. Empty when not configured;
 	// the migration handler reads this to drive the UI.

@@ -80,14 +80,17 @@ func (h *DNSHandler) buildDNSCheckConfig() services.DNSCheckConfig {
 		cfg.CNAMETarget, _ = h.state.Store.GetSetting("gateway_cname_target")
 	}
 
-	// API host from core_public_url. The panel's browser calls this for every
-	// request, and until now the check had no notion of it: an operator whose
-	// api. record was missing got a clean DNS report and a panel that loaded and
-	// then did nothing.
-	if raw, _ := h.state.Store.GetSetting("core_public_url"); raw != "" {
-		if host, dial := hostAndDialTarget(raw); host != "" {
-			cfg.APIHost, cfg.APIDialTarget = host, dial
-		}
+	// API host from PANEL_API_URL - the value Core renders into the page, and
+	// therefore the only thing that can send the browser to another origin. It
+	// is empty on every normal deployment, and the check says so rather than
+	// reporting a missing record.
+	//
+	// It used to read core_public_url, which answers a different question (the
+	// absolute base for Solder mod URLs) and is unset on a platform that serves
+	// no modpacks. That produced a permanent "no API address is set" against a
+	// panel whose API was working.
+	if host, dial := hostAndDialTarget(h.state.PanelAPIURL); host != "" && !strings.EqualFold(host, cfg.PanelHost) {
+		cfg.APIHost, cfg.APIDialTarget = host, dial
 	}
 
 	// Beam relay. Resolved the same way the desktop client resolves it - the

@@ -224,6 +224,7 @@ func main() {
 		Store:               pgStore,
 		GRPCRegistry:        grpcRegistry,
 		FrontendURL:         cfg.FrontendURL,
+		PanelAPIURL:         cfg.PanelAPIURL,
 		ExternalTicketDBURL: cfg.ExternalTicketDBURL,
 		FeatureFlags:        services.NewFeatureFlags(pgStore),
 		Authz:               authz.NewResolver(pgStore),

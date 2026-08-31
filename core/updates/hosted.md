@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.08.31.12
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Signing in to the Beam desktop app no longer sends you back to the login
+  screen. Update the app to get the fix.
+- When Beam cannot reach the panel it now keeps retrying and comes back on its
+  own, and its settings are reachable from that screen.
+
 ## 2026.08.31.9
 
 ### Features

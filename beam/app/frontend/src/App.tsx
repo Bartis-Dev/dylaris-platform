@@ -33,6 +33,7 @@ type WailsBindings = {
   GetUpdateChannel?: () => Promise<string>;
   OpenUpdateDownload?: (token: string) => void;
   ApplyUpdate?: (token: string) => Promise<void>;
+  ClearLocalData?: (token: string) => Promise<void>;
 };
 
 declare global {
@@ -76,6 +77,7 @@ export default function App() {
   const [apiInputUrl, setApiInputUrl] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [savingError, setSavingError] = useState<string | null>(null);
+  const [cleared, setCleared] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [gate, setGate] = useState<UpdateGate | null>(null);
 
@@ -195,6 +197,22 @@ export default function App() {
       )}
     </>
   );
+
+  // The session lives in the app shell, not in the webview, so clearing site
+  // data inside the Panel would reach nothing. This is the only way to drop a
+  // half-broken session without reinstalling - which is exactly when someone
+  // comes looking for a "clear cache" button.
+  const handleClearLocalData = async () => {
+    setSavingError(null);
+    try {
+      await getBindings()?.ClearLocalData?.(shellToken);
+    } catch (err) {
+      setSavingError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    setCleared(true);
+    setTimeout(() => setCleared(false), 2000);
+  };
 
   // Persist the URL, then hand the window back to the Panel. The proxy
   // re-reads the saved URL on the next request, so '/' now resolves to
@@ -324,6 +342,14 @@ export default function App() {
             onClick={() => { setInputUrl(defaultUrl); setApiInputUrl(apiDefaultUrl); }}
           >
             Use default
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleClearLocalData}
+            title="Signs out and forgets the session this app is holding"
+          >
+            {cleared ? 'Cleared' : 'Clear local data'}
           </button>
           <button
             type="button"

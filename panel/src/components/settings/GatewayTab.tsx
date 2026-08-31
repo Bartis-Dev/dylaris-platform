@@ -70,7 +70,7 @@ const DNS_CATEGORY_BLURB: Record<DnsRecordCategory, string> = {
     wildcard: 'Wildcard so every server subdomain resolves automatically — you never touch DNS per customer.',
     cname: 'Custom-domain target — where customers point a CNAME for their own domain.',
     panel: 'Panel domain — where this admin/web interface is served.',
-    api: 'API domain — what the panel in the browser calls for every request. The panel loads without it and then does nothing.',
+    api: 'API domain — what the panel in the browser calls for every request. Normally the panel domain itself, since Core serves both.',
     beam: 'Beam relay — the hostname the desktop client dials for REMOTE access. LAN and direct connections do not use it.',
 };
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -215,6 +217,10 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 			// host; the Panel's edge (NPM / Cloudflare) routes on Host,
 			// so it has to be the real one.
 			pr.Out.Host = target.Host
+			// The session cookie is the shell's, not the webview's; see
+			// applyShellCookies. Attached after SetURL so the jar is asked
+			// about the PANEL's host rather than wails.localhost.
+			applyShellCookies(pr.Out, app.panelCookies())
 			// Force an uncompressed response. Wails injects its runtime
 			// <script> tags into text/html bodies - it cannot do that
 			// through a gzip stream. Dropping Accept-Encoding lets the
@@ -223,6 +229,10 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 			pr.Out.Header.Del("Accept-Encoding")
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			// Take the session out of the response before anything else looks
+			// at it; the webview keeps only the readable sign-in hint.
+			captureShellCookies(resp, app.panelCookies(), app.resolvePanelTarget())
+			app.rememberReadableCookies(resp)
 			// The Panel ships no security headers of its own, so beam is
 			// the only place a CSP / framing policy is applied. Drop the
 			// report-only variant and X-Frame-Options (the latter is
@@ -259,6 +269,12 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 					return err
 				}
 				body = injectWailsRuntime(body, nonce)
+				// Replay the readable cookies from the page. See
+				// readableCookieScript: the Set-Cookie header above may or may
+				// not reach WebView2's cookie store, and this path needs none.
+				if script := app.readableCookieScript(nonce); script != "" {
+					body = injectBeforeBodyEnd(body, script)
+				}
 				resp.Body = io.NopCloser(bytes.NewReader(body))
 				resp.ContentLength = int64(len(body))
 				resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
@@ -269,7 +285,7 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusBadGateway)
-			_, _ = w.Write([]byte(renderPanelUnreachable(err)))
+			_, _ = w.Write([]byte(renderPanelUnreachable(err, app.GetPanelURL())))
 		},
 	}
 
@@ -417,15 +433,29 @@ func serveBeamIndex(app *App, next http.Handler, w http.ResponseWriter, r *http.
 // Panel; handing that same Panel a script tag through the error path would walk
 // straight around all of it. Extracted from the ErrorHandler closure so the
 // invariant is unit-testable, the same way isBrowserOpenableURL was.
-func renderPanelUnreachable(err error) string {
-	return strings.ReplaceAll(panelUnreachableHTML, "{{ERROR}}", html.EscapeString(err.Error()))
+func renderPanelUnreachable(err error, panelURL string) string {
+	page := strings.ReplaceAll(panelUnreachableHTML, "{{ERROR}}", html.EscapeString(err.Error()))
+	return strings.ReplaceAll(page, "{{PANEL}}", html.EscapeString(panelURL))
 }
 
-// panelUnreachableHTML is shown when the Panel can't be reached (DNS
-// failure, connection refused, TLS error, …). It carries a single
-// affordance: jump to the Settings page to fix the URL. The {{ERROR}}
-// token is replaced (escaped, see renderPanelUnreachable) with the
-// underlying transport error.
+// panelUnreachableHTML is what the window shows when the Panel cannot be
+// reached - DNS failure, connection refused, TLS error, a panel that is simply
+// restarting.
+//
+// It RETRIES on its own, and that is the point of it. The previous version was
+// a dead end: one sentence and a link to the settings page, so a panel that was
+// down for thirty seconds left the user staring at an error inviting them to
+// change a URL that was correct. Backing off from 3s to 30s means an app left
+// open comes back by itself when the panel does.
+//
+// The settings link stays, and is now the app's only always-available way in:
+// when the panel IS reachable the window is the panel, with nothing of Beam's
+// own on screen.
+//
+// Everything here is inline and dependency-free on purpose. This page is what
+// is left when the network is gone, so it cannot fetch a stylesheet, a font or
+// a script. {{ERROR}} and {{PANEL}} are substituted HTML-escaped; see
+// renderPanelUnreachable for why that matters.
 const panelUnreachableHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -436,21 +466,245 @@ const panelUnreachableHTML = `<!DOCTYPE html>
   body{display:flex;align-items:center;justify-content:center;
        background:#080909;color:#D8DDE6;
        font-family:system-ui,-apple-system,sans-serif}
-  .box{max-width:460px;text-align:center;padding:32px}
+  .box{max-width:520px;padding:32px;text-align:center}
   h1{font-size:18px;font-weight:600;margin:0 0 8px}
-  p{font-size:13px;color:#8A95A8;line-height:1.6;margin:0 0 20px}
-  code{font-family:ui-monospace,monospace;font-size:11px;color:#5A6272;
-       word-break:break-all}
-  a{display:inline-block;background:#7048C8;color:#fff;text-decoration:none;
-    font-size:13px;font-weight:500;padding:9px 16px;border-radius:8px}
+  p{font-size:13px;color:#8A95A8;line-height:1.6;margin:0 0 16px}
+  .target{font-family:ui-monospace,monospace;font-size:12px;color:#D8DDE6}
+  code{display:block;font-family:ui-monospace,monospace;font-size:11px;
+       color:#5A6272;word-break:break-all;margin:0 0 20px}
+  .status{font-size:12px;color:#8A95A8;margin:0 0 20px;min-height:18px}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;
+       background:#7048C8;margin-right:7px;vertical-align:middle}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .dot.live{animation:pulse 1.2s ease-in-out infinite}
+  @media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
+  .row{display:flex;gap:8px;justify-content:center}
+  button,a{font:inherit;font-size:13px;font-weight:500;padding:9px 16px;
+    border-radius:8px;border:1px solid transparent;cursor:pointer;
+    text-decoration:none;display:inline-block}
+  .primary{background:#7048C8;color:#fff}
+  .primary:hover{background:#7E58D4}
+  .primary:disabled{opacity:.5;cursor:default}
+  .secondary{background:transparent;color:#D8DDE6;border-color:#2A2F38}
+  .secondary:hover{border-color:#3A414D;background:#12141A}
+  button:focus-visible,a:focus-visible{outline:2px solid #7048C8;outline-offset:2px}
 </style>
 </head>
 <body>
   <div class="box">
-    <h1>Can't reach the Panel</h1>
-    <p>The Beam app couldn't connect to the configured Panel.<br>
-       <code>{{ERROR}}</code></p>
-    <a href="/__beam/">Change Panel URL</a>
+    <h1>Can&#39;t reach the Panel</h1>
+    <p>Beam could not connect to <span class="target">{{PANEL}}</span>.</p>
+    <code>{{ERROR}}</code>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+    <div class="row">
+      <button type="button" class="primary" id="retry">Try again</button>
+      <a class="secondary" href="/__beam/">Settings</a>
+    </div>
   </div>
+<script>
+(function () {
+  var status = document.getElementById('status');
+  var retry = document.getElementById('retry');
+  var attempt = 0;
+  var timer = null;
+
+  // 3s, then doubling to a 30s ceiling. A panel that is restarting is back
+  // within the first few tries; one that is down for the evening must not have
+  // this window hammering it once a second.
+  function delayFor(n) { return Math.min(30000, 3000 * Math.pow(2, n)); }
+
+  function show(text, live) {
+    status.innerHTML = '<span class="dot' + (live ? ' live' : '') + '"></span>' + text;
+  }
+
+  function check() {
+    show('Reconnecting...', true);
+    retry.disabled = true;
+    // A HEAD through the proxy reaches the panel exactly the way the page
+    // itself would; cache:no-store so a cached 502 cannot answer for it.
+    fetch('/', { method: 'HEAD', cache: 'no-store' })
+      .then(function (res) {
+        if (res.ok) { location.replace('/'); return; }
+        schedule();
+      })
+      .catch(schedule);
+  }
+
+  function schedule() {
+    retry.disabled = false;
+    var wait = delayFor(attempt);
+    attempt++;
+    var left = Math.round(wait / 1000);
+    show('Attempt ' + attempt + ' failed. Retrying in ' + left + 's.', false);
+    clearInterval(timer);
+    timer = setInterval(function () {
+      left--;
+      if (left <= 0) { clearInterval(timer); check(); return; }
+      show('Attempt ' + attempt + ' failed. Retrying in ' + left + 's.', false);
+    }, 1000);
+  }
+
+  retry.addEventListener('click', function () { clearInterval(timer); attempt = 0; check(); });
+  schedule();
+})();
+</script>
 </body>
 </html>`
+
+// The session lives in the SHELL, not in the webview.
+//
+// Core moved the panel session into an HttpOnly cookie when it started serving
+// the panel itself, and that is right for a browser. Beam is not one. Its window
+// sits on http://wails.localhost and every response is handed to WebView2 as a
+// CUSTOM response to an intercepted request - a path whose Set-Cookie handling
+// is not something the WebView2 API documents, and whose origin is plain http
+// while the cookie Core sends behind TLS is marked Secure. Depending on that
+// working is depending on an undocumented behaviour of an embedded browser.
+//
+// So the proxy keeps the credential on the Go side and attaches it to every
+// upstream request. That removes the dependency, and it is strictly better than
+// the alternative: HttpOnly means "the page must not hold this", and here the
+// page genuinely never does.
+//
+// The READABLE companion cookie still goes to the webview, because the panel
+// answers "am I signed in?" from it before its first API call. It is stripped of
+// Secure on the way, since the origin it is being stored against is http.
+//
+// ponytail: the jar is in-memory, so closing Beam ends the session. Persist it
+// to the settings file if staying signed in across restarts is worth putting a
+// live JWT on disk.
+
+// applyShellCookies puts the shell's cookies on an outbound proxied request,
+// replacing any same-named cookie the webview sent so the jar is the authority.
+func applyShellCookies(out *http.Request, jar http.CookieJar) {
+	held := jar.Cookies(out.URL)
+	if len(held) == 0 {
+		return
+	}
+	owned := make(map[string]bool, len(held))
+	for _, c := range held {
+		owned[c.Name] = true
+	}
+	merged := make([]*http.Cookie, 0, len(held))
+	for _, c := range out.Cookies() {
+		if !owned[c.Name] {
+			merged = append(merged, c)
+		}
+	}
+	merged = append(merged, held...)
+	out.Header.Del("Cookie")
+	for _, c := range merged {
+		out.AddCookie(c)
+	}
+}
+
+// captureShellCookies moves the upstream's cookies into the jar and rewrites
+// what is left for the webview.
+//
+// It returns early on a response that set none, so the ordinary case never has
+// its headers rebuilt - a proxy that reconstructs a header it did not have to
+// touch is a proxy that eventually drops something it did not understand.
+func captureShellCookies(resp *http.Response, jar http.CookieJar, target *url.URL) {
+	cookies := resp.Cookies()
+	if len(cookies) == 0 {
+		return
+	}
+	jar.SetCookies(target, cookies)
+
+	resp.Header.Del("Set-Cookie")
+	for _, c := range cookies {
+		if c.HttpOnly {
+			// The credential. The shell holds it; the webview never sees it.
+			continue
+		}
+		// The webview origin is http://wails.localhost. Secure would be a
+		// request to store this over a transport it is not on, and Domain names
+		// the panel's host, which is not the host this response arrives on.
+		c.Secure = false
+		c.Domain = ""
+		if v := c.String(); v != "" {
+			resp.Header.Add("Set-Cookie", v)
+		}
+	}
+}
+
+// rememberReadableCookies keeps the cookies the webview is allowed to hold, so
+// they can be replayed into the page.
+//
+// Call it AFTER captureShellCookies, which is what has already stripped the
+// HttpOnly ones and corrected Secure/Domain for the wails.localhost origin -
+// what is left on the response is exactly what the webview should end up with.
+//
+// Deletions are kept rather than dropped: a "Max-Age=0" line is the instruction
+// that clears a stale copy, and forgetting it would leave the page believing it
+// is signed in after a logout.
+func (a *App) rememberReadableCookies(resp *http.Response) {
+	values := resp.Header.Values("Set-Cookie")
+	if len(values) == 0 {
+		return
+	}
+	a.readableMu.Lock()
+	defer a.readableMu.Unlock()
+	if a.readable == nil {
+		a.readable = map[string]string{}
+	}
+	for _, v := range values {
+		name, _, ok := strings.Cut(v, "=")
+		if !ok {
+			continue
+		}
+		a.readable[strings.TrimSpace(name)] = v
+	}
+}
+
+// readableCookieScript returns an inline script that writes the readable
+// cookies into document.cookie, or "" when there are none.
+//
+// It exists because Beam's responses reach WebView2 as CUSTOM responses to
+// intercepted requests, and whether that path feeds the browser's cookie store
+// is not documented. Setting them from the page needs no cookie store at all,
+// and is idempotent if the header worked anyway.
+//
+// The values are JSON-encoded rather than pasted in. They are cookie values
+// Core chose, but this writes them into a <script> element, and the way that
+// bites is a value containing "</script>" - so the encoding covers the tag, not
+// only the quotes.
+func (a *App) readableCookieScript(nonce string) string {
+	a.readableMu.Lock()
+	defer a.readableMu.Unlock()
+	if len(a.readable) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(a.readable))
+	for _, v := range a.readable {
+		enc, err := json.Marshal(v)
+		if err != nil {
+			continue
+		}
+		// json.Marshal escapes <, > and & by default, which is what keeps a
+		// value containing "</script>" from closing this element.
+		lines = append(lines, "document.cookie="+string(enc)+";")
+	}
+	sort.Strings(lines) // stable output, so the injected bytes do not churn
+	attr := ""
+	if nonce != "" {
+		attr = ` nonce="` + nonce + `"`
+	}
+	return "<script" + attr + ">" + strings.Join(lines, "") + "</script>"
+}
+
+// injectBeforeBodyEnd splices markup in just before </body>, falling back to
+// the end of the document.
+//
+// The cookie replay has to run BEFORE the panel's own scripts read
+// document.cookie, but it must not sit in <head> where the Wails runtime tags
+// are: those are what the panel's bundle waits for, and a document.cookie write
+// wedged between them is a change to a load order that has been working.
+// Before </body> is after the runtime and before the bundle executes.
+func injectBeforeBodyEnd(doc []byte, markup string) []byte {
+	s := string(doc)
+	if i := strings.LastIndex(strings.ToLower(s), "</body>"); i >= 0 {
+		return []byte(s[:i] + markup + s[i:])
+	}
+	return append(doc, markup...)
+}

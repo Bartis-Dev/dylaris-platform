@@ -150,7 +150,7 @@ func TestInjectWailsRuntimeNonce(t *testing.T) {
 // Panel that can pick its own GOAWAY debug string must not be able to put a
 // script tag on that origin through the "can't reach the Panel" page.
 func TestRenderPanelUnreachableEscapesTheTransportError(t *testing.T) {
-	page := renderPanelUnreachable(errors.New(`dial failed: <script>window.go.main.App.RevealInExplorer()</script>`))
+	page := renderPanelUnreachable(errors.New(`dial failed: <script>window.go.main.App.RevealInExplorer()</script>`), "https://panel.example.com")
 
 	if strings.Contains(page, "<script>window.go") {
 		t.Fatal("the transport error reached the page as live markup")
@@ -161,5 +161,40 @@ func TestRenderPanelUnreachableEscapesTheTransportError(t *testing.T) {
 	// The real text still has to be readable - escaping must not swallow it.
 	if !strings.Contains(page, "dial failed:") {
 		t.Error("the error message itself was lost")
+	}
+}
+
+// The panel URL is substituted into the same page, and it is operator-set text
+// that has already been through a text input. Escaping the transport error and
+// not this one would leave the hole open on the other side of the template.
+func TestRenderPanelUnreachableEscapesThePanelURL(t *testing.T) {
+	page := renderPanelUnreachable(errors.New("connection refused"), `https://x/"><script>alert(1)</script>`)
+	if strings.Contains(page, "<script>alert(1)</script>") {
+		t.Fatal("the configured panel URL reached the page as live markup")
+	}
+	if !strings.Contains(page, "&lt;script&gt;") {
+		t.Error("the panel URL was not escaped into the page")
+	}
+}
+
+// The screen has to RETRY. Without that it is a dead end: a panel that is
+// restarting leaves the user on an error page inviting them to change a URL
+// that is correct, and the only way back is to close and reopen the app.
+//
+// And it has to keep the way into the app's own settings, because when the
+// panel IS reachable the window is entirely the panel - this page is the only
+// place Beam's own configuration is reachable from.
+func TestThePanelUnreachableScreenRecoversOnItsOwn(t *testing.T) {
+	page := renderPanelUnreachable(errors.New("connection refused"), "https://panel.example.com")
+
+	for _, want := range []string{
+		"fetch('/'",        // it probes the panel again
+		"location.replace", // ...and goes back to it once that works
+		"setInterval",      // ...on its own, without the user clicking
+		beamSettingsRoute,  // and settings stay reachable
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the unreachable screen is missing %q", want)
+		}
 	}
 }

@@ -57,10 +57,14 @@ type DNSCheckConfig struct {
 	CustomDomainsOn bool     // gateway_custom_domains_enabled == "true"
 	CNAMETarget     string   // gateway_cname_target (only when CustomDomainsOn)
 
-	// APIHost is the hostname the panel's browser calls, from core_public_url.
-	// It was missing entirely: the check knew FRONTEND_URL and nothing else, so
-	// the api. record - which every single request in the panel depends on - was
-	// the one name it never looked at.
+	// APIHost is the hostname the panel's browser calls, from PANEL_API_URL, and
+	// it is EMPTY for the normal deployment - Core serves the panel, so the
+	// browser calls /api on the origin it was loaded from.
+	//
+	// It used to be read from core_public_url, which is a different question
+	// with a different answer: that setting builds absolute mod URLs for Solder
+	// clients. An operator who had never touched it was told no API address was
+	// set, while the panel it was supposedly breaking worked fine.
 	APIHost       string
 	APIDialTarget string
 
@@ -71,6 +75,31 @@ type DNSCheckConfig struct {
 	// reach their server from outside.
 	BeamHost       string
 	BeamDialTarget string
+}
+
+// apiOriginRow decides what the report says about the API name.
+//
+// separate=false means there is no second name and the row it returns is the
+// whole answer: the panel calls /api on its own origin, which is the shape of
+// the software and not a gap in the configuration. separate=true means
+// PANEL_API_URL genuinely names another host, and that host has to resolve or
+// every request in the panel fails - the row is then resolved like any other.
+func apiOriginRow(apiHost, panelHost string) (DNSRecordCheck, bool) {
+	apiHost = strings.ToLower(strings.TrimSpace(apiHost))
+	if apiHost != "" && !strings.EqualFold(apiHost, strings.TrimSpace(panelHost)) {
+		return DNSRecordCheck{Category: "api", Type: "A", Name: apiHost, Expected: []string{}}, true
+	}
+	return DNSRecordCheck{
+		Category: "api",
+		Type:     "A",
+		Name:     "same origin as the panel",
+		Expected: []string{},
+		Actual:   []string{},
+		Status:   "info",
+		Hint: "Nothing to create. Core serves the panel and the API together, so the browser " +
+			"calls /api on the panel's own domain. A separate record is only needed if you set " +
+			"PANEL_API_URL to a second hostname.",
+	}, false
 }
 
 // publicResolver builds a net.Resolver that dials the public DNS servers
@@ -136,22 +165,18 @@ func RunDNSCheck(ctx context.Context, rdb *redis.Client, cfg DNSCheckConfig) DNS
 		},
 	} {
 		host := strings.ToLower(strings.TrimSpace(origin.host))
-		if host == "" {
-			// An unset API host is worth a row rather than a silent omission.
-			// Not knowing the name is exactly why this record went unchecked for
-			// as long as it did, and a report that lists three things and stays
-			// quiet about the fourth reads as "all four are fine".
-			if origin.category == "api" {
-				result.Records = append(result.Records, DNSRecordCheck{
-					Category: "api",
-					Type:     "A",
-					Name:     "(not configured)",
-					Expected: []string{},
-					Actual:   []string{},
-					Status:   "info",
-					Hint:     "No API address is set, so it cannot be checked. Set it under Settings -> Modpacks as \"Core public URL\" (it is the address the panel calls, e.g. https://api.example.com).",
-				})
+		// The API row is decided rather than merely resolved: on the normal
+		// deployment there is no second name, and the row has to say so instead
+		// of leaving a gap that reads as a missing record.
+		if origin.category == "api" {
+			row, separate := apiOriginRow(host, cfg.PanelHost)
+			if !separate {
+				result.Records = append(result.Records, row)
+				continue
 			}
+			host = row.Name
+		}
+		if host == "" {
 			continue
 		}
 		rec := DNSRecordCheck{

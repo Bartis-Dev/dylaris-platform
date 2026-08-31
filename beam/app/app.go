@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -46,6 +48,18 @@ type App struct {
 	// without a unique ID per attempt).
 	uploadsMu sync.Mutex
 	uploads   map[string]*UploadSession
+
+	// cookies is the shell's cookie jar for the proxied Panel. The session is
+	// an HttpOnly cookie and Beam keeps it here rather than in the webview;
+	// see applyShellCookies in proxy.go.
+	cookieMu sync.Mutex
+	cookies  http.CookieJar
+
+	// readable holds the Set-Cookie lines the webview IS allowed to have,
+	// keyed by cookie name, so they can be replayed into the page; see
+	// readableCookieScript in proxy.go.
+	readableMu sync.Mutex
+	readable   map[string]string
 
 	// healthCheckStop is closed when the current health-check goroutine
 	// should exit (Logout, SetSession on a new account). nil while no
@@ -187,7 +201,26 @@ func (a *App) SavePanelURL(token, url string) error {
 	url = strings.TrimRight(url, "/")
 	s := loadSettings()
 	s.PanelURL = url
+	// The shell holds the session for the panel it was pointed at. Pointing it
+	// somewhere else must not carry that credential along: at best the new host
+	// rejects it, at worst it is sent to someone who should never see it.
+	a.forgetPanelSession()
 	return saveSettings(s)
+}
+
+// ClearLocalData drops everything Beam keeps about the current panel on this
+// machine: the session the shell holds and, with it, the signed-in state.
+//
+// It is the "clear cache" that actually means something here. Clearing site
+// data inside the panel would reach nothing, because the credential was never
+// in the webview - so this is the only way out of a half-broken session without
+// reinstalling. Shell-token gated like the other side-effecting bindings.
+func (a *App) ClearLocalData(token string) error {
+	if !a.checkShellToken(token) {
+		return fmt.Errorf("unauthorized")
+	}
+	a.forgetPanelSession()
+	return nil
 }
 
 // GetAPIURL returns the Core API origin the proxied Panel is allowed to reach
@@ -1236,4 +1269,40 @@ func fileURL(path string) string {
 		p = "/" + p
 	}
 	return (&url.URL{Scheme: "file", Path: p}).String()
+}
+
+// panelCookies returns the shell's cookie jar, creating it on first use.
+//
+// It holds the panel session so the credential never enters the webview; see
+// applyShellCookies in proxy.go for why Beam cannot rely on the embedded
+// browser to store it. Lazily built because cookiejar.New can technically fail
+// and a constructor that can fail is not worth threading through NewApp for
+// something every path can recreate.
+func (a *App) panelCookies() http.CookieJar {
+	a.cookieMu.Lock()
+	defer a.cookieMu.Unlock()
+	if a.cookies == nil {
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			// Documented as always-nil for a nil options value. A jar that
+			// drops everything is still better than a nil interface panicking
+			// inside the proxy.
+			jar, _ = cookiejar.New(&cookiejar.Options{})
+		}
+		a.cookies = jar
+	}
+	return a.cookies
+}
+
+// forgetPanelSession drops the shell's cookies.
+//
+// This is the only way to end a Beam session locally: the webview never held
+// the credential, so clearing site data there reaches nothing. Used by the
+// settings page's "clear local data" action and whenever the app is pointed at
+// a different panel - carrying one panel's session to another would at best
+// fail and at worst send it somewhere it does not belong.
+func (a *App) forgetPanelSession() {
+	a.cookieMu.Lock()
+	defer a.cookieMu.Unlock()
+	a.cookies = nil
 }
