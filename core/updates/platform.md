@@ -26,6 +26,10 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Fixes
 - Reactivating a tenant no longer hands the links back while they are still over
   their limits, which used to issue a working credential for one minute. `core`
+- A lapsed entitlement on one product is now noticed while another is still
+  active. The over-limit sweep asked whether a tenant was entitled to anything
+  at all, so an expired grant on one product left what it had granted running
+  for as long as anything else was paid for. `core`
 
 ## 2026.09.01.13
 

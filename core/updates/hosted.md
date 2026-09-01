@@ -21,6 +21,9 @@ Newest release first. The format is fixed and checked in CI - see the
   your service once the 72-hour notice has passed, route-only included. You get
   an email when the clock starts, and removing the excess before the deadline
   ends it. Nothing to update on your side.
+- The same notice now applies per product. If one part of your plan ends while
+  another continues, what the ended part covered is no longer left running
+  indefinitely.
 
 ### Security
 - Nothing.

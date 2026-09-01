@@ -90,7 +90,16 @@ var (
 	// FROM/INTO/JOIN is the tell; those fragments are dropped, and the count of
 	// what survived is asserted above so a broken extraction cannot pass
 	// silently.
-	danglingFragment = regexp.MustCompile(`(?is)(,|\(|\bAND\b|\bOR\b|\bWHERE\b|\bSET\b|\bVALUES\b|\bFROM\b|\bINTO\b|\bJOIN\b)\s*$`)
+	//
+	// NOT is in the list because "AND NOT " is not caught by the AND alternative
+	// - the word boundary lands on NOT, not on AND - so a query ending in it was
+	// handed to Prepare as if it were whole and failed with a syntax error at
+	// end of input. The two link-kit reconcile queries share their WHERE
+	// predicate through a const, for the same reason they must never disagree,
+	// and that shape is what exposed the gap. Both are covered by
+	// TestOwnerCutOffMatchesItsSQLIntegration, which RUNS them rather than
+	// preparing them.
+	danglingFragment = regexp.MustCompile(`(?is)(,|\(|\bAND\b|\bOR\b|\bNOT\b|\bWHERE\b|\bSET\b|\bVALUES\b|\bFROM\b|\bINTO\b|\bJOIN\b)\s*$`)
 	// TimescaleDB's own functions and catalog. Absent by design here: the suite
 	// runs plain postgres so ensureSchema takes the ordinary-table path.
 	timescaleOnly = regexp.MustCompile(`(?i)(create_hypertable|add_retention_policy|timescaledb_information)`)

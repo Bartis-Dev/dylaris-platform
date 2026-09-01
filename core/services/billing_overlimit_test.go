@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,26 +170,26 @@ func TestTenantUsage_Over(t *testing.T) {
 		u    tenantUsage
 		want bool
 	}{
-		{"within every limit", tenantUsage{entitled: true, nodes: 2, nodeLimit: n(2), links: 1, linkLimit: n(1)}, false},
-		{"one node too many", tenantUsage{entitled: true, nodes: 3, nodeLimit: n(2)}, true},
-		{"one location too many", tenantUsage{entitled: true, links: 2, linkLimit: n(1)}, true},
-		{"one address too many", tenantUsage{entitled: true, routes: 7, routeLimit: n(6)}, true},
+		{"within every limit", tenantUsage{entitledByon: true, entitledRoute: true, nodes: 2, nodeLimit: n(2), links: 1, linkLimit: n(1)}, false},
+		{"one node too many", tenantUsage{entitledByon: true, entitledRoute: true, nodes: 3, nodeLimit: n(2)}, true},
+		{"one location too many", tenantUsage{entitledByon: true, entitledRoute: true, links: 2, linkLimit: n(1)}, true},
+		{"one address too many", tenantUsage{entitledByon: true, entitledRoute: true, routes: 7, routeLimit: n(6)}, true},
 
 		// These three used to read "a zero X limit is unlimited", and that was
 		// the defect, not the design: a zero is what arithmetic produces for a
 		// tenant who bought none of something, so the one number meaning "none"
 		// was the one number that switched the check off. Unlimited is now the
 		// ABSENCE of a cap, which a nil pointer says and no number can.
-		{"a zero node limit means none, so holding any is over", tenantUsage{entitled: true, nodes: 99, nodeLimit: n(0)}, true},
-		{"a zero link limit means none", tenantUsage{entitled: true, links: 99, linkLimit: n(0)}, true},
-		{"a zero route limit means none", tenantUsage{entitled: true, routes: 99, routeLimit: n(0)}, true},
+		{"a zero node limit means none, so holding any is over", tenantUsage{entitledByon: true, entitledRoute: true, nodes: 99, nodeLimit: n(0)}, true},
+		{"a zero link limit means none", tenantUsage{entitledByon: true, entitledRoute: true, links: 99, linkLimit: n(0)}, true},
+		{"a zero route limit means none", tenantUsage{entitledByon: true, entitledRoute: true, routes: 99, routeLimit: n(0)}, true},
 
 		// ...and holding nothing against a zero cap is still fine. A cap of none
 		// is met by holding none; it is not a permanent fault.
-		{"a zero limit with nothing held is not over", tenantUsage{entitled: true, nodeLimit: n(0), linkLimit: n(0), routeLimit: n(0)}, false},
+		{"a zero limit with nothing held is not over", tenantUsage{entitledByon: true, entitledRoute: true, nodeLimit: n(0), linkLimit: n(0), routeLimit: n(0)}, false},
 
-		{"no cap anywhere is unlimited", tenantUsage{entitled: true, nodes: 99, links: 99, routes: 99}, false},
-		{"nothing held anywhere", tenantUsage{entitled: true}, false},
+		{"no cap anywhere is unlimited", tenantUsage{entitledByon: true, entitledRoute: true, nodes: 99, links: 99, routes: 99}, false},
+		{"nothing held anywhere", tenantUsage{entitledByon: true, entitledRoute: true}, false},
 
 		// The hole this closes. A cancellation pushes maxNodes 0, and 0 is
 		// "no cap", so a tenant who cancelled EVERYTHING read as permanently
@@ -196,14 +197,14 @@ func TestTenantUsage_Over(t *testing.T) {
 		// anything new and nothing ever took away what they already had.
 		// Downgrading five nodes to one was enforced; downgrading to none
 		// was not.
-		{"no entitlement but still holding nodes", tenantUsage{entitled: false, nodes: 3}, true},
-		{"no entitlement but still holding locations", tenantUsage{entitled: false, links: 1}, true},
-		{"no entitlement but still holding addresses", tenantUsage{entitled: false, routes: 1}, true},
+		{"no entitlement but still holding nodes", tenantUsage{entitledByon: false, entitledRoute: false, nodes: 3}, true},
+		{"no entitlement but still holding locations", tenantUsage{entitledByon: false, entitledRoute: false, links: 1}, true},
+		{"no entitlement but still holding addresses", tenantUsage{entitledByon: false, entitledRoute: false, routes: 1}, true},
 
 		// And the boundary that keeps it from being a blanket cutoff: holding
 		// nothing is not over anything, so an account that simply never bought
 		// in is never warned or swept.
-		{"no entitlement and holding nothing", tenantUsage{entitled: false}, false},
+		{"no entitlement and holding nothing", tenantUsage{entitledByon: false, entitledRoute: false}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -218,20 +219,95 @@ func TestTenantUsage_Over(t *testing.T) {
 // A tenant one node over should not read a message implying everything is.
 func TestTenantUsage_Describe(t *testing.T) {
 	n := func(v int64) *int64 { return &v }
-	one := tenantUsage{entitled: true, nodes: 3, nodeLimit: n(2)}
+	one := tenantUsage{entitledByon: true, entitledRoute: true, nodes: 3, nodeLimit: n(2)}
 	if got := one.describe(); got != "3 nodes (allowed 2)" {
 		t.Fatalf("describe() = %q", got)
 	}
-	both := tenantUsage{entitled: true, nodes: 3, nodeLimit: n(2), routes: 7, routeLimit: n(6)}
+	both := tenantUsage{entitledByon: true, entitledRoute: true, nodes: 3, nodeLimit: n(2), routes: 7, routeLimit: n(6)}
 	if got := both.describe(); got != "3 nodes (allowed 2) and 7 protected addresses (allowed 6)" {
 		t.Fatalf("describe() = %q", got)
 	}
 	// No plan at all is ONE fact, not three dimensions. Rendering it as
 	// "3 nodes (allowed 0)" would read as a cap somebody lowered, when what
 	// happened is that the subscription ended.
-	none := tenantUsage{entitled: false, nodes: 3, links: 1}
+	none := tenantUsage{entitledByon: false, entitledRoute: false, nodes: 3, links: 1}
 	want := "3 nodes, 1 route-only locations and 0 protected addresses with no active plan"
 	if got := none.describe(); got != want {
 		t.Fatalf("describe() = %q, want %q", got, want)
+	}
+}
+
+// A lapsed grant on ONE product, while another is paid for.
+//
+// The doors ask per kind - requireEntitlement resolves EntitlementByon for a
+// node and EntitlementRouteOnly for a link kit - but this sweep asked whether
+// the tenant was entitled to EITHER. A tenant whose comp BYON grant expired
+// while they kept paying for route-only therefore read as entitled, and the
+// numeric arms could not catch them either: grantedCap returns nil for a lapsed
+// grant with nothing purchased, and nil is "no cap". They could not mint a
+// second machine, and nobody ever took away the first.
+func TestALapsedGrantOnOneProductIsCaughtWhileTheOtherIsPaid(t *testing.T) {
+	n := func(v int64) *int64 { return &v }
+	cases := []struct {
+		name string
+		u    tenantUsage
+		want bool
+		why  string
+	}{
+		{
+			name: "BYON grant lapsed, route-only still paid, node still running",
+			// nodeLimit is nil on purpose: that is what a lapsed grant leaves.
+			u:    tenantUsage{entitledByon: false, entitledRoute: true, nodes: 1, links: 1, linkLimit: n(1)},
+			want: true,
+			why:  "the granted machine keeps running for free for as long as they pay for anything else",
+		},
+		{
+			name: "route-only lapsed, BYON still paid, location still up",
+			u:    tenantUsage{entitledByon: true, entitledRoute: false, nodes: 1, nodeLimit: n(1), links: 1},
+			want: true,
+			why:  "same defect, the other way round",
+		},
+		{
+			name: "BYON lapsed and no node held is not over",
+			u:    tenantUsage{entitledByon: false, entitledRoute: true, links: 1, linkLimit: n(1)},
+			want: false,
+			why:  "an entitlement they are not using is not an overage",
+		},
+		{
+			name: "addresses survive on either entitlement",
+			// Route creation gates on the allowance, not on a kind, so a BYON
+			// tenant holding addresses is entitled to them.
+			u:    tenantUsage{entitledByon: true, entitledRoute: false, routes: 3},
+			want: false,
+			why:  "addresses come out of one pool that either product feeds",
+		},
+		{
+			name: "addresses with neither entitlement are over",
+			u:    tenantUsage{entitledByon: false, entitledRoute: false, routes: 3},
+			want: true,
+			why:  "nothing is paying for the pool they came out of",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.u.over(); got != c.want {
+				t.Errorf("over() = %v, want %v: %s", got, c.want, c.why)
+			}
+		})
+	}
+}
+
+// The email and the log must name a lapsed product as a lapsed product. There
+// is no cap to quote for one - a lapsed grant leaves the ceiling at nil - so
+// the numeric wording would have printed a nil pointer or, worse, nothing.
+func TestDescribeNamesALapsedProductRatherThanACap(t *testing.T) {
+	n := func(v int64) *int64 { return &v }
+	u := tenantUsage{entitledByon: false, entitledRoute: true, nodes: 2, links: 1, linkLimit: n(1)}
+	got := u.describe()
+	if !strings.Contains(got, "2 nodes with no active bring-your-own-node plan") {
+		t.Errorf("describe() = %q, expected it to name the lapsed product", got)
+	}
+	if strings.Contains(got, "allowed") {
+		t.Errorf("describe() = %q, quoted an allowance for a product that has none", got)
 	}
 }

@@ -29,9 +29,20 @@ type tenantUsage struct {
 	linkLimit  *int64
 	routes     int64
 	routeLimit *int64
-	// entitled is whether the tenant may hold ANY of this. Separate from the
-	// three caps because a cap cannot express it: see over().
-	entitled bool
+	// entitledByon / entitledRoute are whether the tenant may hold each KIND.
+	// Separate from the caps because a cap cannot express it, and separate from
+	// each other because the two doors ask separately: see over().
+	entitledByon  bool
+	entitledRoute bool
+}
+
+// entitledToAnything is the combined question, and it is the right one for
+// ADDRESSES only. Addresses come out of one pool that either product feeds, and
+// route creation gates on the allowance rather than on a kind - so a BYON tenant
+// holding addresses is entitled to them. Nodes and route-only locations belong
+// to one kind each and are asked about individually.
+func (u tenantUsage) entitledToAnything() bool {
+	return u.entitledByon || u.entitledRoute
 }
 
 func (u tenantUsage) holdsAnything() bool {
@@ -48,11 +59,25 @@ func (u tenantUsage) holdsAnything() bool {
 // Downgrading from five nodes to one was enforced and downgrading to none was
 // not, which is the wrong way round.
 //
-// entitled is resolved from services.EffectiveEntitlement, so it is true for
-// every self-host install (no store, no billing plane, nothing to buy) and this
-// clause never fires there.
+// Asked PER KIND, because the doors are. handlers.requireEntitlement resolves
+// EntitlementByon for a node and EntitlementRouteOnly for a link kit, but this
+// swept on whether the tenant was entitled to EITHER - so a tenant whose BYON
+// grant lapsed while they paid for route-only kept running the granted machine
+// indefinitely. They could not mint another (that door asks the right question)
+// and nothing ever took away the one they had. An expired grant leaves the node
+// CAP at nil, which is "no cap", so the numeric arms could not catch it either.
+//
+// Entitlement is resolved from services.EffectiveEntitlement, so both are true
+// for every self-host install (no store, no billing plane, nothing to buy) and
+// these clauses never fire there.
 func (u tenantUsage) over() bool {
-	if !u.entitled && u.holdsAnything() {
+	if u.nodes > 0 && !u.entitledByon {
+		return true
+	}
+	if u.links > 0 && !u.entitledRoute {
+		return true
+	}
+	if u.routes > 0 && !u.entitledToAnything() {
 		return true
 	}
 	return Exceeds(u.nodeLimit, u.nodes) ||
@@ -64,7 +89,7 @@ func (u tenantUsage) over() bool {
 // log. Naming only what is wrong keeps a one-node overage from reading like a
 // total failure.
 func (u tenantUsage) describe() string {
-	if !u.entitled && u.holdsAnything() {
+	if !u.entitledToAnything() && u.holdsAnything() {
 		// No plan at all is one fact, not three dimensions. Listing "3 nodes
 		// (allowed 0)" would read as a cap that was lowered, when what happened
 		// is that the subscription ended.
@@ -72,10 +97,20 @@ func (u tenantUsage) describe() string {
 			u.nodes, u.links, u.routes)
 	}
 	var parts []string
-	if Exceeds(u.nodeLimit, u.nodes) {
+	// A kind whose entitlement lapsed while another one is still paid. Named as
+	// what it is rather than as a cap, because there IS no cap to quote: an
+	// expired grant leaves the ceiling at nil, and "allowed <nil>" is not a
+	// sentence anyone can act on.
+	if u.nodes > 0 && !u.entitledByon {
+		parts = append(parts, fmt.Sprintf("%d nodes with no active bring-your-own-node plan", u.nodes))
+	}
+	if u.links > 0 && !u.entitledRoute {
+		parts = append(parts, fmt.Sprintf("%d route-only locations with no active route-only plan", u.links))
+	}
+	if u.entitledByon && Exceeds(u.nodeLimit, u.nodes) {
 		parts = append(parts, fmt.Sprintf("%d nodes (allowed %d)", u.nodes, *u.nodeLimit))
 	}
-	if Exceeds(u.linkLimit, u.links) {
+	if u.entitledRoute && Exceeds(u.linkLimit, u.links) {
 		parts = append(parts, fmt.Sprintf("%d route-only locations (allowed %d)", u.links, *u.linkLimit))
 	}
 	if Exceeds(u.routeLimit, u.routes) {
@@ -111,10 +146,11 @@ func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID str
 	}
 	u.nodeLimit, u.linkLimit = lim.MaxNodes, lim.MaxLinks
 
-	// May they hold ANY of this, which the caps above cannot express: an account
-	// that bought nothing carries the same zeroes as one that bought unlimited.
-	// See over(). This is the same resolver the create paths gate on, so the
-	// sweep and the doors cannot disagree about who is entitled.
+	// May they hold each KIND of this, which the caps above cannot express: an
+	// account that bought nothing carries the same zeroes as one that bought
+	// unlimited. See over(). This is the same resolver the create paths gate on,
+	// and it is now read the same WAY they read it - per kind - so the sweep and
+	// the doors cannot disagree about who is entitled to what.
 	//
 	// The administrator flag is the SUBJECT's, read from their row - an operator
 	// running the platform is not a customer of it and must never be swept off
@@ -127,7 +163,7 @@ func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID str
 	if err != nil {
 		return u, err
 	}
-	u.entitled = ent.Byon || ent.RouteOnly
+	u.entitledByon, u.entitledRoute = ent.Byon, ent.RouteOnly
 
 	// The SAME count the two mint gates enforce. It has to be: this sweep cuts a
 	// tenant off for holding more than they bought, so counting a kind of pending
