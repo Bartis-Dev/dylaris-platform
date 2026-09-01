@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"dylaris-core/models"
+	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 	"dylaris-pkg/validate"
 	"encoding/json"
@@ -232,33 +234,25 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Route-only addresses are the one thing a user owns that nothing removes
-	// with them. core_link_routes.owner_id is TEXT with no constraint, so it
-	// neither cascades nor blocks the delete - and RepublishCoreOwnedRoutes
-	// writes every stored row back into Redis every 60 seconds. A deleted
-	// user's protected address therefore kept routing players to their link
-	// indefinitely, and came back within the minute if anyone cleared the Redis
-	// key by hand.
+	// Everything the account HOLDS, before the row that owns it goes: its
+	// route-only link kits (durable revoke, Redis ACL user, tunnel key) and its
+	// protected addresses.
+	//
+	// This used to be an inline loop over the addresses only, and the auto-delete
+	// sweep - which is what removes an account in practice - did none of it. The
+	// shared function is the point: three paths remove an account and they were
+	// each answering "how much of this is my problem" differently. See
+	// services.TeardownTenantInfrastructure for what each part leaves behind when
+	// it is skipped.
 	//
 	// Done BEFORE the user row goes, so a failure here leaves the account intact
-	// and the operator can retry: deleting the user first would strand the
-	// routes with no owner to look them up by.
-	if h.state.Gateway != nil {
-		routes, err := h.state.Store.ListCoreLinkRoutes()
-		if err != nil {
-			sendJSONError(w, "Could not check this user's protected addresses", 500)
-			return
-		}
-		for _, rt := range routes {
-			if rt.OwnerID != id {
-				continue
-			}
-			if err := h.state.Gateway.DeleteCoreOwnedRoute(rt.Domain); err != nil {
-				log.Printf("delete user %s: removing route %s: %v", id, rt.Domain, err)
-				sendJSONError(w, "Could not remove this user's protected addresses. Nothing was deleted.", 500)
-				return
-			}
-		}
+	// and the operator can retry: deleting the user first would strand all of it
+	// with no owner to look it up by.
+	if err := services.TeardownTenantInfrastructure(r.Context(), h.state.Store, h.state.Gateway,
+		h.state.Redis, redisacl.NewProvisioner(h.state.Redis), id); err != nil {
+		log.Printf("delete user %s: teardown: %v", id, err)
+		sendJSONError(w, "Could not remove what this account still holds. Nothing was deleted.", 500)
+		return
 	}
 
 	if err := h.state.Store.DeleteUser(id); err != nil {

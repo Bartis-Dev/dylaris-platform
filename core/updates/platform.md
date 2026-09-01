@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Removing an account now removes what the account ran. The automatic
+  inactive-account sweep deleted the row and left the tenant's route-only link
+  credential, its tunnel key and its protected addresses in place, and nothing
+  could ever find them again once the row was gone. `core`
+
+### Fixes
+- An account whose teardown fails is left in place instead of being removed
+  anyway, so the record of who owned a live credential survives to the next
+  attempt. `core`
+
 ## 2026.09.02
 
 ### Features

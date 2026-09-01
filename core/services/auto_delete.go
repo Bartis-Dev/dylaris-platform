@@ -5,12 +5,15 @@ import (
 	"dylaris-core/mailer"
 	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
+	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // AutoDeleteService runs a daily job that warns dormant users by email and
@@ -22,11 +25,33 @@ type AutoDeleteService struct {
 	frontendURL string
 	interval    time.Duration
 	leader      leader.Election
+
+	// Teardown deps, wired after the ACL provisioner and gateway exist. Until
+	// they are, this sweep removes account ROWS and leaves what those accounts
+	// ran - see SetLinkACL.
+	gateway     GatewayProvider
+	redis       *redis.Client
+	provisioner *redisacl.Provisioner
 }
 
 // SetLeader wires the leader-election gate. Without it the service runs
 // on every tick (single-Core dev mode).
 func (s *AutoDeleteService) SetLeader(l leader.Election) { s.leader = l }
+
+// SetLinkACL wires what this sweep needs to remove a tenant's infrastructure
+// along with their account. Named and shaped like the billing lifecycle's
+// setter of the same name because it is wired at the same moment, from the same
+// three values, for the same reason: both are constructed before the ACL
+// provisioner exists.
+//
+// Without it the sweep still runs. It deletes the account row and leaves the
+// tenant's link kit's Redis credential, its tunnel key and its protected
+// addresses in place, which is what it did before this was added.
+func (s *AutoDeleteService) SetLinkACL(gw GatewayProvider, rdb *redis.Client, prov *redisacl.Provisioner) {
+	s.gateway = gw
+	s.redis = rdb
+	s.provisioner = prov
+}
 
 // policySnapshot is what the service reads from the settings store on each
 // tick. Mirrors a subset of handlers.AuthPolicy — duplicated here on purpose
@@ -170,13 +195,26 @@ func (s *AutoDeleteService) processWarnings(_ context.Context, p policySnapshot)
 	}
 }
 
-func (s *AutoDeleteService) processExecutions(_ context.Context, p policySnapshot) {
+func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnapshot) {
 	due, err := s.store.ListUsersDueForDeletion(time.Now())
 	if err != nil {
 		log.Printf("auto-delete: list due: %v", err)
 		return
 	}
 	for _, userID := range due {
+		// Both modes, and this is not belt-and-braces: "anonymize" is the
+		// DEFAULT, and it keeps the row. Without this the person is gone from
+		// the panel while their link kit still authenticates against Redis and
+		// their protected addresses still route - the account is what was
+		// removed, not what the account ran.
+		//
+		// A failure here skips the account entirely rather than removing it
+		// anyway. Leaving a dormant row for another day is recoverable; removing
+		// the only record of who owned a live credential is not.
+		if err := TeardownTenantInfrastructure(ctx, s.store, s.gateway, s.redis, s.provisioner, userID); err != nil {
+			log.Printf("auto-delete: teardown for userID=%s failed, leaving the account in place: %v", userID, err)
+			continue
+		}
 		switch p.Mode {
 		case "hard_delete":
 			if err := s.store.DeleteUser(userID); err != nil {

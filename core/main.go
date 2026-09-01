@@ -400,9 +400,14 @@ func main() {
 	// emails warnings, executes deletions per the auth.* settings. No-op
 	// unless the operator turns it on. Leader-gated so only one Core runs
 	// it under multi-instance.
+	//
+	// STARTED further down, after the ACL provisioner exists: removing an account
+	// has to remove what the account ran, and this service cannot do that until
+	// it has been given the link plane. Start() runs a tick immediately, so
+	// starting it here would mean the first sweep of every boot is the one that
+	// tears nothing down.
 	autoDelete := services.NewAutoDeleteService(pgStore, cfg.FrontendURL)
 	autoDelete.SetLeader(coreLeader)
-	autoDelete.Start(bgCtx)
 
 	// Ticket auto-close — daily ticker, leader-gated. No-op until
 	// the operator turns it on via Settings → Ticket Settings.
@@ -636,6 +641,11 @@ func main() {
 	// taking away the tunnel, and only this drops the WireGuard peer.
 	appState.Billing.SetWarpPeers(extras.warpService)
 	appState.Billing.Start(bgCtx)
+	// Same three values, same reason: the auto-delete sweep removes accounts, and
+	// an account's link kit holds a Redis credential and a tunnel key that
+	// nothing else will ever clean up once its row is gone.
+	autoDelete.SetLinkACL(appState.Gateway, redisClient, aclProvisioner)
+	autoDelete.Start(bgCtx)
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},
 		aclProvisioner,
