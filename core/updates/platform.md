@@ -30,6 +30,9 @@ Newest release first. The format is fixed and checked in CI - see the
 - Setting a node up from inside the Beam app is withdrawn, along with its button
   on My Infrastructure. The deploy snippet on that page is unchanged and is the
   way to do it. `core`
+- Beam's settings button keeps its place when the window is resized. It
+  remembered a pixel offset, so dragging it to the right edge of a small window
+  left it in the middle of a large one. Update Beam to 0.9.8.
 
 ## 2026.09.01.6
 

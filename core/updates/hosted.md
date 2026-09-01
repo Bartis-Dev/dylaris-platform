@@ -27,6 +27,9 @@ Newest release first. The format is fixed and checked in CI - see the
   subscription, and it runs as a normal subscription from then on.
 - Setting up a node from inside the Beam app has been withdrawn. Use the deploy
   snippet on My Infrastructure, which is unchanged.
+- Beam's settings button stays where you put it when you resize the window.
+  Dragging it to the right edge of a small window used to leave it in the middle
+  of a large one.
 
 ## 2026.09.01.6
 
