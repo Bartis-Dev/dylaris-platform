@@ -128,17 +128,68 @@ func (s *PostgresStore) DeleteWarpAPIKeyByID(id int) error {
 	return err
 }
 
+// OwnerCutOff reports whether a tenant has been cut off: their enforcement has
+// persisted past its grace, and this is the point at which route-only links
+// actually stop. A nil billing row, an active status, or a grace still running
+// all return false and the link may boot.
+//
+// Two ways to get here, and only the first used to be checked. Non-payment is
+// one. Holding more than was bought is the other, and enforceEntitlementLimits
+// cuts a tenant off for it after 72 hours and an email - but this gate never
+// asked, so the client re-enrolled within minutes and the sweep fought it every
+// hour, forever. A route-only tenant has no servers to stop and no warp peers to
+// drop, so for them the over-limit cutoff did nothing whatsoever.
+//
+// MUST stay equivalent to ownerCutOffSQL below, which is the same two arms in
+// SQL; LinkBoot, the warp enroll gate and the two reconciler queries all have to
+// agree about a given kit or it flaps every 60 seconds. It lives HERE, beside
+// that SQL, rather than beside the handlers that call it: two spellings of one
+// rule drifting apart is the failure mode, and a package boundary between them
+// made the equivalence untestable. An integration test can now put the same row
+// through both.
+func OwnerCutOff(b *UserBilling, suspendGrace, overLimitGrace time.Duration, now time.Time) bool {
+	if b == nil {
+		return false
+	}
+	if b.Status == "suspended" && b.SuspendedAt != nil && !now.Before(b.SuspendedAt.Add(suspendGrace)) {
+		return true
+	}
+	return b.OverLimitSince != nil && !now.Before(b.OverLimitSince.Add(overLimitGrace))
+}
+
+// ownerCutOffSQL is the ONE spelling of "this link's owner has been cut off",
+// shared by the two queries below so they can never disagree about a given kit -
+// one says who KEEPS an ACL and the other says whose must be TORN DOWN, and a
+// kit that satisfied neither, or both, would flap every 60s.
+//
+// $1 is now-minus-suspension-grace, $2 now-minus-over-limit-grace. Both arms are
+// "past the grace", never "right now": the grace is what makes a suspension a
+// warning first.
+//
+// Two arms, because there are two ways to be cut off and only one of them used
+// to be here. A tenant holding more than they bought is stopped by
+// enforceEntitlementLimits after its own grace - but that pass had no
+// counterpart in this predicate, so the reconciler re-provisioned every link it
+// dropped within the next tick, and the cutoff was undone before anyone noticed
+// it had happened. For a route-only tenant, who has no servers and no warp
+// peers, that made the entire over-limit cutoff a no-op.
+//
+// Admin-minted kits (owner_id NULL -> no billing row) are never cut off: the
+// LEFT JOIN yields NULL billing, both "IS NOT NULL" atoms are FALSE, and the
+// whole predicate is FALSE.
+//
+// MUST stay equivalent to handlers.ownerCutOff.
+const ownerCutOffSQL = `(
+    (ub.status = 'suspended' AND ub.suspended_at IS NOT NULL AND ub.suspended_at <= $1)
+    OR (ub.overlimit_since IS NOT NULL AND ub.overlimit_since <= $2)
+)`
+
 // ListLinkKitsForACLReconcile returns the non-revoked route-only link kits the
-// ACL reconciler should keep provisioned: every link EXCEPT those whose owner is
-// hard-suspended (suspended and past the enforcement grace). hardSuspendedBefore
-// is now-minus-grace; a link whose owner's suspended_at is at or before it is
-// excluded so the reconciler stops resurrecting its Redis ACL. Admin-minted kits
-// (owner_id is UUID NULL -> no billing row) are ALWAYS included: the LEFT JOIN
-// yields NULL billing, and "ub.suspended_at IS NOT NULL" is then FALSE, so the
-// inner AND is FALSE and NOT(FALSE) keeps the row. Owner active or within grace is
-// likewise kept. Mirrors ListWarpAPIKeysByOwner's column list + scan; the predicate
-// MUST stay equivalent to handlers.linkHardSuspended.
-func (s *PostgresStore) ListLinkKitsForACLReconcile(hardSuspendedBefore time.Time) ([]WarpAPIKey, error) {
+// ACL reconciler should keep provisioned: every link EXCEPT those whose owner has
+// been cut off (see ownerCutOffSQL). A link whose owner is active, or still
+// inside either grace, is kept. Mirrors ListWarpAPIKeysByOwner's column list +
+// scan.
+func (s *PostgresStore) ListLinkKitsForACLReconcile(hardSuspendedBefore, overLimitBefore time.Time) ([]WarpAPIKey, error) {
 	rows, err := s.db.Query(`
 		SELECT w.id, w.name, w.key_hash, w.policy, w.max_conns, w.on_new_conn,
 		       COALESCE(w.fixed_wg_ip,''), COALESCE(w.node_id,''), COALESCE(w.region,''),
@@ -146,10 +197,8 @@ func (s *PostgresStore) ListLinkKitsForACLReconcile(hardSuspendedBefore time.Tim
 		FROM warp_api_keys w
 		LEFT JOIN user_billing ub ON ub.user_id = w.owner_id
 		WHERE w.node_id LIKE 'link-%' AND w.revoked_at IS NULL
-		  AND NOT (ub.status = 'suspended'
-		           AND ub.suspended_at IS NOT NULL
-		           AND ub.suspended_at <= $1)
-		ORDER BY w.created_at DESC`, hardSuspendedBefore)
+		  AND NOT `+ownerCutOffSQL+`
+		ORDER BY w.created_at DESC`, hardSuspendedBefore, overLimitBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -169,23 +218,28 @@ func (s *PostgresStore) ListLinkKitsForACLReconcile(hardSuspendedBefore time.Tim
 }
 
 // ListLinkKitsForACLTeardown returns route-only link kits that MUST NOT have a
-// Redis ACL user right now: either revoked (recently - see below) or owned by
-// a hard-suspended tenant. Feeds the reconciler's cleanup sweep, the self-heal
-// counterpart to ListLinkKitsForACLReconcile: that query says who KEEPS an ACL,
-// this one says who must have theirs TORN DOWN, so a DELUSER that failed at
-// revoke/suspend time (a transient Redis blip) converges within the next ~60s
-// tick instead of leaving a valid scoped cred live indefinitely. The revoked
-// arm is bounded to revokedAfter (now-24h in the reconciler) so revoked kits
-// don't accumulate in this query forever - a teardown that keeps failing for a
-// full 24h straight is assumed already gone (DELUSER is idempotent, a later
-// retry may simply be a no-op) or a deeper problem an operator needs to look
-// at, not something to retry forever. The hard-suspended arm has no time lower
-// bound: reactivation clears suspended_at, which removes the row from this
-// result on its own. hardSuspendedBefore mirrors ListLinkKitsForACLReconcile's
-// cutoff (now-grace); the two queries' hard-suspended predicates use the same
-// three atoms (status/suspended_at IS NOT NULL/suspended_at <=) so they can
-// never disagree about a given kit.
-func (s *PostgresStore) ListLinkKitsForACLTeardown(hardSuspendedBefore, revokedAfter time.Time) ([]WarpAPIKey, error) {
+// Redis ACL user right now: either revoked (recently - see below) or owned by a
+// tenant who has been cut off (ownerCutOffSQL, the same predicate the reconcile
+// query negates). It is the self-heal counterpart to
+// ListLinkKitsForACLReconcile: that query says who KEEPS an ACL, this one says
+// who must have theirs TORN DOWN, so a DELUSER that failed at revoke/suspend
+// time (a transient Redis blip) converges within the next ~60s tick instead of
+// leaving a valid scoped cred live indefinitely.
+//
+// The revoked arm is bounded to revokedAfter (now-24h in the reconciler) so
+// revoked kits don't accumulate in this query forever - a teardown that keeps
+// failing for a full 24h straight is assumed already gone (DELUSER is
+// idempotent, a later retry may simply be a no-op) or a deeper problem an
+// operator needs to look at, not something to retry forever.
+//
+// The cut-off arm has no time lower bound: reactivation clears suspended_at and
+// coming back within limits clears overlimit_since, either of which removes the
+// row from this result on its own.
+//
+// The parameter ORDER matches the reconcile query on purpose ($1 suspension,
+// $2 over-limit) so both can share one predicate string; revokedAfter is $3
+// because it belongs to this query alone.
+func (s *PostgresStore) ListLinkKitsForACLTeardown(hardSuspendedBefore, overLimitBefore, revokedAfter time.Time) ([]WarpAPIKey, error) {
 	rows, err := s.db.Query(`
 		SELECT w.id, w.name, w.key_hash, w.policy, w.max_conns, w.on_new_conn,
 		       COALESCE(w.fixed_wg_ip,''), COALESCE(w.node_id,''), COALESCE(w.region,''),
@@ -194,10 +248,10 @@ func (s *PostgresStore) ListLinkKitsForACLTeardown(hardSuspendedBefore, revokedA
 		LEFT JOIN user_billing ub ON ub.user_id = w.owner_id
 		WHERE w.node_id LIKE 'link-%'
 		  AND (
-		    (w.revoked_at IS NOT NULL AND w.revoked_at >= $2)
-		    OR (ub.status = 'suspended' AND ub.suspended_at IS NOT NULL AND ub.suspended_at <= $1)
+		    (w.revoked_at IS NOT NULL AND w.revoked_at >= $3)
+		    OR `+ownerCutOffSQL+`
 		  )
-		ORDER BY w.created_at DESC`, hardSuspendedBefore, revokedAfter)
+		ORDER BY w.created_at DESC`, hardSuspendedBefore, overLimitBefore, revokedAfter)
 	if err != nil {
 		return nil, err
 	}

@@ -323,12 +323,12 @@ type Store interface {
 	// ListLinkKitsForACLReconcile returns non-revoked route-only link kits whose
 	// owner is NOT hard-suspended (owner suspended with suspended_at <=
 	// hardSuspendedBefore is excluded; NULL-owner admin kits are always included).
-	ListLinkKitsForACLReconcile(hardSuspendedBefore time.Time) ([]WarpAPIKey, error)
+	ListLinkKitsForACLReconcile(hardSuspendedBefore, overLimitBefore time.Time) ([]WarpAPIKey, error)
 	// ListLinkKitsForACLTeardown returns link kits that must NOT have an ACL
 	// right now (revoked recently, or owner hard-suspended past grace) - the
 	// self-heal counterpart to ListLinkKitsForACLReconcile, feeding the
 	// reconciler's cleanup sweep.
-	ListLinkKitsForACLTeardown(hardSuspendedBefore, revokedAfter time.Time) ([]WarpAPIKey, error)
+	ListLinkKitsForACLTeardown(hardSuspendedBefore, overLimitBefore, revokedAfter time.Time) ([]WarpAPIKey, error)
 	GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error)
 	RevokeWarpAPIKeyByNodeID(nodeID string) error
 	InsertWarpPeer(p WarpPeer) (int, error)

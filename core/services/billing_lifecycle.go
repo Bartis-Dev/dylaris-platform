@@ -492,6 +492,16 @@ func (s *BillingLifecycleService) Reactivate(userID string) error {
 	if err := s.store.SetUserBillingStatus(userID, "active", nil, nil); err != nil {
 		return err
 	}
+	// Paying again does not hand the links back to a tenant who is ALSO past
+	// their over-limit grace. The two enforcements have separate clocks, and the
+	// ACL reconciler would tear these down again on its next 60s tick anyway -
+	// so restoring them here would mean issuing a working Redis credential for
+	// one minute and calling it a reactivation.
+	if b, err := s.store.GetUserBilling(userID); err == nil && b != nil &&
+		b.OverLimitSince != nil && !time.Now().Before(b.OverLimitSince.Add(OverLimitGrace)) {
+		log.Printf("billing lifecycle: %s is active again but still over its limits, links stay down", userID)
+		return nil
+	}
 	s.reactivateTenantLinks(userID)
 	return nil
 }

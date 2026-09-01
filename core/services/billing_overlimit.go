@@ -234,7 +234,21 @@ func (s *BillingLifecycleService) enforceEntitlementLimits(ctx context.Context) 
 
 		log.Printf("billing over-limit: cutoff for %s, still holding %s after the grace window",
 			b.UserID, u.describe())
+		// The same three steps the payment cutoff takes, in the same order.
+		//
+		// suspendTenantLinks was missing, and its absence was not a smaller
+		// cutoff - it was the whole cutoff for a route-only tenant, who has no
+		// servers to stop and no warp peers to drop. They held more addresses
+		// than they bought, got the email, and then nothing happened.
+		//
+		// This only takes effect at all because handlers.ownerCutOff and
+		// store.ownerCutOffSQL now know about the over-limit grace too. Without
+		// them the ACL reconciler re-provisioned every link this dropped on its
+		// next 60s tick, which is what it was already doing to the warp peers
+		// above: the sweep and the reconciler fought each other every hour and
+		// the tenant never noticed either.
 		s.stopTenantServers(ctx, b.UserID)
+		s.suspendTenantLinks(ctx, b.UserID)
 		s.suspendTenantWarpPeers(ctx, b.UserID)
 	}
 }

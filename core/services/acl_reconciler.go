@@ -21,10 +21,10 @@ type aclReconcilerStore interface {
 	GetNodeSecretEnc(id int) (string, error)
 	SetNodeSecretEnc(id int, enc string) error
 	ListServersByNode(nodeID int) ([]models.Server, error)
-	ListLinkKitsForACLReconcile(hardSuspendedBefore time.Time) ([]store.WarpAPIKey, error)
+	ListLinkKitsForACLReconcile(hardSuspendedBefore, overLimitBefore time.Time) ([]store.WarpAPIKey, error)
 	// ListLinkKitsForACLTeardown feeds the cleanup sweep: link kits that must
 	// NOT have an ACL right now (see reconcileOnce).
-	ListLinkKitsForACLTeardown(hardSuspendedBefore, revokedAfter time.Time) ([]store.WarpAPIKey, error)
+	ListLinkKitsForACLTeardown(hardSuspendedBefore, overLimitBefore, revokedAfter time.Time) ([]store.WarpAPIKey, error)
 }
 
 // aclTeardownWindow bounds how long a revoked link kit keeps being retried by
@@ -148,7 +148,12 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 	// enforcement pass drops its ACL and this query stops resurrecting it. cutoff =
 	// now - graceWindow, evaluated once for the whole sweep.
 	cutoff := time.Now().Add(-r.graceWindow)
-	kits, kerr := r.store.ListLinkKitsForACLReconcile(cutoff)
+	// The second cutoff is the over-limit one. It is a separate grace with a
+	// separate clock, so it cannot be folded into the first: a tenant can be
+	// within their payment grace and past their over-limit grace at the same
+	// time, and it is the LATTER that has to stop them.
+	overCutoff := time.Now().Add(-OverLimitGrace)
+	kits, kerr := r.store.ListLinkKitsForACLReconcile(cutoff, overCutoff)
 	if kerr != nil {
 		log.Printf("acl reconciler: list link kits: %v", kerr)
 	} else {
@@ -172,7 +177,7 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 	// by an in-flight EnsureRouteOnlyLinkACL that raced a concurrent revoke is
 	// caught here on the next tick even if LinkBoot's own fresh re-check
 	// (handlers/warp.go) lost the race too.
-	teardown, terr := r.store.ListLinkKitsForACLTeardown(cutoff, time.Now().Add(-aclTeardownWindow))
+	teardown, terr := r.store.ListLinkKitsForACLTeardown(cutoff, overCutoff, time.Now().Add(-aclTeardownWindow))
 	if terr != nil {
 		log.Printf("acl reconciler: list link kits for teardown: %v", terr)
 	} else {

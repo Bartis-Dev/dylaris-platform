@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.14
+
+### Features
+- Nothing.
+
+### Breaking
+- The over-limit cutoff now takes effect. A tenant past the 72-hour grace loses
+  their route-only links as well as their servers, and the change is kept: both
+  admission gates and both reconciler queries ask about it. Until now the cutoff
+  reversed itself within a minute and did nothing at all to a route-only tenant.
+  `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Reactivating a tenant no longer hands the links back while they are still over
+  their limits, which used to issue a working credential for one minute. `core`
+
 ## 2026.09.01.13
 
 ### Features

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.14
+
+### Features
+- Nothing.
+
+### Breaking
+- Holding more addresses or nodes than your plan includes now actually stops
+  your service once the 72-hour notice has passed, route-only included. You get
+  an email when the clock starts, and removing the excess before the deadline
+  ends it. Nothing to update on your side.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.01.10
 
 ### Features
