@@ -34,6 +34,18 @@ function billingSwitch(
     what: string,
 ): SwitchState {
     if (!s.subscribed) {
+        // A grant is not a missing subscription, and saying so was actively
+        // misleading: a tenant whose BYON works read "there is no active
+        // subscription" as though their access were broken. A grant made in the
+        // panel writes Core's billing row and creates no store subscription at
+        // all, so there is nothing to meter - and nothing sweeps them either,
+        // because the guard only walks Stripe subscriptions.
+        if (s.granted) {
+            return {
+                kind: 'unavailable',
+                reason: `Your access was granted by an administrator rather than bought, so there is no subscription to meter ${what} against. Nothing is charged, and nothing is stopped for going over.`,
+            };
+        }
         return { kind: 'unavailable', reason: `There is no active subscription to bill ${what} against.` };
     }
     if (!s.stripe) {

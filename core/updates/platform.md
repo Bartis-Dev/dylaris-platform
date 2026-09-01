@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The data-traffic panel is shown even when nothing has moved through the relay
+  this month. It only appeared once a row existed, so "you have used none" and
+  "this is broken" looked identical. `core` `panel`
+- A tenant entitled by an admin grant was told "there is no active
+  subscription", which reads as broken access. A panel grant creates no store
+  subscription by design, so the panel now says that is why - and that nothing
+  is charged or stopped for going over. `core` `panel`
+
 ## 2026.09.01.8
 
 ### Features

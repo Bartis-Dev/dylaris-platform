@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Your data traffic is shown even in a month where you have transferred nothing,
+  instead of the panel disappearing.
+- If your access was given to you rather than bought, the traffic billing switch
+  now says so instead of reporting a missing subscription. Nothing is charged
+  and nothing is stopped in that case.
+
 ## 2026.09.01.8
 
 ### Features

@@ -56,6 +56,20 @@ describe('the billing switches say why they cannot be moved', () => {
         expect(s.kind === 'unavailable' && s.reason).toContain('no active subscription');
     });
 
+    // A grant made in the PANEL creates no store subscription at all, so it
+    // reached the branch above and told a tenant whose access works that their
+    // subscription was missing. Two different states, and only one of them is
+    // something being wrong.
+    it('tells a granted tenant that a grant is why, not a missing subscription', () => {
+        const s = trafficSwitch({ ...base, subscribed: false, granted: true });
+        expect(s.kind).toBe('unavailable');
+        expect(s.kind === 'unavailable' && s.reason).toContain('granted by an administrator');
+        expect(s.kind === 'unavailable' && s.reason).not.toContain('no active subscription');
+        // And it has to say what that MEANS, because a bar reading "0 of 2000
+        // GB" beside it otherwise looks like a limit somebody will enforce.
+        expect(s.kind === 'unavailable' && s.reason).toContain('Nothing is charged');
+    });
+
     // An admin grant has no Stripe subscription to meter. Offering a toggle that
     // can only fail is worse than saying why it is not there.
     it('names an admin grant as such', () => {

@@ -175,7 +175,7 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 
 	out := &myTrafficStatus{BillingEnabled: b.TrafficBillingEnabled}
 	limited := false
-	for _, c := range foldTrafficCells(cells) {
+	for _, c := range withIdleAllowances(foldTrafficCells(cells)) {
 		lim, err := services.ResolveTrafficLimit(h.state.Store, userID, c.region, c.kind)
 		if err != nil {
 			return nil
@@ -512,4 +512,45 @@ func foldTrafficCells(cells []store.RegionUsage) []trafficCell {
 		out[i].byProduct[c.Product] += c.Bytes
 	}
 	return out
+}
+
+// withIdleAllowances adds the pools a tenant holds but has not moved bytes in.
+//
+// The stored breakdown only has a row once traffic has flowed, and a screen
+// draws what it is given - so a pool with no usage this month vanished from the
+// panel entirely. That is how "where is my data traffic" happens: nothing had
+// gone through the relay, so the whole data-traffic panel disappeared and the
+// reader could not tell "you have used none" from "this is broken". A zero is
+// an answer; an absent panel is not.
+//
+// Only NON-REGIONAL kinds get this, and that is a decision rather than
+// convenience. File transfers hold ONE global pool that every tenant has
+// whether or not they have used it, so a zero there is a fact about them.
+// Player traffic is capped per region, and a tenant does not hold a region -
+// players either connect through it or they do not. Seeding those from the
+// configured rows would draw a bar for every region an operator has ever
+// priced, most of which will never carry a byte for this tenant.
+//
+// Usage always wins: a cell that already has bytes is left exactly as folded,
+// so this can only ever ADD a zero, never restate a number. A pool with no
+// configured allowance is still added - it renders as usage without a bar,
+// which is the honest shape for "nothing has moved and nothing caps it".
+func withIdleAllowances(cells []trafficCell) []trafficCell {
+	for _, kind := range []string{store.TrafficKindRelay} {
+		if services.RegionalKind(kind) {
+			continue
+		}
+		region := services.TrafficLimitRegion("", kind)
+		found := false
+		for _, c := range cells {
+			if c.kind == kind && c.region == region {
+				found = true
+				break
+			}
+		}
+		if !found {
+			cells = append(cells, trafficCell{region: region, kind: kind, byProduct: map[string]int64{}})
+		}
+	}
+	return cells
 }

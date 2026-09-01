@@ -88,3 +88,54 @@ func TestFoldTrafficCells(t *testing.T) {
 		}
 	})
 }
+
+// A pool with no traffic this month still has to be a pool.
+//
+// The breakdown table only gets a row once bytes have moved, so a tenant who
+// has transferred no files had no relay cell at all - and the panel, drawing
+// what it is given, dropped the whole data-traffic section. "You have used
+// none" and "this is broken" then looked identical, which is the report this
+// came from.
+func TestWithIdleAllowances(t *testing.T) {
+	const gb = int64(1_000_000_000)
+
+	t.Run("the data-traffic pool exists even with nothing in it", func(t *testing.T) {
+		got := withIdleAllowances([]trafficCell{
+			{region: "eu-central", kind: store.TrafficKindEdge, bytes: 2 * gb},
+		})
+		var relay *trafficCell
+		for i := range got {
+			if got[i].kind == store.TrafficKindRelay {
+				relay = &got[i]
+			}
+		}
+		if relay == nil {
+			t.Fatal("no data-traffic pool; the panel would show nothing at all for it")
+		}
+		if relay.bytes != 0 || relay.region != "*" {
+			t.Errorf("idle pool = %+v, want the global region and no bytes", *relay)
+		}
+	})
+
+	t.Run("real usage is never restated", func(t *testing.T) {
+		// The one thing this must not do. Adding a second relay cell would put a
+		// zero bar beside the real one and make the section contradict itself.
+		got := withIdleAllowances([]trafficCell{
+			{region: "*", kind: store.TrafficKindRelay, bytes: 7 * gb},
+		})
+		if len(got) != 1 || got[0].bytes != 7*gb {
+			t.Fatalf("got %+v, want the one real pool untouched", got)
+		}
+	})
+
+	t.Run("regional kinds are not invented", func(t *testing.T) {
+		// A tenant does not HOLD a region: players either connect through it or
+		// they do not. Seeding these would draw a bar for every region an
+		// operator has ever priced.
+		for _, c := range withIdleAllowances(nil) {
+			if c.kind == store.TrafficKindEdge {
+				t.Errorf("a player-traffic pool was invented for %q", c.region)
+			}
+		}
+	})
+}

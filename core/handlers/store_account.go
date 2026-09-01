@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"dylaris-core/services"
 )
 
 // The store account, read and changed from the panel.
@@ -74,6 +76,17 @@ func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
 	summary["enabled"] = true
 	summary["reachable"] = true
 	summary["storeUrl"] = h.state.StoreURL
+	// Whether an ADMIN GRANT is what entitles them, which the storefront cannot
+	// know: a grant made in the panel writes Core's billing row and creates no
+	// store subscription at all.
+	//
+	// Without it the panel told a granted tenant "There is no active
+	// subscription to bill traffic against" - true of the store's database and
+	// unreadable to somebody whose grant is working, because it describes their
+	// entitlement as missing when it is simply not a purchase.
+	if ent, eerr := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, IsAdmin(r)); eerr == nil {
+		summary["granted"] = ent.Source == services.EntitlementSourceGrant || ent.Source == services.EntitlementSourceBoth
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(summary)
 }

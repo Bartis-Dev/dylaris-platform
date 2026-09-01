@@ -65,6 +65,12 @@ export interface StoreAccountSummary {
     email?: string;
     storeUrl?: string;
     subscribed?: boolean;
+    // Whether an ADMIN GRANT is what entitles them. Core adds it; the storefront
+    // cannot know, because a grant made in the panel creates no subscription
+    // there. Without it a granted tenant was told their subscription was
+    // missing, which describes their access as broken when it is simply not a
+    // purchase.
+    granted?: boolean;
     status?: string;
     nodes?: number;
     routeOnly?: number;
