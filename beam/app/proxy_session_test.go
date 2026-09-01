@@ -5,6 +5,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -154,5 +155,29 @@ func TestNoSessionInjectsNoScript(t *testing.T) {
 	target, _ := url.Parse("https://panel.example.com/")
 	if got := a.readableCookieScript(target, "n"); got != "" {
 		t.Errorf("a script was injected with no cookies held: %q", got)
+	}
+}
+
+// Persisting the session may not ride on every proxied response.
+//
+// ModifyResponse runs for every asset, and a panel page is hundreds of them. A
+// settings read per response put file IO in front of every script, stylesheet
+// and image the panel loads. The jar can only change when the server actually
+// sent cookies, so that is the condition.
+func TestSessionIsPersistedOnlyWhenCookiesArrive(t *testing.T) {
+	b, err := os.ReadFile("proxy.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	if !strings.Contains(src, "carriedCookies := len(resp.Header.Values(\"Set-Cookie\")) > 0") {
+		t.Error("nothing records whether the response carried cookies")
+	}
+	if !strings.Contains(src, "if carriedCookies {\n\t\t\t\tapp.persistPanelSession()") {
+		t.Error("persistPanelSession is not gated on the response carrying cookies")
+	}
+	// It has to be read BEFORE captureShellCookies, which deletes the header.
+	if strings.Index(src, "carriedCookies :=") > strings.Index(src, "captureShellCookies(resp,") {
+		t.Error("the header is read after it has been stripped, so the flag is always false")
 	}
 }

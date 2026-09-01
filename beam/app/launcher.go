@@ -152,9 +152,23 @@ const launcherScript = `
   // React does not do. A removal from INSIDE body, which is the only way this
   // node can actually disappear, reached the observer never, so the button
   // stayed gone until a full page load.
-  function attach() { if (document.body && !host.isConnected) document.body.appendChild(host); }
+  //
+  // Bounded, and that bound is load-bearing rather than tidiness. Watching the
+  // subtree means an append is itself an observed mutation, so if anything in
+  // the page removes this node on sight, re-attaching would feed it: remove,
+  // observe, append, observe, remove - a loop that pegs the renderer and takes
+  // the whole window white. A cap turns that worst case back into the old
+  // behaviour, a missing button, which is a bug and not a hang.
+  var attempts = 0, MAX_ATTACHES = 20;
+  var observer;
+  function attach() {
+    if (!document.body || host.isConnected) return;
+    if (++attempts > MAX_ATTACHES) { if (observer) observer.disconnect(); return; }
+    document.body.appendChild(host);
+  }
   attach();
-  new MutationObserver(attach).observe(document.documentElement, { childList: true, subtree: true });
+  observer = new MutationObserver(attach);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 })();
 `
 

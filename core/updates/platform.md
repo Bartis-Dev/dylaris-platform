@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Beam 0.9.5 could freeze on a white window. Its settings button re-attaches
+  itself when the page removes it, and that retry had no ceiling, so a page that
+  kept removing it locked the window up. Update Beam to 0.9.6.
+- Beam wrote its settings file to disk on every proxied response, which put file
+  access in front of every script and image the panel loads. It only happens on
+  sign-in and sign-out now. Update Beam to 0.9.6.
+
 ## 2026.09.01.2
 
 ### Features

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Beam 0.9.5 could hang on a blank white window. Update to 0.9.6, which fixes
+  it; nothing on your machines is affected.
+- Beam felt slow to load a page after signing in. It was writing to disk far
+  more often than it needed to.
+
 ## 2026.09.01.2
 
 ### Features

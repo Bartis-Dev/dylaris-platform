@@ -130,7 +130,30 @@ func TestLauncherReattachWatchesTheSubtree(t *testing.T) {
 	}
 	// And it must still be idempotent: the callback runs on every mutation
 	// batch of a busy SPA, so it may only touch the DOM when the host is gone.
-	if !strings.Contains(got, "!host.isConnected") {
+	if !strings.Contains(got, "host.isConnected) return;") {
 		t.Error("attach() would re-append on every mutation")
+	}
+}
+
+// The re-attach must be BOUNDED.
+//
+// Watching the subtree means the append is itself an observed mutation. If
+// anything in the page removes this node on sight, an unbounded re-attach feeds
+// it - remove, observe, append, observe, remove - which pegs the renderer and
+// takes the window white. The cap turns that back into a missing button, which
+// is a bug rather than a hang.
+func TestLauncherReattachIsBounded(t *testing.T) {
+	got := launcherTag("", false)
+	if !strings.Contains(got, "MAX_ATTACHES") {
+		t.Fatal("the re-attach has no ceiling; a page that removes the node loops forever")
+	}
+	if !strings.Contains(got, "observer.disconnect()") {
+		t.Error("hitting the ceiling does not stop observing, so the callback keeps running")
+	}
+	// The cheap guard has to come FIRST: the callback runs on every mutation
+	// batch of a busy application, so anything before this early return is paid
+	// thousands of times per page.
+	if !strings.Contains(got, "if (!document.body || host.isConnected) return;") {
+		t.Error("attach() does no early return, so it works on every mutation batch")
 	}
 }

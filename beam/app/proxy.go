@@ -231,12 +231,20 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 		ModifyResponse: func(resp *http.Response) error {
 			// Take the session out of the response before anything else looks
 			// at it; the webview keeps only the readable sign-in hint.
+			// Read BEFORE captureShellCookies, which is what strips the header.
+			// The jar can only have changed if the server sent something, and
+			// every other response is an asset - a page load is hundreds of
+			// them, so persisting unconditionally here put a settings-file read
+			// in front of every script, stylesheet and image the panel loads.
+			carriedCookies := len(resp.Header.Values("Set-Cookie")) > 0
 			captureShellCookies(resp, app.panelCookies(), app.resolvePanelTarget())
 			app.rememberReadableCookies(app.resolvePanelTarget(), resp)
 			// Write the session through, so closing the app does not sign the
-			// user out. Cheap on the common path: it compares a fingerprint and
-			// only touches the disk when the cookie set actually changed.
-			app.persistPanelSession()
+			// user out. Only on a response that carried cookies, which is the
+			// sign-in, the refresh and the sign-out and nothing else.
+			if carriedCookies {
+				app.persistPanelSession()
+			}
 			// The Panel ships no security headers of its own, so beam is
 			// the only place a CSP / framing policy is applied. Drop the
 			// report-only variant and X-Frame-Options (the latter is
