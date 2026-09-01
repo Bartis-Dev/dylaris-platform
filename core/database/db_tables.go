@@ -293,8 +293,20 @@ func seedSystemModules(db *sql.DB) {
 	// keeps the correct icon + non-system flag + position.
 	db.Exec(`UPDATE modules SET icon = 'life-buoy', url = '/tickets', is_system = FALSE, access_role = 'all', position = 5 WHERE name = 'Tickets'`)
 
-	// Migrate route limits: old semantics had 0 = unlimited, new semantics use -1 = unlimited
-	db.Exec(`UPDATE gateway_route_limits SET max_routes = -1 WHERE max_routes = 0`)
+	// Route limits follow the platform limit convention: NULL = no limit, 0 =
+	// none, n = the cap. -1 is from the convention BEFORE that one, where a panel
+	// toggle wrote -1 for unlimited, and nothing reads it that way any more: a
+	// surviving -1 row is now returned as a cap OF -1, and every count is at or
+	// over it, so the tenant may hold no addresses and is told they are over a
+	// limit of -1.
+	db.Exec(`UPDATE gateway_route_limits SET max_routes = NULL WHERE max_routes = -1`)
+	// What used to stand here was the opposite direction - SET max_routes = -1
+	// WHERE max_routes = 0 - carried over from when 0 meant unlimited. It runs on
+	// EVERY boot, not once, so under the current convention it took the one value
+	// an operator can enter to say "this account may hold none" and, at the next
+	// restart, rewrote it into the broken sentinel above. Removed rather than
+	// bounded: the installs it was written for were converted years of releases
+	// ago, and a 0 stored today is a deliberate "none".
 	// Migrate port:80 → port:443
 	db.Exec(`UPDATE gateway_route_limits SET scope = 'port:443' WHERE scope = 'port:80'`)
 }

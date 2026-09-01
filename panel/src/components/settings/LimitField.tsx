@@ -28,6 +28,7 @@ export function LimitField({
     step = 1,
     id,
     describedBy,
+    unlimitedLabel = 'No limit',
 }: {
     value: number | null;
     onChange: (v: number | null) => void;
@@ -43,6 +44,15 @@ export function LimitField({
     step?: number;
     id?: string;
     describedBy?: string;
+    /**
+     * What the null state is CALLED here. Defaults to "No limit", which is what
+     * null means everywhere a limit stands on its own.
+     *
+     * A scoped limit is the exception: leaving one blank hands the question to
+     * the scope below it, so calling that "No limit" on screen states the
+     * opposite of what it does whenever the scope below has a cap.
+     */
+    unlimitedLabel?: string;
 }) {
     const unlimited = value === null;
 
@@ -77,13 +87,13 @@ export function LimitField({
                     type="button"
                     role="switch"
                     aria-checked={unlimited}
-                    aria-label="No limit"
+                    aria-label={unlimitedLabel}
                     onClick={() => onChange(unlimited ? 0 : null)}
                     className={`toggle-track ${unlimited ? 'toggle-track-on' : 'toggle-track-off'}`}
                 >
                     <span className={`toggle-knob ${unlimited ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                 </button>
-                <span className="text-[10px] font-mono uppercase text-(--base-06)">No limit</span>
+                <span className="text-[10px] font-mono uppercase text-(--base-06)">{unlimitedLabel}</span>
             </label>
         </div>
     );

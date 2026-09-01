@@ -546,9 +546,20 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         dns: 'Full DNS (a-z, 0-9, -)',
     };
 
-    const allocationFields: { key: LimitKey; label: string; desc: string }[] = [
-        { key: 'global', label: 'Global Max Routes', desc: 'Total routes across all users and servers' },
-        { key: 'userDefault', label: 'Default Per-User Max', desc: 'Default limit for users without a custom override' },
+    // Both of the first two are a cap on ONE tenant's addresses, not a platform
+    // total - the global one used to say "Total routes across all users and
+    // servers", which is not what it does and would be read as a completely
+    // different setting. They are asked in order: a user's own override, then
+    // the default below, then this one.
+    const allocationFields: { key: LimitKey; label: string; desc: string; unlimitedLabel?: string }[] = [
+        { key: 'global', label: 'Fallback Per-User Max', desc: 'Used when neither a per-user override nor the default below is set' },
+        {
+            key: 'userDefault', label: 'Default Per-User Max', desc: 'Applies to every user without their own override',
+            // Blank here does not mean uncapped: it hands the question to the
+            // fallback above. Saying "No limit" would state the opposite
+            // whenever that fallback carries a number.
+            unlimitedLabel: 'Use fallback',
+        },
         { key: 'perServer', label: 'Per-Server Max', desc: 'Max routes per individual MC server' },
     ];
 
@@ -868,13 +879,13 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                         </HelpTip>
                     </h3>
                     <div className="space-y-3">
-                        {allocationFields.map(({ key, label, desc }) => (
+                        {allocationFields.map(({ key, label, desc, unlimitedLabel }) => (
                             <div key={key} className="flex items-center justify-between gap-4 p-3 rounded-md bg-(--base-02)">
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm text-(--base-09)">{label}</p>
                                     <p className="text-xs text-(--base-06)">{desc}</p>
                                 </div>
-                                <LimitField value={settings.limits[key]} onChange={v => setLimit(key, v)} />
+                                <LimitField value={settings.limits[key]} onChange={v => setLimit(key, v)} unlimitedLabel={unlimitedLabel} />
                             </div>
                         ))}
                     </div>

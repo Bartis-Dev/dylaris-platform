@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.13
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Saving the gateway settings with the per-user address default left blank
+  switched off the limit below it, so every tenant became uncapped while the
+  page still showed a number. A blank field now clears that scope instead of
+  answering for it. `core` `panel`
+- A route limit of 0 no longer survives a restart as a broken value. A startup
+  migration from an older convention rewrote it on every boot, and the result
+  read as a cap that nobody could ever be under. `core`
+
+### Fixes
+- The two per-user address limits say what they do. The first was labelled as a
+  total across all users and servers, which is not what it caps. `panel`
+
 ## 2026.09.01.12
 
 ### Features

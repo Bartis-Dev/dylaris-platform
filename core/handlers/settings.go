@@ -451,8 +451,32 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 		{"per_server", req.Limits.PerServer},
 		{"port:25565", req.Limits.PortMc},
 	}
+	// An empty field DELETES the row; it does not store NULL.
+	//
+	// The two are not the same thing, and the difference is what silently
+	// switched the global cap off. effectiveRouteLimit walks user:<id> ->
+	// user_default -> global, and a row that EXISTS answers even when its value
+	// is NULL - "I am set, and I set no cap" - which ends the walk. So saving
+	// this page with the per-user default left blank wrote a NULL user_default
+	// row, and from then on global was never asked: every tenant was uncapped,
+	// the page still displayed the global number, and nothing failed. Measured
+	// on the live instance, where all four rows had been NULLed exactly this way.
+	//
+	// The per-user endpoint (PUT /api/users/{id}/route-limit) deliberately keeps
+	// both spellings, because there they mean different things: "default" deletes
+	// the row so the platform default applies, and "unlimited" writes NULL so the
+	// account stays uncapped even if an operator later tightens that default.
+	// This page has no such distinction to express - it IS the platform default,
+	// and below it sits only global, so "blank" can only mean "I am not setting
+	// this one".
 	for _, l := range limits {
-		if err := h.state.Store.SetGatewayRouteLimit(l.scope, l.max); err != nil {
+		var err error
+		if l.max == nil {
+			err = h.state.Store.DeleteGatewayRouteLimit(l.scope)
+		} else {
+			err = h.state.Store.SetGatewayRouteLimit(l.scope, l.max)
+		}
+		if err != nil {
 			sendJSONError(w, "Failed to save limit: "+l.scope, http.StatusInternalServerError)
 			return
 		}
