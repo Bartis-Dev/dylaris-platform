@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.4
+
+### Features
+- The grant rows under a user's billing now show how many days are left, not
+  only the date they run out. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A user's BYON and route-only grants always read "Not granted", even with a
+  live grant, which also hid the Extend and Remove buttons on those rows. The
+  grant itself was working the whole time. `core`
+
 ## 2026.09.01.3
 
 ### Features

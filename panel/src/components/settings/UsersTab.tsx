@@ -17,7 +17,8 @@ import {
     type UserBillingAdmin,
 } from '@/lib/api/billing';
 import { setUserLimitOverrides } from '@/lib/api/plans';
-import { getUserEntitlement, grantEntitlement, revokeEntitlement, type Entitlement } from '@/lib/api/entitlement';
+import { getUserEntitlement, grantEntitlement, revokeEntitlement, type Entitlement, type EntitlementResponse } from '@/lib/api/entitlement';
+import { entitlementOf, formatDaysLeft } from '@/lib/entitlementState';
 import { entitlementExplanation } from '@/lib/entitlementText';
 import UserRegionPicker from '@/components/admin/UserRegionPicker';
 import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard } from 'lucide-react';
@@ -1011,10 +1012,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     useEffect(() => {
         getUserEntitlement(user.id).then(e => {
             if (e.success) {
-                setEnt({
-                    byon: !!e.byon, routeOnly: !!e.routeOnly, source: e.source || 'none',
-                    planKind: e.planKind, grantKind: e.grantKind, grantExpiresAt: e.grantExpiresAt,
-                });
+                setEnt(entitlementOf(e));
             }
         });
         getUserBilling(user.id).then(d => {
@@ -1037,15 +1035,12 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
 
     const show = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3000); };
 
-    const applyEntitlement = (r: { success: boolean; message?: string; byon?: boolean; routeOnly?: boolean; source?: string; planKind?: string; grantKind?: string; grantExpiresAt?: string }, okMsg: string) => {
+    const applyEntitlement = (r: EntitlementResponse, okMsg: string) => {
         if (!r.success) { show(r.message || 'Failed', false); return; }
         // The response carries the RESOLVED entitlement, so the panel reflects
         // what the server decided rather than what the form asked for. Those
         // differ whenever a plan already covers what was granted.
-        setEnt({
-            byon: !!r.byon, routeOnly: !!r.routeOnly, source: r.source || 'none',
-            planKind: r.planKind, grantKind: r.grantKind, grantExpiresAt: r.grantExpiresAt,
-        });
+        setEnt(entitlementOf(r));
         show(okMsg, true);
     };
 
@@ -1371,8 +1366,11 @@ function GrantRow({
             <div className="min-w-0 flex-1">
                 <div className="text-sm text-(--base-09)">{label}</div>
                 <div className="text-xs text-(--base-06)">
+                    {/* Date AND remaining days. The date answers "when", which is
+                        not the question being asked while deciding whether to
+                        extend - that one is "how soon". */}
                     {granted
-                        ? `Granted until ${new Date(expiresAt).toLocaleDateString()}`
+                        ? `Granted until ${new Date(expiresAt).toLocaleDateString()} · ${formatDaysLeft(expiresAt)}`
                         : 'Not granted'}
                     {granted && uncapped && (
                         <span className="text-(--warning)"> &middot; no limit set</span>
