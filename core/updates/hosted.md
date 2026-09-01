@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Machines that customers run could reach further into our coordination service
+  than they needed to. Their access is now scoped to their own machine. Nothing
+  suggests this was used, and nothing you run needs changing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.01.9
 
 ### Features

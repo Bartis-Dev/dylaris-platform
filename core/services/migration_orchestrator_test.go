@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"dylaris-pkg/queue"
 	"encoding/json"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func seedStatsEntry(t *testing.T, rdb *redis.Client, uuid, dataRaw string) {
 
 // seedNodePhase writes the node-owned dylaris:migration:<uuid>:status key
 // that waitForNodePhase/waitForNodePhaseAny poll.
-func seedNodePhase(t *testing.T, rdb *redis.Client, uuid, phase, errMsg string) {
+func seedNodePhase(t *testing.T, rdb *redis.Client, nodeToken, uuid, phase, errMsg string) {
 	t.Helper()
 	st := struct {
 		Phase string `json:"phase"`
@@ -34,7 +35,7 @@ func seedNodePhase(t *testing.T, rdb *redis.Client, uuid, phase, errMsg string) 
 	if err != nil {
 		t.Fatalf("marshal node phase: %v", err)
 	}
-	key := "dylaris:migration:" + uuid + ":status"
+	key := queue.MigrationStatusKey(nodeToken, uuid)
 	if err := rdb.Set(context.Background(), key, data, 0).Err(); err != nil {
 		t.Fatalf("seed node phase %s: %v", key, err)
 	}
@@ -84,11 +85,11 @@ func TestMigrationOrchestrator_ReadMeta(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal meta: %v", err)
 		}
-		if err := rdb.Set(ctx, "dylaris:migration:srv-1:meta", data, 0).Err(); err != nil {
+		if err := rdb.Set(ctx, queue.MigrationMetaKey("node-a", "srv-1"), data, 0).Err(); err != nil {
 			t.Fatalf("seed meta: %v", err)
 		}
 
-		got, err := o.readMeta(ctx, "srv-1")
+		got, err := o.readMeta(ctx, "node-a", "srv-1")
 		if err != nil {
 			t.Fatalf("readMeta: %v", err)
 		}
@@ -100,7 +101,7 @@ func TestMigrationOrchestrator_ReadMeta(t *testing.T) {
 	t.Run("missing key -> error", func(t *testing.T) {
 		rdb := newQueueTestRedis(t)
 		o := &MigrationOrchestrator{redis: rdb}
-		if _, err := o.readMeta(context.Background(), "srv-missing"); err == nil {
+		if _, err := o.readMeta(context.Background(), "node-a", "srv-missing"); err == nil {
 			t.Fatal("expected error for a missing meta key")
 		}
 	})
@@ -114,11 +115,11 @@ func TestMigrationOrchestrator_ReadMeta(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal meta: %v", err)
 		}
-		if err := rdb.Set(ctx, "dylaris:migration:srv-2:meta", data, 0).Err(); err != nil {
+		if err := rdb.Set(ctx, queue.MigrationMetaKey("node-a", "srv-2"), data, 0).Err(); err != nil {
 			t.Fatalf("seed meta: %v", err)
 		}
 
-		if _, err := o.readMeta(ctx, "srv-2"); err == nil {
+		if _, err := o.readMeta(ctx, "node-a", "srv-2"); err == nil {
 			t.Fatal("expected error for empty sha256 (validation)")
 		}
 	})
@@ -158,9 +159,9 @@ func TestMigrationOrchestrator_WaitForNodePhase(t *testing.T) {
 		rdb := newQueueTestRedis(t)
 		ctx := context.Background()
 		o := &MigrationOrchestrator{redis: rdb}
-		seedNodePhase(t, rdb, "srv-1", "staged", "")
+		seedNodePhase(t, rdb, "node-a", "srv-1", "staged", "")
 
-		phase, errMsg := o.waitForNodePhase(ctx, "srv-1", "staged", 5*time.Second)
+		phase, errMsg := o.waitForNodePhase(ctx, "node-a", "srv-1", "staged", 5*time.Second)
 		if phase != "staged" || errMsg != "" {
 			t.Errorf("waitForNodePhase = (%q, %q), want (staged, \"\")", phase, errMsg)
 		}
@@ -170,9 +171,9 @@ func TestMigrationOrchestrator_WaitForNodePhase(t *testing.T) {
 		rdb := newQueueTestRedis(t)
 		ctx := context.Background()
 		o := &MigrationOrchestrator{redis: rdb}
-		seedNodePhase(t, rdb, "srv-2", "error", "disk full")
+		seedNodePhase(t, rdb, "node-a", "srv-2", "error", "disk full")
 
-		phase, errMsg := o.waitForNodePhase(ctx, "srv-2", "staged", 5*time.Second)
+		phase, errMsg := o.waitForNodePhase(ctx, "node-a", "srv-2", "staged", 5*time.Second)
 		if phase != "error" || errMsg != "disk full" {
 			t.Errorf("waitForNodePhase = (%q, %q), want (error, disk full)", phase, errMsg)
 		}
@@ -188,7 +189,7 @@ func TestMigrationOrchestrator_WaitForNodePhase(t *testing.T) {
 		ctx := context.Background()
 		o := &MigrationOrchestrator{redis: rdb}
 
-		phase, errMsg := o.waitForNodePhase(ctx, "srv-missing", "staged", 50*time.Millisecond)
+		phase, errMsg := o.waitForNodePhase(ctx, "node-a", "srv-missing", "staged", 50*time.Millisecond)
 		if phase != "" || errMsg != "timed out" {
 			t.Errorf("waitForNodePhase = (%q, %q), want (\"\", timed out)", phase, errMsg)
 		}
@@ -200,9 +201,9 @@ func TestMigrationOrchestrator_WaitForNodePhaseAny(t *testing.T) {
 		rdb := newQueueTestRedis(t)
 		ctx := context.Background()
 		o := &MigrationOrchestrator{redis: rdb}
-		seedNodePhase(t, rdb, "srv-1", "need_remote", "")
+		seedNodePhase(t, rdb, "node-a", "srv-1", "need_remote", "")
 
-		phase, errMsg := o.waitForNodePhaseAny(ctx, "srv-1", map[string]bool{"transferred": true, "need_remote": true}, 5*time.Second)
+		phase, errMsg := o.waitForNodePhaseAny(ctx, "node-a", "srv-1", map[string]bool{"transferred": true, "need_remote": true}, 5*time.Second)
 		if phase != "need_remote" || errMsg != "" {
 			t.Errorf("waitForNodePhaseAny = (%q, %q), want (need_remote, \"\")", phase, errMsg)
 		}
@@ -213,7 +214,7 @@ func TestMigrationOrchestrator_WaitForNodePhaseAny(t *testing.T) {
 		ctx := context.Background()
 		o := &MigrationOrchestrator{redis: rdb}
 
-		phase, errMsg := o.waitForNodePhaseAny(ctx, "srv-missing", map[string]bool{"transferred": true}, 50*time.Millisecond)
+		phase, errMsg := o.waitForNodePhaseAny(ctx, "node-a", "srv-missing", map[string]bool{"transferred": true}, 50*time.Millisecond)
 		if phase != "" || errMsg != "timed out" {
 			t.Errorf("waitForNodePhaseAny = (%q, %q), want (\"\", timed out)", phase, errMsg)
 		}

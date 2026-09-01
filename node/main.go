@@ -1808,24 +1808,24 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "migrate_out":
 		// Source side: stage the (already-stopped) server dir as a zip.
-		handleMigrateOut(ctx, rdb, storage, cmd.Config.UUID)
+		handleMigrateOut(ctx, rdb, storage, id, cmd.Config.UUID)
 
 	case "migrate_in":
 		// Target side: pull the staged archive and extract it. No
 		// container start here — the orchestrator sends start next.
-		handleMigrateIn(ctx, rdb, storage, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
+		handleMigrateIn(ctx, rdb, storage, id, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
 
 	case "migrate_cleanup":
 		// Source side: drop the staged archive + original dir.
-		handleMigrateCleanup(ctx, rdb, storage, cmd.Config.UUID)
+		handleMigrateCleanup(ctx, rdb, storage, id, cmd.Config.UUID)
 
 	case "migrate_push_r2":
 		// Source side (cross-LAN BYON fallback): upload the staged archive to R2.
-		handleMigratePushR2(ctx, rdb, storage, cmd.Config.UUID, cmd.PresignedPutURL)
+		handleMigratePushR2(ctx, rdb, storage, id, cmd.Config.UUID, cmd.PresignedPutURL)
 
 	case "migrate_pull_r2":
 		// Target side (cross-LAN BYON fallback): download from R2, verify, extract.
-		handleMigratePullR2(ctx, rdb, storage, cmd.Config.UUID, cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)
+		handleMigratePullR2(ctx, rdb, storage, id, cmd.Config.UUID, cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)
 
 	case "backup_run":
 		// Re-decode the full payload — BackupRunCommand has many fields

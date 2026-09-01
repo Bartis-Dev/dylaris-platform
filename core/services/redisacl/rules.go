@@ -2,14 +2,41 @@ package redisacl
 
 import "dylaris-pkg/queue"
 
-// commandCats is the exhaustive category grant covering every command the node
-// and log-shipper use: read/write/stream/pubsub/connection/transaction, minus
-// dangerous/admin/scripting, plus explicit SCAN (SCAN is not in @dangerous;
-// KEYS is and stays denied).
+// commandCats is the category grant every principal here gets: read, write,
+// stream, pubsub, connection and transaction, minus dangerous, admin and
+// scripting.
+//
+// SCAN is deliberately NOT in it. It used to be, on the reasoning that KEYS is
+// @dangerous and SCAN is not - but Redis does not filter SCAN by the ACL's key
+// patterns. It walks the whole keyspace and returns every key NAME, and only a
+// command that names a key is checked against the patterns. Measured against
+// Valkey 8: a user scoped to a single prefix ran SCAN and got back keys from
+// every other prefix; a GET on one of them then answered NOPERM. Values are
+// protected, names are not.
+//
+// That distinction is the whole reason this matters, because the names ARE the
+// sensitive part: every server UUID, node token, SFTP account name and link
+// token on the platform is a key name, and they are exactly the inputs a
+// forged write needs. The log-shipper credential lives in the tenant's own
+// Minecraft container, beside plugins the tenant wrote, and it never called
+// SCAN once.
 var commandCats = []string{
 	"+@read", "+@write", "+@stream", "+@pubsub", "+@connection", "+@transaction",
-	"-@dangerous", "-@admin", "-@scripting", "+scan",
+	"-@dangerous", "-@admin", "-@scripting",
 }
+
+// nodeCommandCats is commandCats plus SCAN, and ONLY the node agent gets it.
+//
+// The node genuinely iterates the keyspace - Core discovery, port allocation and
+// the disk-full sweep all scan - so removing it would break the agent. Nothing
+// else here does: the log-shipper, the node's link sidecar and a route-only
+// link make no SCAN call in either repository.
+//
+// Left as a known, narrowed exposure rather than a solved one: a tenant-owned
+// BYON node can still enumerate key names. Closing that needs the three scan
+// sites rewritten to read an index instead of walking the keyspace, which is a
+// change to the agent and not to this file.
+var nodeCommandCats = append(append([]string{}, commandCats...), "+scan")
 
 // globalReadKeys are the shared keys the node accesses (NOT the shipper). The
 // ones the node only ever reads are read-only (%R~); dylaris:migration:* stays
@@ -68,9 +95,23 @@ func migrationKeys(token string) []string {
 		// migration has to resolve the source node's address.
 		"~dylaris:migration:endpoint:" + token,
 		"%R~dylaris:migration:endpoint:*",
-		// Progress it reports for the server it is moving, in either direction.
-		"~dylaris:migration:*:status",
-		"~dylaris:migration:*:meta",
+		// Progress it reports, under a prefix carrying its OWN token.
+		//
+		// This was "~dylaris:migration:*:status" and ":meta" - read AND write,
+		// with the wildcard standing for the server UUID - so every node in the
+		// fleet, a machine a customer owns included, could write the migration
+		// progress of any server on the platform. Core reads that as authority:
+		// "transferred" makes it skip the transfer check, flip node_id to the
+		// target and send migrate_cleanup to the source, which deletes the source
+		// copy. Nothing in the payload said who wrote it.
+		//
+		// The wildcard could not simply be narrowed to the servers this node
+		// holds, because the TARGET of a move reports "transferred" for a server
+		// it does not own yet - which is exactly the timing the old comment here
+		// waved at. Naming the key after the reporting node answers both: Redis
+		// refuses the cross-node write, and Core reads the key of the node it is
+		// actually waiting on. Same fix the backup result channels took below.
+		"~" + queue.MigrationNodeKeyPattern(token),
 		// Core-authoritative plan. The node reads nothing from it today; read-only
 		// so that stays true by construction rather than by convention.
 		"%R~dylaris:migration:*:orchestration",
@@ -140,7 +181,7 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 	for _, u := range serverUUIDs {
 		rules = append(rules, "&dylaris:server:"+u+":stats:live")
 	}
-	for _, c := range commandCats {
+	for _, c := range nodeCommandCats {
 		rules = append(rules, c)
 	}
 	return rules
@@ -241,6 +282,14 @@ func SetUserArgs(username string, rules []interface{}) []interface{} {
 // BuildRouteOnlyLinkACLRules scopes an external route-only link to exactly the keys
 // it touches. No hub discovery, no beam: a route-only link has no NodeID and can
 // neither publish nor resolve either.
+//
+// instanceID is the link's ID - which is also its Redis ACL username - and NOT a
+// slice of its tunnel token. It used to be tunnelToken[:8], so eight hex
+// characters of a live authentication token became a Redis KEY NAME that never
+// expires. Key names are readable by anything that can SCAN, so that was one
+// tenant's token prefix published to every other tenant's machine. The link ID
+// is public by construction: it is the username the link already authenticates
+// with, so both sides can name the same stream without either one leaking.
 func BuildRouteOnlyLinkACLRules(password, tunnelToken, instanceID string) []interface{} {
 	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
 	rules = append(rules,

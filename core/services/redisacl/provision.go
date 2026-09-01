@@ -85,13 +85,18 @@ func (p *Provisioner) RemoveNodeACL(ctx context.Context, token string) {
 }
 
 // EnsureRouteOnlyLinkACLNoSave applies the route-only link ACL user WITHOUT
-// persisting (no ACL SAVE). instanceID is tunnelToken[:8], matching the link's
-// own errlog instance id (gateway/link/link.go). Returns the derived ACL
-// username + password; the caller issues the trailing SaveACL.
+// persisting (no ACL SAVE). Returns the derived ACL username + password; the
+// caller issues the trailing SaveACL.
+//
+// The error stream is named by the LINK ID, which is the same string as the ACL
+// username - and the link knows it as the Redis user it logs in with, so both
+// sides arrive at the same key with nothing secret in it. It used to be
+// tunnelToken[:8] on both sides, which put a prefix of a live token into a
+// permanent key name; see BuildRouteOnlyLinkACLRules.
 func (p *Provisioner) EnsureRouteOnlyLinkACLNoSave(ctx context.Context, clusterSecret, linkID, tunnelToken string) (user, pass string, err error) {
 	user = RouteOnlyLinkUsername(linkID)
 	pass = RouteOnlyLinkPassword(clusterSecret, linkID)
-	instanceID := tunnelToken[:8]
+	instanceID := linkID
 	args := SetUserArgs(user, BuildRouteOnlyLinkACLRules(pass, tunnelToken, instanceID))
 	if err = p.admin.Do(ctx, args...).Err(); err != nil {
 		return "", "", err

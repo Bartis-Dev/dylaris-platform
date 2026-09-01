@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- A node could write any server's migration progress, not just its own. The key
+  now carries the reporting node's token, so Redis refuses a cross-node write
+  and Core reads the key of the node it is waiting on. `core` `node`
+- SCAN is withdrawn from the log-shipper, the link sidecar and route-only links.
+  Redis does not filter SCAN by key permissions, so it returned every key name
+  on the platform to a credential that lives in a tenant's own container. Only
+  the node agent keeps it, because it genuinely walks the keyspace. `core`
+- A route-only link's error stream is named by its link ID rather than by eight
+  characters of its authentication token. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.01.9
 
 ### Features

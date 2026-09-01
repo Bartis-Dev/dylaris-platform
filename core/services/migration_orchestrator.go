@@ -402,14 +402,14 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_out queue failed")
 		return
 	}
-	if phase, nerr := o.waitForNodePhase(ctx, srv.UUID, "staged", migrationStageTimeout); phase != "staged" {
+	if phase, nerr := o.waitForNodePhase(ctx, sourceNode.Token, srv.UUID, "staged", migrationStageTimeout); phase != "staged" {
 		log.Printf("migration %s: staging failed (phase=%s, err=%s)", srv.UUID, phase, nerr)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "staging failed: "+nerr)
 		return
 	}
 
 	// --- (g) migrate_in (target pulls + verifies) ---
-	meta, err := o.readMeta(ctx, srv.UUID)
+	meta, err := o.readMeta(ctx, sourceNode.Token, srv.UUID)
 	if err != nil {
 		log.Printf("migration %s: cannot read meta: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "meta read failed")
@@ -447,7 +447,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// migrate_in reports "transferred" on success, or "need_remote" when this is
 	// a BYON move and the target cannot reach the source over the LAN. In the
 	// latter case we transfer through R2 (node-direct, no warp hairpin) instead.
-	phase, nerr := o.waitForNodePhaseAny(ctx, srv.UUID, map[string]bool{"transferred": true, "need_remote": true}, migrationTransferTimeout)
+	phase, nerr := o.waitForNodePhaseAny(ctx, targetNode.Token, srv.UUID, map[string]bool{"transferred": true, "need_remote": true}, migrationTransferTimeout)
 	if phase == "need_remote" {
 		log.Printf("migration %s: source LAN unreachable, falling back to R2 transfer", srv.UUID)
 		if err := o.transferViaR2(ctx, srv, sourceNode, targetNode, meta.SHA256, meta.Size); err != nil {
@@ -735,12 +735,17 @@ func (o *MigrationOrchestrator) pollDBStatus(ctx context.Context, serverID int, 
 	}
 }
 
-// waitForNodePhase polls the node-owned dylaris:migration:<uuid>:status key until
-// it reaches wantPhase or "error", or the timeout elapses. Returns the last
+// waitForNodePhase polls the status key of the node it is WAITING ON until that
+// node reaches wantPhase or "error", or the timeout elapses. Returns the last
 // observed phase + any error message. A timeout returns the last phase seen
 // (often "" if the node never wrote one).
-func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, serverUUID, wantPhase string, timeout time.Duration) (string, string) {
-	key := fmt.Sprintf("dylaris:migration:%s:status", serverUUID)
+//
+// The key is named by nodeToken, so a phase can only come from the node that
+// was asked for it. It used to be dylaris:migration:<uuid>:status, which every
+// node in the fleet could write - and "transferred" here is what makes the
+// caller flip node_id and delete the source copy. See queue.MigrationStatusKey.
+func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, nodeToken, serverUUID, wantPhase string, timeout time.Duration) (string, string) {
+	key := queue.MigrationStatusKey(nodeToken, serverUUID)
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(migrationPollInterval)
 	defer ticker.Stop()
@@ -767,7 +772,7 @@ func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, serverUUID
 			return lastPhase, "cancelled by admin"
 		}
 		if time.Now().After(deadline) {
-			return lastPhase, "timed out"
+			return lastPhase, o.timeoutReason(ctx, lastPhase, serverUUID)
 		}
 		select {
 		case <-ctx.Done():
@@ -777,13 +782,32 @@ func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, serverUUID
 	}
 }
 
+// timeoutReason names the ONE cause an operator cannot guess: a node old enough
+// to still report progress under the fleet-wide key nobody reads any more.
+//
+// The migration keys moved under the reporting node's own token so that Redis
+// can refuse a forged phase (see queue.MigrationStatusKey). A node built before
+// that writes the old name, this poll never sees it, and the move fails with a
+// bare "timed out" that says nothing about what to do. The legacy key is used
+// ONLY to tell those two apart - anything on the platform could have written it,
+// so it never decides anything.
+func (o *MigrationOrchestrator) timeoutReason(ctx context.Context, lastPhase, serverUUID string) string {
+	if lastPhase != "" {
+		return "timed out"
+	}
+	if n, err := o.redis.Exists(ctx, queue.LegacyMigrationStatusKey(serverUUID)).Result(); err == nil && n > 0 {
+		return "timed out: a node in this move is too old to report progress securely - update it and try again"
+	}
+	return "timed out"
+}
+
 // waitForNodePhaseAny is waitForNodePhase for a SET of acceptable terminal
 // phases. It returns as soon as the node reports any phase in `accept` (or
 // "error", with its message), or the timeout elapses. Used by migrate_in, which
 // can end in either "transferred" (got the copy) or "need_remote" (BYON LAN
 // unreachable, use the R2 fallback).
-func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, serverUUID string, accept map[string]bool, timeout time.Duration) (string, string) {
-	key := fmt.Sprintf("dylaris:migration:%s:status", serverUUID)
+func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, nodeToken, serverUUID string, accept map[string]bool, timeout time.Duration) (string, string) {
+	key := queue.MigrationStatusKey(nodeToken, serverUUID)
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(migrationPollInterval)
 	defer ticker.Stop()
@@ -810,7 +834,7 @@ func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, serverU
 			return lastPhase, "cancelled by admin"
 		}
 		if time.Now().After(deadline) {
-			return lastPhase, "timed out"
+			return lastPhase, o.timeoutReason(ctx, lastPhase, serverUUID)
 		}
 		select {
 		case <-ctx.Done():
@@ -866,7 +890,7 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 	if err := o.queue.SendMigratePushR2Command(ctx, sourceNode.Token, srv.UUID, putURL); err != nil {
 		return fmt.Errorf("queue migrate_push_r2: %w", err)
 	}
-	if phase, nerr := o.waitForNodePhase(ctx, srv.UUID, "pushed", migrationR2PhaseTimeout); phase != "pushed" {
+	if phase, nerr := o.waitForNodePhase(ctx, sourceNode.Token, srv.UUID, "pushed", migrationR2PhaseTimeout); phase != "pushed" {
 		return fmt.Errorf("source R2 upload failed (phase=%s): %s", phase, nerr)
 	}
 
@@ -874,7 +898,7 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, getURL, expectedSha256, expectedSize); err != nil {
 		return fmt.Errorf("queue migrate_pull_r2: %w", err)
 	}
-	if phase, nerr := o.waitForNodePhase(ctx, srv.UUID, "transferred", migrationR2PhaseTimeout); phase != "transferred" {
+	if phase, nerr := o.waitForNodePhase(ctx, targetNode.Token, srv.UUID, "transferred", migrationR2PhaseTimeout); phase != "transferred" {
 		return fmt.Errorf("target R2 download failed (phase=%s): %s", phase, nerr)
 	}
 	return nil
@@ -888,8 +912,8 @@ type nodeMeta struct {
 	StagedAt     int64  `json:"stagedAt"`
 }
 
-func (o *MigrationOrchestrator) readMeta(ctx context.Context, serverUUID string) (nodeMeta, error) {
-	key := fmt.Sprintf("dylaris:migration:%s:meta", serverUUID)
+func (o *MigrationOrchestrator) readMeta(ctx context.Context, nodeToken, serverUUID string) (nodeMeta, error) {
+	key := queue.MigrationMetaKey(nodeToken, serverUUID)
 	raw, err := o.redis.Get(ctx, key).Result()
 	if err != nil {
 		return nodeMeta{}, err

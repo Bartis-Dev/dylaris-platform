@@ -1,6 +1,7 @@
 package redisacl
 
 import (
+	"dylaris-pkg/queue"
 	"strings"
 	"testing"
 )
@@ -113,8 +114,12 @@ func TestNodeGlobalKeysAreReadOnlyWhereTheNodeOnlyReads(t *testing.T) {
 	// blanket tightening cannot pass this test either.
 	for _, k := range []string{
 		"dylaris:beam:daily:*",
-		// Migration progress, for the server being moved in either direction.
-		"dylaris:migration:*:status", "dylaris:migration:*:meta",
+		// Migration progress, under a prefix carrying this node's own token.
+		// It used to be dylaris:migration:*:status and :meta - read+write with
+		// the wildcard standing for the SERVER UUID - which is the fleet-wide
+		// write this file's whole comment block warns about, and Core reads it
+		// as the authority that triggers cutover and source deletion.
+		queue.MigrationNodeKeyPattern("n1"),
 		// Its own transfer endpoint.
 		"dylaris:migration:endpoint:n1",
 	} {
@@ -147,6 +152,13 @@ func TestNodeMigrationGrantIsNotWholeNamespace(t *testing.T) {
 	// Core owns the plan; the node reads nothing from it today and must not write it.
 	if tokens["~dylaris:migration:*:orchestration"] {
 		t.Error("orchestration is Core-authoritative and must not be writable by a node")
+	}
+	// And the progress keys must not be writable across the fleet either. This
+	// was the surviving half of the same defect: the namespace was split, but
+	// :status and :meta kept the server UUID as the wildcard, so every node
+	// could still write every server's migration phase.
+	if tokens["~dylaris:migration:*:status"] || tokens["~dylaris:migration:*:meta"] {
+		t.Error("the fleet-wide migration progress write is back; a node can forge another server's phase")
 	}
 }
 
