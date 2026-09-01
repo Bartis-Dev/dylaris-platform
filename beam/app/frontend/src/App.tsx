@@ -36,9 +36,6 @@ type WailsBindings = {
   ClearLocalData?: (token: string) => Promise<void>;
   ListPanels?: () => Promise<{ panels: SavedPanel[]; active: string }>;
   SavePanels?: (token: string, panels: SavedPanel[], active: string) => Promise<void>;
-  CheckDeployEnvironment?: () => Promise<DeployEnvironment>;
-  PrepareDeploy?: (token: string, label: string) => Promise<PreparedDeploy>;
-  DeployNodeHere?: (token: string, req: DeployRequest) => Promise<DeployResult>;
   SwitchPanel?: (token: string, url: string) => Promise<void>;
 };
 
@@ -58,14 +55,6 @@ type SavedPanel = {
   official?: boolean;
 };
 
-type DeployCheck = { name: string; ok: boolean; detail?: string; fix?: string };
-type DeployEnvironment = { ready: boolean; os: string; checks: DeployCheck[] };
-type PreparedDeploy = { ok: boolean; enrollToken?: string; tlsFingerprint?: string; suggestedDir?: string; error?: string };
-type DeployRequest = {
-  dir: string; nodeId: string; enrollToken: string;
-  coreGrpcAddr: string; tlsFingerprint: string; start: boolean;
-};
-type DeployResult = { ok: boolean; composePath: string; started: boolean; log?: string; error?: string };
 
 // Must match panels.go's OfficialPanelName. Only used to stop someone naming
 // their own entry the same thing, which would make the list unreadable.
@@ -120,19 +109,6 @@ export default function App() {
   const [inputName, setInputName] = useState('');
   const [editingUrl, setEditingUrl] = useState('');
 
-  // "Deploy a node on this machine". Collapsed by default: it is a rare,
-  // deliberate action, and an open form of it above the panel list would suggest
-  // this screen is mostly about deploying, which it is not.
-  const [deployOpen, setDeployOpen] = useState(false);
-  const [deployEnv, setDeployEnv] = useState<DeployEnvironment | null>(null);
-  const [deployChecking, setDeployChecking] = useState(false);
-  const [deployNodeId, setDeployNodeId] = useState('');
-  const [deployGrpc, setDeployGrpc] = useState('');
-  const [deployDir, setDeployDir] = useState('');
-  const [deployPrepared, setDeployPrepared] = useState<PreparedDeploy | null>(null);
-  const [deployBusy, setDeployBusy] = useState(false);
-  const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
-  const [deployError, setDeployError] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [gate, setGate] = useState<UpdateGate | null>(null);
 
@@ -170,9 +146,6 @@ export default function App() {
         setApiInputUrl((await bindings?.GetAPIURL?.()) ?? '');
         const list = await bindings?.ListPanels?.();
         if (list) { setPanels(list.panels ?? []); setActivePanel(list.active ?? ''); }
-        // #deploy is how the panel's "run one here" button lands straight in the
-        // wizard rather than on a settings page where it has to be found again.
-        if (window.location.hash === '#deploy') openDeploy();
         bindings?.GetUpdateInfo?.().then(u => setUpdate(u)).catch(() => {});
         bindings?.GetUpdateGate?.().then(g => setGate(g)).catch(() => {});
       } catch (err) {
@@ -287,73 +260,6 @@ export default function App() {
     window.location.href = '/';
   };
 
-  const runDeployCheck = async () => {
-    setDeployChecking(true);
-    setDeployError(null);
-    try {
-      const env = await getBindings()?.CheckDeployEnvironment?.();
-      setDeployEnv(env ?? null);
-    } catch (err) {
-      setDeployError(err instanceof Error ? err.message : String(err));
-    }
-    setDeployChecking(false);
-  };
-
-  const openDeploy = () => {
-    setDeployOpen(true);
-    setDeployResult(null);
-    // Suggest the active panel's host for the control channel. It is a guess and
-    // it is shown in an editable field, because Core's gRPC port is not
-    // necessarily reachable on the panel's own hostname.
-    if (!deployGrpc && activePanel) {
-      try {
-        setDeployGrpc(`${new URL(activePanel).hostname}:25501`);
-      } catch { /* an unparsable stored URL just leaves the field empty */ }
-    }
-    if (!deployEnv) runDeployCheck();
-  };
-
-  // Mints the token first and shows what will be written. Separate from the
-  // write so a refusal from Core - BYON not enabled, node limit reached - lands
-  // before a file exists rather than after.
-  const prepareDeploy = async () => {
-    setDeployBusy(true);
-    setDeployError(null);
-    setDeployResult(null);
-    try {
-      const p = await getBindings()?.PrepareDeploy?.(shellToken, deployNodeId || 'this machine');
-      if (!p?.ok) {
-        setDeployError(p?.error || 'Could not mint an enroll token.');
-      } else {
-        setDeployPrepared(p);
-        if (!deployDir && p.suggestedDir) setDeployDir(p.suggestedDir);
-      }
-    } catch (err) {
-      setDeployError(err instanceof Error ? err.message : String(err));
-    }
-    setDeployBusy(false);
-  };
-
-  const runDeploy = async (start: boolean) => {
-    if (!deployPrepared?.enrollToken) return;
-    setDeployBusy(true);
-    setDeployError(null);
-    try {
-      const res = await getBindings()?.DeployNodeHere?.(shellToken, {
-        dir: deployDir,
-        nodeId: deployNodeId,
-        enrollToken: deployPrepared.enrollToken,
-        coreGrpcAddr: deployGrpc,
-        tlsFingerprint: deployPrepared.tlsFingerprint ?? '',
-        start,
-      });
-      setDeployResult(res ?? null);
-      if (res && !res.ok) setDeployError(res.error || 'Deploy failed.');
-    } catch (err) {
-      setDeployError(err instanceof Error ? err.message : String(err));
-    }
-    setDeployBusy(false);
-  };
 
   // Fills the form at the top from an existing entry. The official one is not
   // editable: its URL is what this build is for, and letting it be repointed is
@@ -575,132 +481,6 @@ export default function App() {
             })}
           </ul>
         </div>
-      )}
-
-      {/* Deploying a node from here is only meaningful because the app is
-          running ON the machine that would host it - which is the one thing a
-          browser cannot know. The checks are the valuable half: Docker missing,
-          not started, or not permitted all look identical from the panel.
-
-          Reached ONLY from the panel's My Infrastructure page, via #deploy - it
-          is not a section of this settings screen. Setting up a machine belongs
-          where the rest of the infrastructure is managed; what has to happen
-          here is the privileged part, because the bindings that write a compose
-          file and start a container are deliberately absent from the proxied
-          panel. So the panel owns the entry point and this screen owns the act. */}
-      {deployOpen && (
-      <div className="settings-card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-          <div className="settings-title" style={{ margin: 0 }}>Run a node on this machine</div>
-          <button type="button" className="btn btn-secondary" onClick={() => { window.location.href = '/'; }}>
-            Back to panel
-          </button>
-        </div>
-
-        {(
-          <div style={{ marginTop: '0.85rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.8em', opacity: 0.7 }}>
-                {deployChecking ? 'Checking this machine...' : deployEnv ? `Checked on ${deployEnv.os}` : ' '}
-              </span>
-              <button type="button" className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.8em' }}
-                      onClick={runDeployCheck} disabled={deployChecking}>
-                Check again
-              </button>
-            </div>
-
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {(deployEnv?.checks ?? []).map(c => (
-                <li key={c.name} style={{ padding: '0.35rem 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span aria-hidden style={{ color: c.ok ? '#4ade80' : '#f87171' }}>{c.ok ? '+' : '!'}</span>
-                    <span style={{ fontSize: '0.9em' }}>{c.name}</span>
-                    {c.detail && <span style={{ fontSize: '0.75em', opacity: 0.55 }}>{c.detail}</span>}
-                  </div>
-                  {/* The fix, not a category. Whoever reads this is not the
-                      person who wrote the check. */}
-                  {c.fix && <div style={{ fontSize: '0.8em', opacity: 0.85, marginTop: '0.25rem' }}>{c.fix}</div>}
-                </li>
-              ))}
-            </ul>
-
-            {deployEnv?.ready && (
-              <div style={{ marginTop: '0.85rem' }}>
-                <div className="settings-title">Node name</div>
-                <input
-                  type="text"
-                  className="url-input"
-                  value={deployNodeId}
-                  onChange={e => setDeployNodeId(e.target.value)}
-                  placeholder="my-desktop"
-                />
-                <div className="settings-title" style={{ marginTop: '0.75rem' }}>
-                  Core gRPC address{' '}
-                  <span style={{ fontWeight: 400, opacity: 0.6 }}>(host:port)</span>
-                </div>
-                <input
-                  type="text"
-                  className="url-input"
-                  value={deployGrpc}
-                  onChange={e => setDeployGrpc(e.target.value)}
-                  placeholder="core.example.com:25501"
-                />
-                {deployPrepared?.ok && (
-                  <>
-                    <div className="settings-title" style={{ marginTop: '0.75rem' }}>Folder</div>
-                    <input
-                      type="text"
-                      className="url-input"
-                      value={deployDir}
-                      onChange={e => setDeployDir(e.target.value)}
-                    />
-                    <div style={{ fontSize: '0.8em', opacity: 0.7, marginTop: '0.35rem' }}>
-                      A pairing token has been reserved for this node. It is single use and
-                      expires, and it goes into the compose file below.
-                    </div>
-                  </>
-                )}
-
-                {deployError && <div className="error" style={{ marginTop: '0.6rem' }}>{deployError}</div>}
-
-                {deployResult?.composePath && (
-                  <div style={{ fontSize: '0.8em', opacity: 0.85, marginTop: '0.6rem' }}>
-                    Written to <code>{deployResult.composePath}</code>
-                    {deployResult.started ? ' and started.' : '. Not started yet.'}
-                  </div>
-                )}
-                {deployResult?.log && (
-                  <pre style={{
-                    marginTop: '0.5rem', maxHeight: '9rem', overflow: 'auto', fontSize: '0.75em',
-                    background: 'rgba(0,0,0,0.25)', padding: '0.5rem', borderRadius: '6px', whiteSpace: 'pre-wrap',
-                  }}>{deployResult.log}</pre>
-                )}
-
-                <div className="settings-actions">
-                  {!deployPrepared?.ok ? (
-                    <button type="button" className="btn btn-primary" onClick={prepareDeploy}
-                            disabled={deployBusy || !deployNodeId.trim() || !deployGrpc.trim()}>
-                      {deployBusy ? 'Working...' : 'Reserve a node'}
-                    </button>
-                  ) : (
-                    <>
-                      {/* Writing without starting is offered first: someone who
-                          wants to read the file before running it should not have
-                          to run it to see it. */}
-                      <button type="button" className="btn btn-secondary" onClick={() => runDeploy(false)} disabled={deployBusy}>
-                        Write the file only
-                      </button>
-                      <button type="button" className="btn btn-primary" onClick={() => runDeploy(true)} disabled={deployBusy}>
-                        {deployBusy ? 'Starting...' : 'Write and start'}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
       )}
 
       <div className="settings-card">

@@ -1,6 +1,10 @@
 package services
 
-import "dylaris-core/store"
+import (
+	"time"
+
+	"dylaris-core/store"
+)
 
 // Limits is a tenant's effective per-tenant caps.
 //
@@ -80,12 +84,42 @@ func EffectiveLimits(st limitStore, userID string) (Limits, error) {
 	if b == nil {
 		return Limits{}, nil
 	}
+	now := time.Now()
 	return Limits{
-		MaxNodes:          b.MaxNodes,
-		MaxLinks:          b.MaxLinks,
+		MaxNodes:          grantedCap(b.MaxNodes, b.ManualByonExpiresAt, now),
+		MaxLinks:          grantedCap(b.MaxLinks, b.ManualRouteExpiresAt, now),
 		R2QuotaGB:         b.R2QuotaGB,
 		TrafficEdgeGB:     b.TrafficEdgeGB,
 		TrafficRelayGB:    b.TrafficRelayGB,
 		TrafficCombinedGB: b.TrafficCombinedGB,
 	}, nil
+}
+
+// GrantedSlots is what a manual grant is worth: one machine of its kind.
+//
+// A grant is ACCESS, not a quantity. The store is the only thing that sells
+// more than one, so there is no number for an admin to type - and the moment
+// there was, it went into the same column the store writes, which made a
+// granted tenant read as a paying one and left the ceiling behind after the
+// grant expired.
+const GrantedSlots int64 = 1
+
+// grantedCap is the ceiling for one kind: what was PURCHASED when there is a
+// purchase, otherwise one while a manual grant is live, otherwise nothing.
+//
+// Purchased wins deliberately, and it is the whole of "a purchase takes over":
+// once the store has said a number, that number is the answer whether or not a
+// grant is still running underneath it.
+//
+// Derived rather than stored, so a grant that lapses stops raising the ceiling
+// on its own. Nothing has to remember to clean up after it.
+func grantedCap(purchased *int64, grantExpires *time.Time, now time.Time) *int64 {
+	if purchased != nil {
+		return purchased
+	}
+	if grantExpires != nil && grantExpires.After(now) {
+		n := GrantedSlots
+		return &n
+	}
+	return nil
 }

@@ -433,6 +433,17 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 				sendJSONError(w, "Activated but failed to apply entitlement", http.StatusInternalServerError)
 				return
 			}
+			// A purchase RETIRES the manual grant for what was bought. The grant
+			// is how somebody is given the product before they pay for it, so the
+			// moment they do, it has done its job - and leaving it behind means
+			// the account reads as "plan and grant" forever, shows a deadline
+			// that decides nothing, and quietly stays entitled for the rest of
+			// the grant if the subscription is later cancelled.
+			//
+			// Only a POSITIVE purchase retires it. The store also pushes zero,
+			// which is a cancellation, and clearing the grant on that would take
+			// away the thing an admin had granted separately.
+			h.retireGrantsCoveredByPurchase(req.UUID, nodes, setNodes, links, setLinks)
 		}
 		// The consent flags, each on its own. This used to require the ceiling to
 		// be present alongside the traffic flag - "both or neither", which was
@@ -599,3 +610,28 @@ func (h *StoreHandler) BackupDefaults(w http.ResponseWriter, r *http.Request) {
 }
 
 func ptrInt64(n int64) *int64 { return &n }
+
+// retireGrantsCoveredByPurchase ends the manual grant for each kind the store
+// has just sold, so the account is on its subscription from that moment on.
+//
+// Best-effort and logged rather than fatal: the purchase itself has already
+// been recorded, and failing the provision call after that would have the store
+// retry a purchase Core has already applied. A grant left behind is untidy;
+// a double-applied purchase is not.
+func (h *StoreHandler) retireGrantsCoveredByPurchase(userID string, nodes *int64, setNodes bool, links *int64, setLinks bool) {
+	bought := func(v *int64, set bool) bool { return set && v != nil && *v > 0 }
+	for _, c := range []struct {
+		kind   string
+		bought bool
+	}{
+		{services.EntitlementByon, bought(nodes, setNodes)},
+		{services.EntitlementRouteOnly, bought(links, setLinks)},
+	} {
+		if !c.bought {
+			continue
+		}
+		if err := h.state.Store.SetUserManualEntitlementKind(userID, c.kind, nil, ""); err != nil {
+			log.Printf("provision: purchased %s for %s but could not retire the manual grant: %v", c.kind, userID, err)
+		}
+	}
+}

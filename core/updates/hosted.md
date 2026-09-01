@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Buying BYON or route-only after being given it by hand now simply starts your
+  subscription, and it runs as a normal subscription from then on.
+- Setting up a node from inside the Beam app has been withdrawn. Use the deploy
+  snippet on My Infrastructure, which is unchanged.
+
 ## 2026.09.01.6
 
 ### Features

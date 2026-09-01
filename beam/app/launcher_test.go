@@ -97,20 +97,44 @@ func TestLauncherStampsTheUpdateFlag(t *testing.T) {
 // edge now, and it stays there through a resize until the user drags it.
 func TestLauncherDefaultsToTheBottomRight(t *testing.T) {
 	got := launcherTag("", false)
-	if !strings.Contains(got, "function defaultX()") {
-		t.Fatal("no default position is computed at all")
+	if !strings.Contains(got, "var DEFAULT_F = 1") {
+		t.Error("the default is not the right edge")
 	}
-	if !strings.Contains(got, "window.innerWidth - SIZE - MARGIN") {
-		t.Error("the default is not derived from the right edge")
-	}
-	if !strings.Contains(got, "place(stored() === null ? defaultX() : stored())") {
+	if !strings.Contains(got, "var current = stored() === null ? DEFAULT_F : stored();") {
 		t.Error("an unplaced button does not start at the default")
 	}
-	// The resize handler has to re-derive it. Clamping alone would leave a
-	// never-moved button wherever the previous window size put it, so "bottom
-	// right" would stop being true the moment the window changed.
-	if !strings.Contains(got, "place(stored() === null ? defaultX() :") {
-		t.Error("a resize does not re-anchor an unplaced button to the right edge")
+}
+
+// Where the button sits has to survive a resize.
+//
+// It was remembered in PIXELS: dragged hard right in a narrow window and then
+// widened, a stored x of 554 is the middle of the screen. There was no position
+// a user could pick that stayed where they put it. A fraction of the travel
+// keeps right at the right and middle in the middle at every window size.
+func TestLauncherRemembersAFractionNotPixels(t *testing.T) {
+	got := launcherTag("", false)
+	if strings.Contains(got, "parseInt(localStorage.getItem(KEY)") {
+		t.Error("the position is still read as an integer pixel offset")
+	}
+	if !strings.Contains(got, "parseFloat(localStorage.getItem(KEY)") {
+		t.Error("the stored position is not a fraction")
+	}
+	if !strings.Contains(got, "localStorage.setItem(KEY, String(current))") {
+		t.Error("a drag stores something other than the fraction it just placed")
+	}
+	// The travel is the range the button can occupy, not the window width: at
+	// fraction 1 it must land a margin short of the edge rather than off it.
+	if !strings.Contains(got, "window.innerWidth - SIZE - MARGIN * 2") {
+		t.Error("the fraction is not measured against the usable travel")
+	}
+	// And resize re-derives from the fraction rather than clamping pixels.
+	if !strings.Contains(got, "window.addEventListener('resize', function () { placeFraction(current); })") {
+		t.Error("a resize does not re-place the button from its remembered fraction")
+	}
+	// A new key: an old pixel value read as a fraction clamps to 1 and would
+	// look like a choice the user never made.
+	if !strings.Contains(got, "beam.launcher.fx") {
+		t.Error("the fractional position reuses the old pixel key")
 	}
 }
 

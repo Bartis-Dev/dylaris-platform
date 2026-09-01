@@ -73,7 +73,10 @@ const launcherScript = `
   if (window.__beamLauncher) return;
   window.__beamLauncher = true;
 
-  var KEY = 'beam.launcher.x';
+  // Fractions, not pixels - see below. A new key rather than the old one: an
+  // old pixel value parsed as a fraction clamps to 1, which would look like a
+  // deliberate choice the user never made.
+  var KEY = 'beam.launcher.fx';
   var host = document.createElement('div');
   host.setAttribute('data-beam-launcher', '');
   var root = host.attachShadow({ mode: 'closed' });
@@ -92,33 +95,40 @@ const launcherScript = `
   btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
   root.appendChild(btn);
 
-  // Bottom edge only, and clamped on every read rather than only on drop: a
-  // window narrowed since the last session would otherwise restore the button
-  // off-screen, where nothing can bring it back.
+  // Bottom edge only, and remembered as a FRACTION of the travel rather than as
+  // a pixel offset.
+  //
+  // Pixels do not survive a resize. Dragged hard right in a narrow window and
+  // then widened, a stored x of 554 is the middle of the screen - the button
+  // wanders, and there is no position a user can pick that stays where they put
+  // it. A fraction keeps right at the right, middle in the middle, and left at
+  // the left, at every window size.
   var MARGIN = 12, SIZE = 34;
-  function clamp(x) {
-    var max = Math.max(MARGIN, window.innerWidth - SIZE - MARGIN);
-    return Math.min(max, Math.max(MARGIN, x));
-  }
+  function travel() { return Math.max(0, window.innerWidth - SIZE - MARGIN * 2); }
   function stored() {
-    try { var v = parseInt(localStorage.getItem(KEY) || '', 10); return isNaN(v) ? null : v; } catch (e) { return null; }
+    try {
+      var v = parseFloat(localStorage.getItem(KEY) || '');
+      return isNaN(v) ? null : Math.min(1, Math.max(0, v));
+    } catch (e) { return null; }
   }
   // Bottom RIGHT until the user moves it. The left corner is where the panel
   // keeps its sidebar - so the default position put this on top of the panel's
   // own controls, which is both hard to see and the one place a stray click is
   // expensive.
-  function defaultX() { return Math.max(MARGIN, window.innerWidth - SIZE - MARGIN); }
-  function place(x) {
-    btn.style.left = clamp(x) + 'px';
+  var DEFAULT_F = 1;
+  // The fraction currently on screen. Held here as well as in storage so a drag
+  // in progress has something to write back that is not a rounded pixel value.
+  var current = stored() === null ? DEFAULT_F : stored();
+  function placeFraction(f) {
+    current = Math.min(1, Math.max(0, f));
+    btn.style.left = (MARGIN + current * travel()) + 'px';
     btn.style.bottom = MARGIN + 'px';
   }
-  place(stored() === null ? defaultX() : stored());
-  // An untouched button stays anchored to the right edge as the window changes
-  // size; a placed one only gets clamped back into view. Re-deriving the
-  // default here is what keeps "bottom right" true after a resize.
-  window.addEventListener('resize', function () {
-    place(stored() === null ? defaultX() : (parseInt(btn.style.left, 10) || defaultX()));
-  });
+  function placePixels(x) { placeFraction(travel() === 0 ? 0 : (x - MARGIN) / travel()); }
+  placeFraction(current);
+  // Re-derived from the fraction, so the button holds its RELATIVE spot instead
+  // of being clamped back into view from wherever the old pixels landed.
+  window.addEventListener('resize', function () { placeFraction(current); });
 
   // A drag must not also be a click. The threshold is what separates "moved it"
   // from "pressed it", and without it every reposition would also open settings.
@@ -132,14 +142,14 @@ const launcherScript = `
   btn.addEventListener('pointermove', function (e) {
     if (!dragging) return;
     if (Math.abs(e.clientX - (btn.getBoundingClientRect().left + offset)) > 3) moved = true;
-    place(e.clientX - offset);
+    placePixels(e.clientX - offset);
   });
   btn.addEventListener('pointerup', function (e) {
     if (!dragging) return;
     dragging = false;
     btn.classList.remove('dragging');
     btn.releasePointerCapture(e.pointerId);
-    try { localStorage.setItem(KEY, String(parseInt(btn.style.left, 10) || MARGIN)); } catch (err) { /* private mode */ }
+    try { localStorage.setItem(KEY, String(current)); } catch (err) { /* private mode */ }
   });
   btn.addEventListener('click', function () { if (!moved) window.location.href = '__SETTINGS__'; });
 

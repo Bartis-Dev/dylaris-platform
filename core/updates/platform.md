@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A manual grant wrote its quantity into the same column a Stripe purchase
+  writes, so a granted tenant read as a paying one and kept the product for good
+  once the grant expired. A grant is worth one machine of its kind now, derived
+  rather than stored, and the quantity box is gone with it. `core`
+- Buying BYON or route-only ends the manual grant it covers, so the account runs
+  as a normal subscription from that moment. A cancellation does not end a
+  grant. `core`
+- Setting a node up from inside the Beam app is withdrawn, along with its button
+  on My Infrastructure. The deploy snippet on that page is unchanged and is the
+  way to do it. `core`
+
 ## 2026.09.01.6
 
 ### Features
