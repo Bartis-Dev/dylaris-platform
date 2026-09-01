@@ -31,7 +31,7 @@ import SettingsPage from '@/components/settings/SettingsPage';
 // Gateway settings
 // ─────────────────────────────────────────────
 
-type LimitKey = 'global' | 'userDefault' | 'perServer' | 'portMc';
+type LimitKey = 'global' | 'userDefault';
 type ModeOption<T extends string> = { value: T; label: string; desc: string };
 type SubTab = 'gateway' | 'xdp';
 
@@ -329,8 +329,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             // exists. Saving this screen before its load landed used to write
             // that number into all four scopes and deny every route with
             // "You have used all -1 addresses".
-            global: null, userDefault: null, perServer: null,
-            portMc: null, portMcEnabled: true,
+            global: null, userDefault: null, portMcEnabled: true,
         },
         hosterDomains: [],
         customDomainsEnabled: false,
@@ -560,7 +559,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             // whenever that fallback carries a number.
             unlimitedLabel: 'Use fallback',
         },
-        { key: 'perServer', label: 'Per-Server Max', desc: 'Max routes per individual MC server' },
     ];
 
     const dirty =
@@ -908,12 +906,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                     <span className={`toggle-knob ${settings.limits.portMcEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
                                 </button>
                             </div>
-                            {settings.limits.portMcEnabled && (
-                                <div className="flex items-center justify-between mt-2 pt-2 border-t border-(--base-03)">
-                                    <span className="text-xs text-(--base-06)">Max routes on this port</span>
-                                    <LimitField value={settings.limits.portMc} onChange={v => setLimit('portMc', v)} />
-                                </div>
-                            )}
                         </div>
                     </div>
                     <p className="text-xs text-(--base-05) mt-2">Disabled ports block all route creation on that port.</p>

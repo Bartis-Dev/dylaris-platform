@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02
+
+### Features
+- Nothing.
+
+### Breaking
+- Two gateway settings are gone: the per-server address cap and the number
+  beside the Minecraft port. Both were stored, shown back, and enforced by
+  nothing. The port's on/off switch stays and still works. `core` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- A comped account no longer gets unlimited backup storage. The included
+  allowance is per unit held, a grant counted as none, and the resolution fell
+  through to the platform-wide setting - which is unset by default and means no
+  cap. A live grant is now worth one unit, so it brings the same allowance one
+  purchase does. `core`
+
 ## 2026.09.01.14
 
 ### Features

@@ -54,7 +54,7 @@ func saveGatewayLimits(t *testing.T, body string) *gatewayLimitsFakeStore {
 // still displayed on the page, and nothing failing anywhere. This is what the
 // live instance was found in, with all four rows NULLed.
 func TestABlankRouteLimitDeletesItsRowInsteadOfStoringNull(t *testing.T) {
-	fs := saveGatewayLimits(t, `{"limits":{"global":5,"userDefault":null,"perServer":null,"portMc":null}}`)
+	fs := saveGatewayLimits(t, `{"limits":{"global":5,"userDefault":null}}`)
 
 	if !fs.deleted["user_default"] {
 		t.Error("a blank per-user default left a row behind; that row answers the scope walk with \"no cap\" and the global limit below it is never asked")
@@ -75,7 +75,7 @@ func TestABlankRouteLimitDeletesItsRowInsteadOfStoringNull(t *testing.T) {
 // account from holding any address at all, and on this platform that number has
 // twice been the one that switched the check off instead.
 func TestARouteLimitOfZeroIsSavedAsZero(t *testing.T) {
-	fs := saveGatewayLimits(t, `{"limits":{"global":0,"userDefault":0,"perServer":null,"portMc":null}}`)
+	fs := saveGatewayLimits(t, `{"limits":{"global":0,"userDefault":0}}`)
 
 	for _, scope := range []string{"global", "user_default"} {
 		if fs.deleted[scope] {

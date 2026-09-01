@@ -309,6 +309,12 @@ func seedSystemModules(db *sql.DB) {
 	// ago, and a 0 stored today is a deliberate "none".
 	// Migrate port:80 → port:443
 	db.Exec(`UPDATE gateway_route_limits SET scope = 'port:443' WHERE scope = 'port:80'`)
+	// The per_server and port:* scopes were settable in the panel and read by
+	// nothing. The controls are gone; the rows go too, so a future feature that
+	// reuses either scope name starts from "nobody has decided" rather than
+	// silently inheriting a number an operator typed for a cap that never
+	// applied.
+	db.Exec(`DELETE FROM gateway_route_limits WHERE scope = 'per_server' OR scope LIKE 'port:%'`)
 }
 
 // library_disabled stores paths (relative to the library root) that admins

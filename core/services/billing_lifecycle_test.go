@@ -598,3 +598,78 @@ func TestEnforceSuspensions_WarpTeardownIsIdempotent(t *testing.T) {
 		t.Fatalf("expected one call per pass, got %v", warp.calls)
 	}
 }
+
+// A comped tenant was the one tenant with unlimited backup storage.
+//
+// The included allowance is perUnit * units, and units counted PURCHASES only -
+// so a grant produced zero, entitledR2QuotaGB answered "nothing to say", and
+// r2QuotaGB fell through to the flat platform setting, which is unset by default
+// and means no cap. The account an administrator comped, the one nobody is
+// billing, was the only one that could store without limit.
+//
+// A live grant is now worth one unit of its kind, which is the same thing
+// grantedCap already says about the node count, so the default allowance is
+// exactly what one BYON purchase includes. An administrator who wants a
+// different number sets the per-user override, which r2QuotaGB reads first.
+func TestALiveGrantBringsTheSameBackupAllowanceAsOneUnit(t *testing.T) {
+	future := time.Now().Add(24 * time.Hour)
+	past := time.Now().Add(-24 * time.Hour)
+	perUnit := int64(50)
+	st := &billingFakeStore{settings: map[string]string{
+		BillingR2IncludedKey: "50",
+		// The flat platform quota is deliberately UNSET, which is the state that
+		// made this unlimited. Setting it here would hide the defect.
+	}}
+
+	cases := []struct {
+		name string
+		b    *store.UserBilling
+		want *int64
+		why  string
+	}{
+		{
+			name: "a live BYON grant",
+			b:    &store.UserBilling{ManualByonExpiresAt: &future},
+			want: &perUnit,
+			why:  "a comped tenant with no cap can store as much as they like on our storage",
+		},
+		{
+			name: "an expired grant",
+			b:    &store.UserBilling{ManualByonExpiresAt: &past},
+			want: nil,
+			why:  "an allowance must lapse with the grant that brought it, on its own",
+		},
+		{
+			name: "no entitlement at all",
+			b:    &store.UserBilling{},
+			want: nil,
+			why:  "an account holding nothing falls through to the platform setting, which is what keeps self-host working",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := entitledR2QuotaGB(st, c.b)
+			switch {
+			case c.want == nil && got != nil:
+				t.Errorf("got a quota of %d, expected none: %s", *got, c.why)
+			case c.want != nil && got == nil:
+				t.Errorf("got no quota, expected %d: %s", *c.want, c.why)
+			case c.want != nil && got != nil && *got != *c.want:
+				t.Errorf("got %d, want %d: %s", *got, *c.want, c.why)
+			}
+		})
+	}
+}
+
+// A purchase still wins over a grant, so a paying tenant's allowance is not
+// quietly inflated by a grant an administrator left running underneath it.
+func TestAPurchaseWinsOverAGrantForTheBackupAllowance(t *testing.T) {
+	future := time.Now().Add(24 * time.Hour)
+	three := int64(3)
+	st := &billingFakeStore{settings: map[string]string{BillingR2IncludedKey: "50"}}
+
+	b := &store.UserBilling{MaxNodes: &three, ManualByonExpiresAt: &future}
+	if got := R2IncludedGB(st, b); got != 150 {
+		t.Errorf("R2IncludedGB = %d, want 150 (three purchased units, the grant adding nothing on top)", got)
+	}
+}

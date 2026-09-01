@@ -817,8 +817,6 @@ export interface ServiceError {
 export interface GatewayLimits {
     global: number | null;
     userDefault: number | null;
-    perServer: number | null;
-    portMc: number | null;
     portMcEnabled: boolean;
 }
 

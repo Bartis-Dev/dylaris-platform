@@ -257,10 +257,15 @@ var defaultBlockedRoutePrefixes = []string{
 // so the same field meant different things in different rows and neither could
 // express the third state at all.
 type GatewayLimits struct {
-	Global        *int `json:"global"`
-	UserDefault   *int `json:"userDefault"`
-	PerServer     *int `json:"perServer"`
-	PortMc        *int `json:"portMc"`
+	Global      *int `json:"global"`
+	UserDefault *int `json:"userDefault"`
+	// PerServer and PortMc were here, stored and read back, and enforced by
+	// nothing: no code in either repository ever read the per_server or
+	// port:25565 scope. A control that promises a cap and applies none is worse
+	// than an absent one - an operator sets it, believes the cap is in force,
+	// and nothing anywhere says otherwise. Removed rather than wired up, because
+	// capping addresses per MC server is a feature to decide on, not a
+	// regression to repair. PortMcEnabled stays: that one IS enforced.
 	PortMcEnabled bool `json:"portMcEnabled"`
 }
 
@@ -301,8 +306,6 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 		Limits: GatewayLimits{
 			Global:        getLimit("global"),
 			UserDefault:   getLimit("user_default"),
-			PerServer:     getLimit("per_server"),
-			PortMc:        getLimit("port:25565"),
 			PortMcEnabled: getSetting("gateway_port_mc_enabled") != "false",
 		},
 		HosterDomains:        h.loadHosterDomains(),
@@ -448,8 +451,6 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	}{
 		{"global", req.Limits.Global},
 		{"user_default", req.Limits.UserDefault},
-		{"per_server", req.Limits.PerServer},
-		{"port:25565", req.Limits.PortMc},
 	}
 	// An empty field DELETES the row; it does not store NULL.
 	//

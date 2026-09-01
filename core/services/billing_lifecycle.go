@@ -69,10 +69,10 @@ func r2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
 	if b != nil && b.R2QuotaGB != nil {
 		return b.R2QuotaGB
 	}
-	// What the purchase brings, plus what they agreed to be charged for on top.
+	// What they are entitled to, plus what they agreed to be charged for on top.
 	// Ahead of the flat platform setting because it is the more specific answer:
-	// the flat one predates units and cannot see how many were bought.
-	if q := purchasedR2QuotaGB(st, b); q != nil {
+	// the flat one predates units and cannot see how many a tenant holds.
+	if q := entitledR2QuotaGB(st, b); q != nil {
 		return q
 	}
 	// ParseLimitSetting is the one reader of an operator-typed limit: "" defers
@@ -83,17 +83,21 @@ func r2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
 	return ParseLimitSetting(raw, nil)
 }
 
-// R2IncludedGB is the backup storage a tenant's purchase brings, before anything
-// they have agreed to be charged for. Zero when they hold nothing.
+// R2IncludedGB is the backup storage a tenant's entitlement brings, before
+// anything they have agreed to be charged for. Zero when they hold nothing.
+//
+// "Entitlement", not "purchase": a live administrator grant is worth one unit of
+// its kind, so a comped tenant gets the same allowance a single BYON purchase
+// includes rather than none. See entitledUnits.
 func R2IncludedGB(st store.Store, b *store.UserBilling) int64 {
-	return settingInt(st, BillingR2IncludedKey, DefaultR2IncludedGB) * purchasedUnits(b)
+	return settingInt(st, BillingR2IncludedKey, DefaultR2IncludedGB) * entitledUnits(b, time.Now())
 }
 
 // R2BookableGB is how much a tenant MAY take beyond the included amount once
 // metered backup billing is on. Also per unit: the cap on what they can spend
-// scales with what they bought, like the allowance it sits on top of.
+// scales with what they hold, like the allowance it sits on top of.
 func R2BookableGB(st store.Store, b *store.UserBilling) int64 {
-	return R2BookablePerUnit(st) * purchasedUnits(b)
+	return R2BookablePerUnit(st) * entitledUnits(b, time.Now())
 }
 
 // R2BookablePerUnit is the stored setting on its own, before any tenant's units
@@ -103,14 +107,18 @@ func R2BookablePerUnit(st store.Store) int64 {
 	return settingInt(st, BillingR2BookableKey, DefaultR2BookableGB)
 }
 
-// purchasedR2QuotaGB is the hard stop for a tenant who bought something: their
-// included allowance, plus the bookable extra ONLY if they agreed to pay for it.
+// entitledR2QuotaGB is the hard stop for a tenant who holds something, bought or
+// granted: their included allowance, plus the bookable extra ONLY if they agreed
+// to pay for it.
 //
-// nil when they hold nothing, so a tenant with no purchase falls through to the
-// flat platform setting rather than being handed a quota of zero - which would
-// stop backups on every self-hosted install the moment this shipped.
-func purchasedR2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
-	if purchasedUnits(b) == 0 {
+// nil when they hold NOTHING, so an account with no entitlement at all falls
+// through to the flat platform setting rather than being handed a quota of zero
+// - which would stop backups on every self-hosted install the moment this
+// shipped. That fallthrough is why a grant has to count as a unit: a comped
+// tenant took this path and landed on the platform setting, which is unset by
+// default and means no cap.
+func entitledR2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
+	if entitledUnits(b, time.Now()) == 0 {
 		return nil
 	}
 	total := R2IncludedGB(st, b)
@@ -120,19 +128,35 @@ func purchasedR2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
 	return &total
 }
 
-// purchasedUnits counts the countable products a tenant holds. nil and 0 both
-// mean none: the store clears the override rather than writing 0, so a stored
-// zero is not a quantity it ever meant.
-func purchasedUnits(b *store.UserBilling) int64 {
+// entitledUnits counts the countable products a tenant holds RIGHT NOW, whether
+// they bought them or an administrator granted them. nil and 0 both mean none:
+// the store clears the override rather than writing 0, so a stored zero is not a
+// quantity it ever meant.
+//
+// It counts a live grant because this number is what the per-unit allowances are
+// multiplied by, and a grant that conveys access but no allowance produces the
+// wrong answer at both ends. It used to count purchases only, so a granted
+// tenant had ZERO units: their included backup storage worked out to nothing,
+// purchasedR2QuotaGB returned "no answer", and the resolution fell through to
+// the flat platform setting - which is unset by default and means NO CAP. The
+// tenant an administrator comped was the one tenant with unlimited backup
+// storage.
+//
+// Built on grantedCap so the "a purchase wins over a grant" rule stays in one
+// place: a grant is worth one machine of its kind, and only while it is live, so
+// the allowance lapses on its own with nothing to clean up. An administrator who
+// wants a different number sets the per-user override (b.R2QuotaGB), which
+// r2QuotaGB already reads first.
+func entitledUnits(b *store.UserBilling, now time.Time) int64 {
 	if b == nil {
 		return 0
 	}
 	var n int64
-	if b.MaxNodes != nil && *b.MaxNodes > 0 {
-		n += *b.MaxNodes
+	if c := grantedCap(b.MaxNodes, b.ManualByonExpiresAt, now); c != nil && *c > 0 {
+		n += *c
 	}
-	if b.MaxLinks != nil && *b.MaxLinks > 0 {
-		n += *b.MaxLinks
+	if c := grantedCap(b.MaxLinks, b.ManualRouteExpiresAt, now); c != nil && *c > 0 {
+		n += *c
 	}
 	return n
 }
