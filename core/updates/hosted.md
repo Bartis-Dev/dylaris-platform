@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.5
+
+### Features
+- If one of your machines stops answering, you now see it on every page instead
+  of having to open My Infrastructure. A short restart does not trigger it.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.01.4
 
 ### Features

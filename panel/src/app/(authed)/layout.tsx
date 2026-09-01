@@ -15,6 +15,7 @@ import ProfilePopup from '@/components/ProfilePopup';
 import MaintenanceBanner from '@/components/MaintenanceBanner';
 import BillingBanner from '@/components/BillingBanner';
 import StorageBanner from '@/components/StorageBanner';
+import NodeConnectionBanner from '@/components/NodeConnectionBanner';
 import { ConfirmDialogRoot } from '@/components/ui/ConfirmDialog';
 import { ToastRoot } from '@/components/ui/Toast';
 import GuardedLink from '@/components/GuardedLink';
@@ -139,6 +140,9 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             <BillingBanner />
             {/* Storage backend reachability. Renders nothing while both are ok. */}
             <StorageBanner />
+            {/* A tenant's OWN machine has stopped answering. Renders nothing while
+                they are all connected, and nothing at all without BYON. */}
+            <NodeConnectionBanner />
             {/* Top Navbar. The branding block carries the SAME width as the
                 sidebar underneath it - that is the only reason the two columns
                 line up, so it collapses with it. */}

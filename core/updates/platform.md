@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.5
+
+### Features
+- A tenant whose own machine stops answering now sees it on every page, not only
+  on My Infrastructure. It waits out a restart before speaking and says nothing
+  while everything is connected. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.01.4
 
 ### Features

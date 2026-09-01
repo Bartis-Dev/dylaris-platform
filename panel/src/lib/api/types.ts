@@ -312,7 +312,9 @@ export const getNodeDeployBundle = (nodeId: number) => fetchAPI(`/nodes/${nodeId
  * `scope` narrows the list to one kind of machine:
  *   'external' - the operator's own machines outside the swarm. Admin only;
  *                Core answers 403 to anyone else, so this is not a UI-side rule.
- *   'byon'     - machines a tenant brought. Already owner-scoped for a tenant.
+ *   'byon'     - machines the CALLER brought. Owner-scoped for everyone, admins
+ *                included: it answers "your machines", and an admin's own are
+ *                not the fleet's. The unscoped call is how an admin sees all.
  * Omitted returns everything the caller may see, which is what the node pickers
  * elsewhere in the panel want.
  */
