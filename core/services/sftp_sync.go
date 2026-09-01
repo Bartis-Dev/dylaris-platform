@@ -232,6 +232,27 @@ func (s *SFTPSyncService) sync() {
 			byUser[a.Username] = append(byUser[a.Username], sftpServerEntry{UUID: a.ServerUUID, Name: a.ServerName})
 		}
 
+		// The same set decides which daily upload counters this node's Redis
+		// credential may touch. Done here rather than in the ACL reconcile because
+		// this is where the answer already exists: the reconcile is built from the
+		// server list and would have to redo every resolve above to learn it,
+		// which is how a second answer to "who is on this node" gets created.
+		// See redisacl.BeamQuotaSelector for what the grant replaced.
+		//
+		// A failed read of the access rows already skipped this node above, so a
+		// database fault leaves the previous grant in place instead of revoking
+		// every user's counter on a tick that knew nothing.
+		usernames := make([]string, 0, len(byUser))
+		for username := range byUser {
+			usernames = append(usernames, username)
+		}
+		if err := redisacl.NewProvisioner(s.redis).SetNodeBeamQuotaGrant(ctx, node.Token, usernames); err != nil {
+			// Loud, because the failure is silent everywhere else: the quota
+			// package fails open, so a node left without this grant stops counting
+			// uploads rather than refusing them.
+			log.Printf("SFTPSync: could not set the beam quota grant for node %s, its uploads may go uncounted: %v", node.Name, err)
+		}
+
 		pipe := s.redis.Pipeline()
 		for username, servers := range byUser {
 			data, err := json.Marshal(servers)

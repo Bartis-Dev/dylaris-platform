@@ -47,11 +47,24 @@ const (
 	dailyCounterTTL = 48 * time.Hour
 )
 
+// DailyKeyPrefix is every counter key belonging to one user, up to the date.
+//
+// It exists so the Redis ACL can name a user's counters without re-spelling the
+// key format: core/services/redisacl builds a per-node grant out of this prefix,
+// and a change here therefore moves the key and its permission together. Written
+// the other way round - the ACL carrying its own copy of the literal - a rename
+// would leave the grant pointing at a namespace nothing writes, and the quota
+// package fails OPEN, so the counters would silently stop being enforced with
+// nothing failing anywhere.
+func DailyKeyPrefix(username string) string {
+	return "dylaris:beam:daily:" + username + ":"
+}
+
 // DailyKey is the per-user, per-day upload counter key. Kept a pure function of
 // (username, day) so its format is testable without Redis. The day is taken in
 // UTC so the window does not shift with node/core timezone.
 func DailyKey(username string, day time.Time) string {
-	return fmt.Sprintf("dylaris:beam:daily:%s:%s", username, day.UTC().Format("2006-01-02"))
+	return fmt.Sprintf("%s%s", DailyKeyPrefix(username), day.UTC().Format("2006-01-02"))
 }
 
 // ExceedsSizeCap reports whether a single upload of `size` bytes is larger than

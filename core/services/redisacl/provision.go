@@ -48,6 +48,27 @@ func (p *Provisioner) EnsureNodeACLNoSave(ctx context.Context, token, tunnelToke
 	return nil
 }
 
+// SetNodeBeamQuotaGrant replaces the node user's beam-quota selector with one
+// naming exactly `usernames` (see BeamQuotaSelector). Called by the SFTP sync,
+// which is where that set is resolved.
+//
+// "clearselectors" runs unconditionally, including for a node left with no
+// users: a revoked user whose grant outlives the revocation is the whole shape
+// this is meant to prevent, so the empty case has to clear rather than skip.
+//
+// It touches ONLY selectors, so it cannot disturb a live node's root permission,
+// and the node's own reconcile cannot clear this. On a node that has never
+// connected this creates the ACL user - verified against Valkey 8: such a user
+// is "off" with no password and its AUTH is refused, and the node's first
+// connect fills in the rest.
+func (p *Provisioner) SetNodeBeamQuotaGrant(ctx context.Context, token string, usernames []string) error {
+	args := []interface{}{"ACL", "SETUSER", NodeUsername(token), "clearselectors"}
+	if sel := BeamQuotaSelector(usernames); sel != "" {
+		args = append(args, sel)
+	}
+	return p.admin.Do(ctx, args...).Err()
+}
+
 // EnsureNodeACL (idempotent) applies the node's scoped users then persists via
 // ACL SAVE (best-effort, loud on failure). Safe to call on every connect and
 // before every placement.

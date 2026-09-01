@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- A node's Redis credential could write the daily upload counter of any account
+  on the platform, because that key is named after a USER and the grant was
+  fleet-wide. A node now holds only the counters of the users it actually serves.
+  `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.01.10
 
 ### Features

@@ -27,11 +27,12 @@ func TestBuildNodeACLRules(t *testing.T) {
 		// Node-scoped: the hashes are published per node, so this grant names
 		// the token instead of the whole sftp:auth namespace.
 		"%R~sftp:auth:n1:*",
-		// Upload-limit enforcement needs the node to read the config keys and
-		// read+write the shared per-user daily counter; SFTP needs its own
-		// server-list key. Without these the node-side quota fails open and SFTP
-		// sees an empty root under mandatory ACL.
-		"beam:max_upload_bytes", "beam:daily_upload_bytes", "~dylaris:beam:daily:*",
+		// Upload-limit enforcement needs the node to read the config keys; SFTP
+		// needs its own server-list key. Without these the node-side quota fails
+		// open and SFTP sees an empty root under mandatory ACL. The per-user
+		// daily COUNTER is not here - it is a selector now, see
+		// TestBeamQuotaGrantIsPerUser.
+		"beam:max_upload_bytes", "beam:daily_upload_bytes",
 		"sftp:node:n1:",
 		"&dylaris:backup:results:n1", "&dylaris:server:uuid-a:stats:live",
 		"+@read", "+@write", "+@stream", "+@pubsub", "-@dangerous", "+scan",
@@ -113,7 +114,6 @@ func TestNodeGlobalKeysAreReadOnlyWhereTheNodeOnlyReads(t *testing.T) {
 	// The counterpart: keys the node genuinely writes must stay read+write, so a
 	// blanket tightening cannot pass this test either.
 	for _, k := range []string{
-		"dylaris:beam:daily:*",
 		// Migration progress, under a prefix carrying this node's own token.
 		// It used to be dylaris:migration:*:status and :meta - read+write with
 		// the wildcard standing for the SERVER UUID - which is the fleet-wide

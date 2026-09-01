@@ -1,6 +1,12 @@
 package redisacl
 
-import "dylaris-pkg/queue"
+import (
+	"sort"
+	"strings"
+
+	"dylaris-pkg/beam/quota"
+	"dylaris-pkg/queue"
+)
 
 // commandCats is the category grant every principal here gets: read, write,
 // stream, pubsub, connection and transaction, minus dangerous, admin and
@@ -40,8 +46,7 @@ var nodeCommandCats = append(append([]string{}, commandCats...), "+scan")
 
 // globalReadKeys are the shared keys the node accesses (NOT the shipper). The
 // ones the node only ever reads are read-only (%R~); dylaris:migration:* stays
-// read+write because the node writes its own migration status/meta/endpoint keys,
-// and dylaris:beam:daily:* because it increments that counter.
+// read+write because the node writes its own migration status/meta/endpoint keys.
 //
 // These are GLOBAL, not node-scoped, so a read+write grant here is a write
 // handed to every node in the fleet, tenant-owned BYON nodes included. The three
@@ -61,16 +66,71 @@ func globalReadKeys() []string {
 		"%R~dylaris:link_update_policy", "%R~dylaris:link_update_interval_min",
 		"%R~beam:bw_limit", "%R~beam:bw_up_internal", "%R~beam:bw_down_internal",
 		// Upload-limit config the node enforces on the beam + SFTP + SaveFileContent
-		// write paths (read-only), plus the per-user daily counter it reads AND
-		// increments (read+write). Without these the node's quota reads return
-		// NOPERM and the shared quota package fails OPEN, silently disabling the
-		// node-side size cap + daily quota and never recording node uploads into
-		// the shared bucket. The counter is per-user (not node-scoped), so the
-		// node needs it for every user whose uploads it handles.
+		// write paths. Read-only: these are the caps the node is SUBJECT to.
+		// Without them the node's quota reads return NOPERM and the shared quota
+		// package fails OPEN, silently disabling the node-side size cap and daily
+		// quota with nothing failing anywhere.
+		//
+		// The per-user daily COUNTER is deliberately not here. It used to be, as
+		// "~dylaris:beam:daily:*" - read+write, fleet-wide, on a key named after a
+		// user - and it is now a per-node selector; see BeamQuotaSelector.
 		"%R~beam:max_upload_bytes", "%R~beam:daily_upload_bytes",
-		"~dylaris:beam:daily:*",
 		"%R~dylaris:core:*",
 	}
+}
+
+// BeamQuotaSelector is the ACL selector granting a node the daily upload
+// counters of the users whose uploads it actually handles, and nothing else in
+// that namespace. Returns "" for a node hosting nobody, so the caller clears the
+// selector rather than granting an empty one.
+//
+// It replaced "~dylaris:beam:daily:*" in globalReadKeys: a fleet-wide read+write
+// grant on a key named after a USER. Any node, a tenant-owned BYON machine
+// included, could INCRBY a stranger's counter past the configured daily limit
+// and lock that account out of uploads for the rest of the UTC day, or reset the
+// counter of a user it does host into an unlimited allowance. Nothing in the key
+// says who wrote it, and both paths that read it fail OPEN.
+//
+// A SELECTOR rather than more entries in the root permission, because the two
+// halves have different owners and different cadences. The root permission is
+// rebuilt from the server list whenever a node connects or reconciles; the
+// username set is what sftp_sync already resolves on its own 60s tick. Selectors
+// survive "resetkeys", so each writer owns its half without clearing the other's
+// - which is what lets this live where the set is already computed instead of
+// becoming a second answer to "who is on this node".
+//
+// The set is exactly right rather than approximately: a beam ticket is minted
+// against sftp.access (handlers/beam.go beamAccessCap) and sftp_sync filters the
+// same capability, so the users it publishes to a node are the users who can
+// upload to it. Two gaps, both degrading to "not counted" and neither to a
+// broken upload: a user who gains access mid-tick has no grant for up to 60s,
+// and an admin bypasses the resolver so their uploads are not published here at
+// all.
+//
+// Measured against Valkey 8, not assumed: a selector passed as ONE argument is
+// accepted, GET/INCRBY/EXPIRE inside it work on the named keys, and DEL, SET,
+// DECRBY and GETDEL on the same key all answer NOPERM. The command list is the
+// three the shared quota package uses - but it is the KEY PATTERN that contains
+// the damage here, not the commands: EXPIRE has to be granted (RecordDailyUsage
+// arms the TTL that self-cleans the key), and EXPIRE with a short TTL is a
+// reset. That is only ever reachable for the node's own users.
+func BeamQuotaSelector(usernames []string) string {
+	if len(usernames) == 0 {
+		return ""
+	}
+	// Sorted so a tick that changed nothing sends the identical string, and a
+	// diff of two nodes' grants is readable.
+	sorted := append([]string(nil), usernames...)
+	sort.Strings(sorted)
+	var b strings.Builder
+	b.WriteString("(")
+	for _, u := range sorted {
+		// Usernames cannot contain ':' or glob metacharacters (validate.Username),
+		// which is what makes this interpolation unambiguous.
+		b.WriteString("~" + quota.DailyKeyPrefix(u) + "* ")
+	}
+	b.WriteString("+get +incrby +expire)")
+	return b.String()
 }
 
 // migrationKeys are the migration grants, split by what the node actually does
