@@ -132,3 +132,56 @@ func btoa(b bool) string {
 }
 
 var errStoreLinkEntitlement = errors.New("db down")
+
+// The purchase has to actually RETIRE the grant through the provision path.
+//
+// The logic is unit-tested next door; this pins the WIRING, which is the half
+// that broke: retireGrantsCoveredByPurchase was added to Provision and the fake
+// store here did not implement the method it calls, so the whole endpoint
+// panicked on every activate. A test that only exercises the helper cannot see
+// that.
+func TestProvisionRetiresTheGrantItCovers(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]interface{}
+		want []string
+	}{
+		{
+			name: "buying nodes retires the BYON grant",
+			body: map[string]interface{}{"uuid": "u1", "action": "activate", "maxNodes": 2},
+			want: []string{"byon"},
+		},
+		{
+			name: "buying both retires both",
+			body: map[string]interface{}{"uuid": "u1", "action": "activate", "maxNodes": 1, "maxLinks": 1},
+			want: []string{"byon", "route_only"},
+		},
+		{
+			// A cancellation pushes zero, which parses to "clear the override".
+			// It must not take away a grant an admin gave separately.
+			name: "a cancellation retires nothing",
+			body: map[string]interface{}{"uuid": "u1", "action": "activate", "maxNodes": 0},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := &storeLinkFakeStore{users: map[string]*models.User{"u1": {ID: "u1"}}}
+			h := newStoreLinkHandler(fs, newStoreLinkRedis(t), true)
+			rec := httptest.NewRecorder()
+			h.Provision(rec, storeLinkPost("/api/store/provision", tt.body, storeLinkTestKey))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+			}
+			if len(fs.retiredGrants) != len(tt.want) {
+				t.Fatalf("retired %v, want %v", fs.retiredGrants, tt.want)
+			}
+			for i, k := range tt.want {
+				if fs.retiredGrants[i] != k {
+					t.Errorf("retired[%d] = %q, want %q", i, fs.retiredGrants[i], k)
+				}
+			}
+		})
+	}
+}

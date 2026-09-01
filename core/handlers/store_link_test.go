@@ -42,6 +42,10 @@ type storeLinkFakeStore struct {
 	routeLimitSets    []storeLinkRouteLimitCall
 	routeLimitDeletes []string
 	routeLimitErr     error
+
+	// Which manual grants a provision call retired. A purchase ends the grant
+	// it covers, so this is part of what "activate" does now.
+	retiredGrants []string
 }
 
 type storeLinkEntitlementCall struct {
@@ -110,6 +114,15 @@ func (f *storeLinkFakeStore) DeleteGatewayRouteLimit(scope string) error {
 func (f *storeLinkFakeStore) SetUserPurchasedEntitlement(userID string, maxNodes *int64, setNodes bool, maxLinks *int64, setLinks bool) error {
 	f.entitlementCalls = append(f.entitlementCalls, storeLinkEntitlementCall{userID, maxNodes, setNodes, maxLinks, setLinks})
 	return f.entitlementErr
+}
+
+// A purchase retires the manual grant for what it covers. Nil expiry is the
+// revoke; anything else is not this path and is recorded as nothing.
+func (f *storeLinkFakeStore) SetUserManualEntitlementKind(_ string, kind string, expiresAt *time.Time, _ string) error {
+	if expiresAt == nil {
+		f.retiredGrants = append(f.retiredGrants, kind)
+	}
+	return nil
 }
 
 func (f *storeLinkFakeStore) SetUserPlan(userID string, planID *int) error {
