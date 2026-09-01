@@ -14,10 +14,22 @@ body {
   overflow: hidden;
 }
 
+/* Centred while it fits, scrollable once it does not.
+ *
+ * This used to be `align-items: center` on a fixed-height, overflow-hidden box.
+ * A flex item that is taller than its container overflows in BOTH directions
+ * when it is centred, so the top of a tall screen - the deploy wizard, once its
+ * checks have run - went above the window edge with no way to scroll to it. The
+ * page simply lost its own heading and first controls as the window got smaller.
+ *
+ * align-items: flex-start can never clip the top, and the auto block margins
+ * below still centre the content whenever there IS room. Auto margins win over
+ * align-items, which is what makes the pair work. */
 #root {
   height: 100vh;
+  overflow-y: auto;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 24px;
 }
@@ -31,6 +43,9 @@ body {
   animation: fade-in 0.3s ease-out;
   max-width: 520px;
   width: 100%;
+  /* Vertically centred while there is spare room, hard against the top once
+     there is not. See #root for why this is a margin and not align-items. */
+  margin-block: auto;
 }
 
 .logo {
@@ -156,3 +171,22 @@ body {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* The window is resizable and people make it small. Without this the settings
+   card keeps its padding and the content is cut off sideways instead. */
+@media (max-width: 560px) {
+  #root { padding: 12px; }
+  .logo { font-size: 32px; }
+}
+
+/* Scrollbar, because #root scrolls now and the platform default is a bright
+   band on a near-black page. */
+#root::-webkit-scrollbar { width: 10px; }
+#root::-webkit-scrollbar-track { background: transparent; }
+#root::-webkit-scrollbar-thumb {
+  background: #2A2F38;
+  border-radius: 5px;
+  border: 2px solid #080909;
+}
+#root::-webkit-scrollbar-thumb:hover { background: #3A414D; }
+#root { scrollbar-width: thin; scrollbar-color: #2A2F38 transparent; }

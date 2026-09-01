@@ -233,11 +233,23 @@ services:
  * separately.
  */
 export function nodeCompose(i: WarpDeployInput): string {
+    // Docker Desktop's "host" is the WSL2 VM, not Windows. That is the same
+    // adaptation route-only already makes, and it is the whole difference: the
+    // node, its warp tunnel and the Minecraft containers all sit inside that VM
+    // together, so they reach each other exactly as they would on Linux. What
+    // changes is where the FILES land, which is why the note points at the bind
+    // mount rather than at the networking.
+    const header = i.platform === 'windows'
+        ? `# On Docker Desktop, "host" networking is the WSL2 VM's rather than Windows'.
+# The node, its tunnel and your servers all live in that VM, so they reach one
+# another normally - but the server files land in the VM unless you bind a
+# Windows path below.`
+        : `# Kernel WireGuard needs host networking and NET_ADMIN.`;
     return `# byon-node.yml
 #
 # warp opens an outbound tunnel to us; the node runs your Minecraft servers on
 # this machine. It starts its own link sidecar - do not run link yourself.
-# Kernel WireGuard needs host networking and NET_ADMIN.
+${header}
 #
 # Lines marked "keep" are filled in for this node and must stay as they are.
 # Only a line marked EDIT is yours to change.

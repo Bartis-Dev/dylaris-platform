@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.6
+
+### Features
+- You can remove one of your own machines now, which is what frees its slot when
+  you want to set it up somewhere else. You are asked twice, and shown every
+  server and world that would go with it.
+- Setting up a bring-your-own node has a Windows (Docker Desktop) option, the
+  same as protected addresses already did.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- At your machine limit the panel only offered to sell you another location,
+  even when what you wanted was to move the machine you already have.
+- The deploy snippet no longer takes over the whole page.
+
 ## 2026.09.01.5
 
 ### Features

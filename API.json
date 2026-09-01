@@ -2207,6 +2207,26 @@
       "external": false
     },
     {
+      "method": "DELETE",
+      "path": "/api/me/nodes/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "removes the caller's own machine.",
+      "handler": "NodeHandler.DeleteMyNode",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/nodes/{id:[0-9]+}/contents",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "what removing this machine would destroy.",
+      "handler": "NodeHandler.GetMyNodeContents",
+      "group": "me",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/me/packs",
       "auth": "session",
@@ -4894,10 +4914,10 @@
     }
   ],
   "counts": {
-    "total": 490,
+    "total": 492,
     "byAuth": {
       "none": 35,
-      "session": 442,
+      "session": 444,
       "user API key": 10,
       "warp key": 3
     },
@@ -4919,7 +4939,7 @@
       "infrastructure": 2,
       "library": 6,
       "maintenance": 1,
-      "me": 24,
+      "me": 26,
       "modrinth": 6,
       "modules": 6,
       "nodes": 17,

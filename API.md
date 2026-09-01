@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **489 routes** in 50 sections: 218 GET, 146 POST, 37 PUT, 36 PATCH, 53 DELETE.
+- **491 routes** in 50 sections: 219 GET, 146 POST, 37 PUT, 36 PATCH, 54 DELETE.
 - **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **93** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **8** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -158,7 +158,7 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (2)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (24)
+- [/api/me](#apime) (26)
 - [/api/modrinth](#apimodrinth) (6)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (17)
@@ -496,6 +496,8 @@ can still show what exists.
 | GET | `/api/me/modrinth-pat` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `ModrinthPATHandler.Status` | returns whether the user has a PAT configured + (if so) the username + last_validated timestamp. |
 | PUT | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Set` | accepts the plaintext PAT, validates it against Modrinth /v2/user, encrypts, and stores. |
 | DELETE | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Clear` | wipes the PAT entirely. |
+| DELETE | `/api/me/nodes/{id:[0-9]+}` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.DeleteMyNode` | removes the caller's own machine. |
+| GET | `/api/me/nodes/{id:[0-9]+}/contents` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeContents` | what removing this machine would destroy. |
 | GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | the modpacks the calling user owns. |
 | POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | creates a modpack owned by the caller. |
 | POST | `/api/me/packs/import-solder` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportSolder` | imports one modpack (all its builds) from an external Solder instance into a new draft pack owned by the caller. |

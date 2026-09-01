@@ -339,3 +339,29 @@ describe('routeOnlyCompose on Docker Desktop', () => {
         expect(routeOnlyCompose(base)).toContain('LOCAL_HOST: "127.0.0.1"');
     });
 });
+
+// The node kit was Linux-only on this screen for longer than it had to be. On
+// Docker Desktop the socket, the tunnel and the Minecraft containers all sit in
+// the same WSL2 VM, so they reach each other as they would on Linux - what
+// genuinely differs is where the files land, and the snippet has to say so.
+describe('nodeCompose on Windows', () => {
+
+    it('names the WSL2 VM instead of claiming host networking is Windows', () => {
+        const got = nodeCompose({ ...base, platform: 'windows' });
+        expect(got).toContain('WSL2 VM');
+        expect(got).not.toContain('Kernel WireGuard needs host networking');
+    });
+
+    it('leaves the Linux snippet as it was', () => {
+        const got = nodeCompose({ ...base, platform: 'linux' });
+        expect(got).toContain('Kernel WireGuard needs host networking');
+        expect(got).not.toContain('WSL2 VM');
+    });
+
+    // The two platforms must not silently produce the same file: that is what a
+    // toggle doing nothing looks like from the outside.
+    it('actually differs between the two', () => {
+        expect(nodeCompose({ ...base, platform: 'windows' }))
+            .not.toBe(nodeCompose({ ...base, platform: 'linux' }));
+    });
+});

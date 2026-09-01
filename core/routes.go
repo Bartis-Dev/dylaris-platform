@@ -922,6 +922,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// /me/billing is the caller's OWN lifecycle state: EXEMPT-authed, no RequireCap
 	// (not in requiredCaps). The admin billing routes below are PANEL plans.*.
 	api.HandleFunc("/me/billing", authHandler.AuthMiddleware(billingHandler.GetMyBilling)).Methods("GET")
+
+	// The caller's OWN machine: EXEMPT-authed, no RequireCap (deliberately NOT in
+	// requiredCaps), because no customer holds nodes.delete and the handler here
+	// answers only for a node whose owner_id IS the caller. The admin route
+	// DELETE /nodes/{id} is untouched and stays capability-gated - opening THAT
+	// one to tenants would have let any of them delete any node, since it has no
+	// ownership check of its own.
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/contents", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.GetMyNodeContents))).Methods("GET")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.DeleteMyNode))).Methods("DELETE")
 	// Own entitlement: what the caller may use. Deliberately NOT gated on
 	// RequireBYONEnabled - with BYON off the tenant UI still asks, and needs the
 	// answer "no" rather than a 503 it would have to special-case.

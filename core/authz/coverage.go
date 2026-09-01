@@ -134,6 +134,13 @@ var ExemptRoutes = map[string]bool{
 	"/api/me/updates-seen":        true, // authed; own update-feed badge marker
 	"/api/me/servers/via-tickets": true, // authed; own tickets sidebar
 
+	// The caller's OWN machine. Not capability-gated on purpose: no customer
+	// holds nodes.delete, and these two answer ONLY for a node whose owner_id is
+	// the caller - an admin asking about somebody else's gets a 404 here and uses
+	// the capability-gated /api/nodes/{id} instead.
+	"/api/me/nodes/{id:[0-9]+}":          true, // authed; own machine, owner-checked in the handler
+	"/api/me/nodes/{id:[0-9]+}/contents": true, // authed; own machine, owner-checked in the handler
+
 	// Sessions helpers: SSE ticket mint, SSE stream, platform-wide feature flags.
 	"/api/sse-ticket":      true, // authed; mints own disposable SSE ticket
 	"/api/system/events":   true, // authed; SSE stream, ticket-authed per-connection

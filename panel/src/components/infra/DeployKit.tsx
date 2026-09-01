@@ -109,7 +109,12 @@ export function Snippet({ title, body, note }: { title: string; body: string; no
                 <CopyButton value={body} />
             </div>
             {note && <p className="text-xs text-(--base-07)">{note}</p>}
-            <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-03) font-mono text-[11px] leading-relaxed overflow-x-auto text-(--base-08)">
+            {/* Bounded and scrollable. The node compose file is ~60 lines of
+                commented YAML: at full height it pushed everything below it off
+                the screen and made the two columns on this page different
+                lengths for no reason anyone chose. Nobody reads it top to bottom
+                anyway - it is copied. */}
+            <pre className="max-h-72 overflow-auto overscroll-contain p-3 rounded-md bg-(--base-02) border border-(--base-03) font-mono text-[11px] leading-relaxed text-(--base-08)">
                 {body}
             </pre>
         </div>
@@ -124,6 +129,25 @@ export function Snippet({ title, body, note }: { title: string; body: string; no
  * stored as a hash, so it is shown exactly once at mint time. The snippet then
  * carries an obvious placeholder instead of a plausible-looking wrong value.
  */
+/**
+ * What differs about the chosen machine, in one sentence.
+ *
+ * Four combinations and no shared sentence between them: on Linux the answer is
+ * about privileges, and on Docker Desktop it is about the WSL2 VM - which means
+ * something different to a route-only link (where your own server is elsewhere)
+ * than to a node (where your servers run inside that VM with it).
+ */
+export function platformNote(kind: 'node' | 'route-only', platform: DeployPlatform): string {
+    if (platform === 'linux') {
+        return kind === 'node'
+            ? 'The node drives the host’s Docker socket to run your servers, which needs host networking and NET_ADMIN.'
+            : 'The tunnel uses kernel WireGuard, which needs host networking and NET_ADMIN.';
+    }
+    return kind === 'node'
+        ? 'Host networking on Docker Desktop joins the WSL2 VM, not Windows. Your servers run inside that VM alongside the node, so bind a Windows path in the snippet if you want the files where you can see them.'
+        : 'Host networking on Docker Desktop joins the WSL2 VM, not Windows, so the snippet points the link at host.docker.internal. Your Minecraft server keeps running on Windows as it does now.';
+}
+
 export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFingerprint, nodeId, config }: {
     kind: 'node' | 'route-only';
     warpKey: string | null;
@@ -133,9 +157,12 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
     nodeId?: string;
     config?: WarpDeployConfig | null;
 }) {
-    // Only route-only runs on Docker Desktop. A managed node drives the host's
-    // Docker socket to run Minecraft containers, which has its own path and port
-    // semantics there and is not covered, so the toggle stays off for it.
+    // Both kinds run on Docker Desktop. The node was Linux-only here for longer
+    // than it needed to be: it drives the host's Docker socket, and on Docker
+    // Desktop that socket, the tunnel and the Minecraft containers are all
+    // inside the same WSL2 VM - so they reach each other exactly as on Linux.
+    // What genuinely differs is where the server FILES land, which the snippet
+    // says in the place it matters, at the bind mount.
     const [platform, setPlatform] = useState<DeployPlatform>('linux');
     const input = {
         apiKey: warpKey ?? '<your-warp-key>',
@@ -157,37 +184,24 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
                 <Terminal size={15} className="text-(--accent-light)" />
                 Deploy it on your machine
             </div>
-            {kind === 'route-only' ? (
-                <>
-                    <div className="flex items-center gap-1" role="group" aria-label="Target machine">
-                        {(['linux', 'windows'] as const).map((p) => (
-                            <button
-                                key={p}
-                                type="button"
-                                onClick={() => setPlatform(p)}
-                                aria-pressed={platform === p}
-                                className={`rounded-md px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
-                                    platform === p
-                                        ? 'bg-(--accent) text-(--base-00)'
-                                        : 'bg-(--base-02) text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'
-                                }`}
-                            >
-                                {p === 'linux' ? 'Linux' : 'Windows (Docker Desktop)'}
-                            </button>
-                        ))}
-                    </div>
-                    <p className="text-xs text-(--base-06)">
-                        {platform === 'linux'
-                            ? 'The tunnel uses kernel WireGuard, which needs host networking and NET_ADMIN.'
-                            : 'Host networking on Docker Desktop joins the WSL2 VM, not Windows, so the snippet points the link at host.docker.internal. Your Minecraft server keeps running on Windows as it does now.'}
-                    </p>
-                </>
-            ) : (
-                <p className="text-xs text-(--base-06)">
-                    Linux only: the node drives the host&apos;s Docker socket to run your Minecraft
-                    containers, which needs host networking and NET_ADMIN.
-                </p>
-            )}
+            <div className="flex items-center gap-1" role="group" aria-label="Target machine">
+                {(['linux', 'windows'] as const).map((p) => (
+                    <button
+                        key={p}
+                        type="button"
+                        onClick={() => setPlatform(p)}
+                        aria-pressed={platform === p}
+                        className={`rounded-md px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
+                            platform === p
+                                ? 'bg-(--accent) text-(--base-00)'
+                                : 'bg-(--base-02) text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'
+                        }`}
+                    >
+                        {p === 'linux' ? 'Linux' : 'Windows (Docker Desktop)'}
+                    </button>
+                ))}
+            </div>
+            <p className="text-xs text-(--base-06)">{platformNote(kind, platform)}</p>
             <Snippet title={composeFileName(kind)} body={compose} />
             <Snippet title="Commands" body={deployCli(kind)} note={deployIntro(kind, platform)} />
             <p className="text-xs text-(--base-06)">{DEPLOY_PORTAINER_NOTE}</p>

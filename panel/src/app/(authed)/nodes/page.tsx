@@ -29,6 +29,7 @@ import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
 import ExternalNodesPanel from '@/components/infra/ExternalNodesPanel';
 import TrafficPools from '@/components/infra/TrafficPools';
 import RunNodeHereCard from '@/components/infra/RunNodeHereCard';
+import RemoveMachineDialog from '@/components/infra/RemoveMachineDialog';
 
 // ---------------------------------------------------------------------------
 // "My infrastructure" - hardware that is not in the cluster, in three tabs.
@@ -130,6 +131,9 @@ function MyNodesInner() {
     const [revealedNode, setRevealedNode] = useState<{ token: string; warpKey: string; label: string; grpcTlsFingerprint?: string } | null>(null);
     const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
     const [nodeUsage, setNodeUsage] = useState<{ used: number; limit?: number } | null>(null);
+    // Which machine the removal dialog is open for, by id and by the label the
+    // owner reads - the dialog names it back to them before it does anything.
+    const [removing, setRemoving] = useState<{ id: number; label: string } | null>(null);
 
     // Overlay addresses for the deploy snippets. Resolved by Core, which is on
     // that network; there is nowhere else a customer could look them up.
@@ -469,12 +473,19 @@ function MyNodesInner() {
                             </button>
                         </div>
 
+                        {/* What to DO about it, and the answer is usually not "buy
+                            something". Moving a machine is the common case - the old
+                            one holds the slot, and the message used to name only the
+                            store, so the way out looked like a purchase. */}
                         {nodesAtCap && (
                             <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
                                 <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                                 <span>
-                                    Every node your plan includes is in use. Add another in the store to
-                                    connect a second location.
+                                    {effectiveNodeLimit === 1
+                                        ? <>Your machine below is using the one slot you have. Remove it to set this
+                                          machine up somewhere else, or add another location in the store.</>
+                                        : <>All {effectiveNodeLimit} of your slots are in use. Remove a machine below to
+                                          replace it, or add another location in the store.</>}
                                 </span>
                             </p>
                         )}
@@ -554,6 +565,19 @@ function MyNodesInner() {
                                                     </div>
                                                 </div>
                                             </div>
+                                            {/* The way back out. Without it a machine could be added and
+                                                never removed, so the slot it held was gone for good and
+                                                the cap read as "buy more". */}
+                                            <button
+                                                type="button"
+                                                onClick={() => setRemoving({ id: n.id, label: nodeLabel(n) })}
+                                                title={`Remove ${nodeLabel(n)}`}
+                                                aria-label={`Remove ${nodeLabel(n)}`}
+                                                className="shrink-0 text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors
+                                                           focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
                                         </div>
                                     );
                                 })
@@ -568,11 +592,11 @@ function MyNodesInner() {
                 copy has to say so before they close it. */}
             {byonAllowed && entitlementKnown && !revealedNode && (
                 <aside className={`space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
-                    <p className="text-xs text-(--base-06)">
-                        {nodeKeys.length > 0 || tokens.length > 0
-                            ? <>The keys cannot be shown again — only their hashes are stored. Paste the ones you saved where the file says <code className="font-mono">&lt;...&gt;</code>, or revoke the key and create a new one.</>
-                            : <>This is what you will run. Add a machine on the left and both its keys are filled in for you.</>}
-                    </p>
+                    {(nodeKeys.length > 0 || tokens.length > 0) && (
+                        <p className="text-xs text-(--base-06)">
+                            The keys cannot be shown again — only their hashes are stored. Paste the ones you saved where the file says <code className="font-mono">&lt;...&gt;</code>, or revoke the key and create a new one.
+                        </p>
+                    )}
                     <DeployKit kind="node" warpKey={null} enrollUrl={enrollUrl} config={deployConfig} />
                 </aside>
             )}
@@ -607,6 +631,25 @@ function MyNodesInner() {
                 </aside>
             )}
             </div>
+            )}
+
+            {removing && (
+                <RemoveMachineDialog
+                    nodeId={removing.id}
+                    nodeLabel={removing.label}
+                    onClose={() => setRemoving(null)}
+                    onRemoved={() => {
+                        setRemoving(null);
+                        // Re-read rather than splicing the row out: the machine
+                        // going away also frees a slot, and the cap message and
+                        // the usage counter both read from that.
+                        load();
+                        // loadNodeKeys is what carries the used/limit pair the cap
+                        // message reads, so it has to run too - the count is what
+                        // was blocking the reader in the first place.
+                        loadNodeKeys();
+                    }}
+                />
             )}
         </div>
         </div>

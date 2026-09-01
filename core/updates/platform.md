@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.6
+
+### Features
+- A tenant can remove their own machine. Two steps, and the second one names
+  every server and sub-server it would delete; the servers go only if asked.
+  `core`
+- The deploy snippet for a bring-your-own node now has a Windows option, like
+  route-only already had. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- At the node limit the panel only offered the store, so a tenant who wanted to
+  MOVE their machine was told to buy a second one. It now points at removing the
+  machine holding the slot. `core`
+- The deploy snippet no longer runs to full height, and the two columns on the
+  infrastructure page line up again. `core`
+
 ## 2026.09.01.5
 
 ### Features
