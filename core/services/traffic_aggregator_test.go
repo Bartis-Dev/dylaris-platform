@@ -43,11 +43,12 @@ type trafficUsageCall struct {
 	edge, relayBytes int64
 }
 type trafficRegionCall struct {
-	tenant string
-	period time.Time
-	region string
-	kind   string
-	bytes  int64
+	tenant  string
+	period  time.Time
+	region  string
+	kind    string
+	product string
+	bytes   int64
 }
 type trafficBackupCall struct {
 	tenant string
@@ -70,8 +71,8 @@ func (f *trafficFakeStore) TenantBackupBytes() (map[string]int64, error) {
 	return f.backupBytes, f.backupBytesErr
 }
 
-func (f *trafficFakeStore) AddTrafficUsageRegion(userID string, period time.Time, region, kind string, bytes int64) error {
-	f.addRegionCalls = append(f.addRegionCalls, trafficRegionCall{userID, period, region, kind, bytes})
+func (f *trafficFakeStore) AddTrafficUsageRegion(userID string, period time.Time, region, kind, product string, bytes int64) error {
+	f.addRegionCalls = append(f.addRegionCalls, trafficRegionCall{userID, period, region, kind, product, bytes})
 	if f.addRegionErrFor != nil {
 		return f.addRegionErrFor[region]
 	}
@@ -759,5 +760,62 @@ func TestTrafficAggregator_SeedsOnlyOnce(t *testing.T) {
 	agg.runOnce(context.Background())
 	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].region != "us-east" || fs.addRegionCalls[0].bytes != 300 {
 		t.Fatalf("a region appearing after seeding must be billed: %+v", fs.addRegionCalls)
+	}
+}
+
+// Which product moved the bytes, read off the counter subject.
+//
+// Nothing on the wire carries it: Core writes an "owner:<id>" subject for a
+// route-only address because such a tenant has no server of ours to key on, and
+// a bare server UUID for a server on a machine they own. That difference is the
+// whole signal, which is why it is derived here and no producer changed.
+func TestTrafficProductComesFromTheSubject(t *testing.T) {
+	cases := []struct{ subject, want string }{
+		{"owner:11111111-1111-1111-1111-111111111111", store.TrafficProductRoute},
+		{"3f2b9c7e-0000-4444-8888-aaaaaaaaaaaa", store.TrafficProductBYON},
+		{"", store.TrafficProductUnknown},
+	}
+	for _, c := range cases {
+		if got := trafficProductOf(c.subject); got != c.want {
+			t.Errorf("trafficProductOf(%q) = %q, want %q", c.subject, got, c.want)
+		}
+	}
+}
+
+// The breakdown row has to carry the product, and the two products must not
+// collapse into one another.
+//
+// They share a (region, kind) cell - both are player traffic at the same edge -
+// so before the product joined the cell key the upsert folded whichever arrived
+// second onto the first row. That is not a missing split but a WRONG one: one
+// product's bytes reported as the other's.
+func TestTheBreakdownSeparatesTheTwoProducts(t *testing.T) {
+	const owner = "11111111-1111-1111-1111-111111111111"
+	fs := &trafficFakeStore{
+		owners: map[string]string{"srv-a": owner},
+		routes: []store.CoreLinkRoute{{Domain: "mine.example", OwnerID: owner}},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-a", map[string]interface{}{"rx:eu-central": "5000000000"})
+	mustHSet(t, rdb, "dylaris:traffic:edge:owner:"+owner, map[string]interface{}{"rx:eu-central": "3000000000"})
+
+	agg.runOnce(context.Background())
+
+	got := map[string]int64{}
+	for _, c := range fs.addRegionCalls {
+		if c.region != "eu-central" || c.kind != store.TrafficKindEdge {
+			t.Fatalf("unexpected cell %s/%s", c.region, c.kind)
+		}
+		got[c.product] += c.bytes
+	}
+	want := map[string]int64{store.TrafficProductBYON: 5000000000, store.TrafficProductRoute: 3000000000}
+	for product, wantBytes := range want {
+		if got[product] != wantBytes {
+			t.Errorf("product %q got %d bytes, want %d (rows: %+v)", product, got[product], wantBytes, fs.addRegionCalls)
+		}
+	}
+	// And the bill still sees the sum of both, unchanged by the split.
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 8000000000 {
+		t.Errorf("the billing total is %+v, want one call of 8000000000 edge bytes", fs.addUsageCalls)
 	}
 }

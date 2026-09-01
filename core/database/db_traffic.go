@@ -53,6 +53,34 @@ func applyTrafficSchema(db *sql.DB) error {
 	}
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_traffic_usage_region_period ON traffic_usage_region(period)`)
 
+	// product is which PRODUCT moved the bytes: "byon" for a server on a machine
+	// the tenant owns, "route" for a protected address that reaches their own
+	// server. It is derived in the aggregator from the counter's SUBJECT
+	// (an "owner:" subject is route-only, a bare server UUID is a BYON node), so
+	// no producer had to learn a new field and no wire format changed.
+	//
+	// A BREAKDOWN dimension only. The allowance is granted per unit HELD and
+	// pooled across products, so limit resolution folds product away before it
+	// compares anything - splitting the pool per product would hand a tenant the
+	// same free allowance once per product they own.
+	//
+	// Empty is the honest value for rows written before this existed and for a
+	// subject whose product cannot be told: those bytes are real, they are in
+	// the billing total, and dropping them would make the split stop adding up
+	// to the number the tenant is charged on. Same reason "unknown" exists for
+	// the region.
+	if _, err := db.Exec(`ALTER TABLE traffic_usage_region
+		ADD COLUMN IF NOT EXISTS product TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("traffic: add traffic_usage_region.product: %w", err)
+	}
+	// The primary key has to grow with it, or the first product to write a
+	// (region, kind) cell owns it and the second is folded into that row by the
+	// upsert - which is not a lost split but a WRONG one, silently attributing
+	// one product's bytes to the other.
+	if err := widenTrafficRegionKey(db); err != nil {
+		return err
+	}
+
 	// What a tenant may use, and may buy, per (region, kind).
 	//
 	// Same three-scope shape as gateway_route_limits, deliberately: "user:<id>",
@@ -122,4 +150,48 @@ func applyTrafficSchema(db *sql.DB) error {
 		return fmt.Errorf("traffic: move non-regional limits: %w", err)
 	}
 	return nil
+}
+
+// widenTrafficRegionKey adds product to traffic_usage_region's primary key.
+//
+// Idempotent by asking the catalog rather than by catching an error: an
+// ADD PRIMARY KEY that fails because the key already exists and one that fails
+// because the table is in some other state look the same from here, and this
+// runs on every boot.
+//
+// The DROP and the ADD are one transaction. Between them the table has no
+// primary key at all, and the aggregator's upsert has no conflict target to
+// name - a tick landing in that window would fail rather than double-count, but
+// only because it is a plain INSERT ... ON CONFLICT that errors; the window is
+// closed here so it cannot be reasoned about wrongly later.
+func widenTrafficRegionKey(db *sql.DB) error {
+	var keyed bool
+	err := db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.key_column_usage k
+			JOIN information_schema.table_constraints c
+			  ON c.constraint_name = k.constraint_name
+			 AND c.constraint_schema = k.constraint_schema
+			WHERE c.table_name = 'traffic_usage_region'
+			  AND c.constraint_type = 'PRIMARY KEY'
+			  AND k.column_name = 'product'
+		)`).Scan(&keyed)
+	if err != nil {
+		return fmt.Errorf("traffic: inspect traffic_usage_region key: %w", err)
+	}
+	if keyed {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("traffic: widen traffic_usage_region key: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`ALTER TABLE traffic_usage_region DROP CONSTRAINT IF EXISTS traffic_usage_region_pkey`); err != nil {
+		return fmt.Errorf("traffic: drop traffic_usage_region key: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE traffic_usage_region ADD PRIMARY KEY (user_id, period, region, kind, product)`); err != nil {
+		return fmt.Errorf("traffic: widen traffic_usage_region key: %w", err)
+	}
+	return tx.Commit()
 }

@@ -112,7 +112,11 @@ func (s *PostgresStore) AddTrafficUsage(userID string, period time.Time, edgeByt
 type RegionUsage struct {
 	Region string `json:"region"`
 	Kind   string `json:"kind"`
-	Bytes  int64  `json:"bytes"`
+	// Product is which product moved the bytes - see the TrafficProduct
+	// constants. A breakdown dimension only: the allowance is pooled across
+	// products, so every limit decision folds this away first.
+	Product string `json:"product"`
+	Bytes   int64  `json:"bytes"`
 }
 
 // Traffic kinds. Open set on purpose - see the traffic_usage_region comment in
@@ -122,20 +126,32 @@ const (
 	TrafficKindRelay = "relay" // beam file transfers, at the relay that carried them
 )
 
+// Traffic products. Which of the two things a tenant can buy carried the bytes.
+//
+// Derived from the counter subject in the aggregator, not reported by any
+// producer. TrafficProductUnknown is the empty string on purpose: it is what
+// rows written before this dimension existed already hold, so they read as
+// "we do not know" rather than being silently attributed to a product.
+const (
+	TrafficProductBYON    = "byon"  // a server on a machine the tenant owns
+	TrafficProductRoute   = "route" // a protected address pointing at their own server
+	TrafficProductUnknown = ""
+)
+
 // AddTrafficUsageRegion adds a delta onto one (tenant, period, region, kind) row.
 //
 // Separate from AddTrafficUsage on purpose: traffic_usage stays THE billing
 // total, and this is a breakdown of it. A breakdown write that fails leaves the
 // total correct and only the split incomplete, which is the right way round -
 // the reverse would let a broken breakdown change what a tenant is charged.
-func (s *PostgresStore) AddTrafficUsageRegion(userID string, period time.Time, region, kind string, bytes int64) error {
+func (s *PostgresStore) AddTrafficUsageRegion(userID string, period time.Time, region, kind, product string, bytes int64) error {
 	_, err := s.db.Exec(`
-		INSERT INTO traffic_usage_region (user_id, period, region, kind, bytes, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())
-		ON CONFLICT (user_id, period, region, kind) DO UPDATE SET
+		INSERT INTO traffic_usage_region (user_id, period, region, kind, product, bytes, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		ON CONFLICT (user_id, period, region, kind, product) DO UPDATE SET
 			bytes      = traffic_usage_region.bytes + EXCLUDED.bytes,
 			updated_at = NOW()`,
-		userID, period, region, kind, bytes)
+		userID, period, region, kind, product, bytes)
 	return err
 }
 
@@ -145,9 +161,9 @@ func (s *PostgresStore) AddTrafficUsageRegion(userID string, period time.Time, r
 // region tagging leaves behind.
 func (s *PostgresStore) GetTrafficUsageRegions(userID string, period time.Time) ([]RegionUsage, error) {
 	rows, err := s.db.Query(`
-		SELECT region, kind, bytes FROM traffic_usage_region
+		SELECT region, kind, product, bytes FROM traffic_usage_region
 		WHERE user_id = $1 AND period = $2
-		ORDER BY bytes DESC, region, kind`, userID, period)
+		ORDER BY bytes DESC, region, kind, product`, userID, period)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +171,7 @@ func (s *PostgresStore) GetTrafficUsageRegions(userID string, period time.Time) 
 	var out []RegionUsage
 	for rows.Next() {
 		var r RegionUsage
-		if err := rows.Scan(&r.Region, &r.Kind, &r.Bytes); err != nil {
+		if err := rows.Scan(&r.Region, &r.Kind, &r.Product, &r.Bytes); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

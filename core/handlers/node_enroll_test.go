@@ -329,14 +329,20 @@ func TestMintToken_HonorsTheNodeCap(t *testing.T) {
 			billing: cap2(), nodes: 1, pendingTokens: 1, wantStatus: http.StatusForbidden,
 		},
 		{
-			// The cross-door case. This gate used to count only its OWN pending
-			// tokens, so a slot already spoken for by a warp key was invisible to
-			// it and the two mint endpoints handed out more between them than the
-			// cap allowed. The tenant then redeemed what they could and was left
-			// holding an identity the over-limit sweep counts and cuts them off
-			// for - punished for a state these gates produced.
-			name:    "a warp key already holds the last slot",
-			billing: cap2(), nodes: 1, warpNodeKeys: 1, wantStatus: http.StatusForbidden,
+			// The cross-door case, and the one this gate got backwards. A warp
+			// key with no token is a machine MID-SETUP: the panel mints the key
+			// and then this token for the same machine the user named once, so
+			// refusing here made the machine unaddable rather than capping
+			// anything. On max_nodes = 1 - a manual grant, or a one-unit
+			// purchase - the FIRST machine could never be added at all.
+			name:    "the token completing a machine the warp key started",
+			billing: cap2(), nodes: 1, warpNodeKeys: 1, wantStatus: http.StatusOK,
+		},
+		{
+			// And that is as far as it goes: with both halves already out, a
+			// second token is a THIRD machine on a cap of two.
+			name:    "a second token once that machine has both halves",
+			billing: cap2(), nodes: 1, warpNodeKeys: 1, pendingTokens: 1, wantStatus: http.StatusForbidden,
 		},
 	}
 

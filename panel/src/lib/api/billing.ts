@@ -102,6 +102,18 @@ export interface TrafficPool {
     includedGb: number | null;
     pct: number;
     warn: number;
+    // How the pool's usage splits by product: "byon" for a server on a machine
+    // the tenant owns, "route" for a protected address pointing at their own
+    // server, "" for rows written before the split existed.
+    //
+    // BYTES, unlike everything else here, and the name says so: a share under a
+    // gigabyte truncates to 0, and two of those beside a total of 1 GB reads as
+    // a bug rather than as rounding.
+    //
+    // A breakdown, never a second allowance. The included traffic is granted per
+    // unit HELD and pooled across products, so these describe who filled the
+    // pool and are judged against nothing.
+    byProductBytes?: Record<string, number>;
 }
 
 // getMyBilling returns the caller's lifecycle state for the banner.

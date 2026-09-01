@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.8
+
+### Features
+- Your traffic is now shown as two separate panels, player traffic and data
+  traffic, with a breakdown of how much came from your own node and how much
+  from your protected addresses.
+- The switch for being billed past your included traffic now sits next to those
+  numbers, under My Infrastructure.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Adding your first machine failed with "Node limit reached (1)" even though you
+  had none. It works now, and nothing you did caused it.
+- Data traffic with no configured allowance was not shown at all. It is now.
+
 ## 2026.09.01.7
 
 ### Features

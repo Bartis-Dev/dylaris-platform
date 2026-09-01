@@ -8,6 +8,34 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.8
+
+### Features
+- Traffic usage is now two panels - player traffic at the edge and data traffic
+  through beam - and each pool shows how much of it came from a tenant's own
+  node versus their protected addresses. `core` `panel`
+- Metered-traffic consent is switched beside the usage bars on My
+  Infrastructure instead of on the store page, where the person watching an
+  allowance fill up could not reach it. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A tenant with a one-node allowance could never add their first machine. A BYON
+  machine needs two credentials and both counted against `max_nodes`, so the
+  overlay key filled the allowance and the enroll token seconds later was
+  refused. The unit of the cap is a machine now. `core`
+- The same double count would have suspended a tenant after 72 hours for holding
+  exactly the one machine they bought, and the panel's "used of limit" counted a
+  third thing again. Both read the machine count now. `core` `panel`
+- A traffic pool with no configured allowance is shown with its usage instead of
+  being hidden, so transferred bytes nobody has set a limit for are visible.
+  `panel`
+
 ## 2026.09.01.7
 
 ### Features

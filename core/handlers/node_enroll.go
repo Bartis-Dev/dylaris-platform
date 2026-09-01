@@ -80,15 +80,20 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// It also bounds the table: minting was an uncapped, unrate-limited write
 	// available to any authenticated tenant.
 	//
-	// Counted through services.NodeSlotsUsed, which sees BOTH kinds of pending
+	// Counted through services.NodeSlots, which sees BOTH kinds of pending
 	// identity. This gate used to count only its own enroll tokens and the warp
 	// sibling only its own keys, so neither could see what the other had handed
-	// out - see NodeSlotsUsed for what that cost the tenant.
+	// out.
+	//
+	// The question is what the tenant holds AFTER this mint, not whether they
+	// are already at the cap. A machine needs both halves, so on max_nodes = 1
+	// the warp key the panel mints a moment earlier filled the allowance and this
+	// gate refused the token belonging to the same machine - see NodeSlots.
 	if lim, lerr := services.EffectiveLimits(h.state.Store, userID); lerr == nil && lim.MaxNodes != nil {
-		used, uerr := services.NodeSlotsUsed(h.state.Store, userID)
-		if uerr == nil && services.AtOrOver(lim.MaxNodes, used) {
+		slots, serr := services.CountNodeSlots(h.state.Store, userID)
+		if serr == nil && services.Exceeds(lim.MaxNodes, slots.UsedWithEnrollToken()) {
 			sendJSONError(w, fmt.Sprintf(
-				"Node limit reached (%d). Revoke an unused enroll token or node key, or remove a machine first.", *lim.MaxNodes),
+				"Node limit reached (%d). Remove a machine, or revoke an unused enroll token or node key, before adding another.", *lim.MaxNodes),
 				http.StatusForbidden)
 			return
 		}

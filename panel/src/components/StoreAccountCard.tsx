@@ -1,12 +1,9 @@
 "use client";
 
 import { useState } from 'react';
-import { AlertTriangle, Loader2, CloudOff } from 'lucide-react';
-import Switch from '@/components/ui/Switch';
-import {
-    usagePct, trafficSwitch, backupSwitch, consequenceOf,
-    type SwitchState,
-} from '@/lib/storeAccount';
+import { CloudOff } from 'lucide-react';
+import ConsentRow from '@/components/billing/ConsentRow';
+import { usagePct, backupSwitch } from '@/lib/storeAccount';
 import { setStoreBillingConsent, type StoreAccountSummary } from '@/lib/api/store';
 
 // What the tenant bought and how much of it is left, on the panel side.
@@ -45,49 +42,12 @@ function Allowance({ label, usedGb, ceilingGb, note }: {
     );
 }
 
-// One consent, with the consequence written under it rather than the setting
-// name. "Metered billing: off" tells a tenant nothing; what they are choosing is
-// whether running out costs money or stops the service.
-function ConsentRow({ title, kind, state, busy, onChange }: {
-    title: string;
-    kind: 'traffic' | 'backup';
-    state: SwitchState;
-    busy: boolean;
-    onChange: (next: boolean) => void;
-}) {
-    if (state.kind === 'unavailable') {
-        return (
-            <div className="flex items-start gap-2.5">
-                <AlertTriangle size={15} className="text-(--base-06) mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                    <div className="text-sm text-(--base-08)">{title}</div>
-                    <p className="text-xs text-(--base-06) mt-0.5 leading-relaxed">{state.reason}</p>
-                </div>
-            </div>
-        );
-    }
-    const on = state.kind === 'on';
-    return (
-        <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-                <div className="text-sm text-(--base-08)">{title}</div>
-                <p className="text-xs text-(--base-06) mt-0.5 leading-relaxed">{consequenceOf(kind, on)}</p>
-            </div>
-            <div className="shrink-0 pt-0.5">
-                {busy
-                    ? <Loader2 size={16} className="animate-spin text-(--base-06)" />
-                    : <Switch checked={on} onChange={onChange} ariaLabel={title} />}
-            </div>
-        </div>
-    );
-}
-
 export default function StoreAccountCard({ summary, onChanged, onError }: {
     summary: StoreAccountSummary;
     onChanged: () => void;
     onError: (message: string) => void;
 }) {
-    const [busy, setBusy] = useState<'traffic' | 'backup' | null>(null);
+    const [busy, setBusy] = useState<'backup' | null>(null);
 
     // A quiet storefront is its own state. Rendering an account with nothing in
     // it would read as "you have no subscription", which is the opposite of what
@@ -114,8 +74,8 @@ export default function StoreAccountCard({ summary, onChanged, onError }: {
         );
     }
 
-    const apply = async (change: { traffic?: boolean; backup?: boolean }) => {
-        setBusy(change.traffic !== undefined ? 'traffic' : 'backup');
+    const apply = async (change: { backup?: boolean }) => {
+        setBusy('backup');
         const res = await setStoreBillingConsent(change);
         setBusy(null);
         if (!res.success) {
@@ -172,19 +132,20 @@ export default function StoreAccountCard({ summary, onChanged, onError }: {
             <div className="card p-5 space-y-4">
                 <div className="text-sm font-medium text-(--base-09)">When an allowance runs out</div>
                 <ConsentRow
-                    title="Bill me for extra traffic"
-                    kind="traffic"
-                    state={trafficSwitch(summary)}
-                    busy={busy === 'traffic'}
-                    onChange={next => apply({ traffic: next })}
-                />
-                <ConsentRow
                     title="Bill me for extra backup storage"
                     kind="backup"
                     state={backupSwitch(summary)}
                     busy={busy === 'backup'}
                     onChange={next => apply({ backup: next })}
                 />
+                {/* The traffic consent is NOT here. It sits with the traffic
+                    bars under My infrastructure, where the person watching an
+                    allowance fill up is the person deciding - and one switch in
+                    one place, because two views of the same money decision can
+                    disagree the moment a write fails. */}
+                <p className="text-xs text-(--base-06)">
+                    Metered traffic is switched beside your traffic usage, under My infrastructure.
+                </p>
             </div>
         </div>
     );

@@ -106,19 +106,45 @@ func (a *TrafficAggregator) Start(ctx context.Context) {
 type trafficAcc struct {
 	edge  int64
 	relay int64
-	// byRegion splits the same bytes by (region, kind). Per kind it sums to the
-	// matching total above, so the breakdown always adds up to the bill; a
+	// byRegion splits the same bytes by (region, kind, product). Per kind it sums
+	// to the matching total above, so the breakdown always adds up to the bill; a
 	// producer that did not tag contributes to regionUnknown rather than
 	// vanishing from the split.
-	byRegion map[regionKind]int64
+	byRegion map[breakdownCell]int64
 }
 
-// regionKind is one cell of the breakdown: where the bytes moved, and which
-// component moved them. Player traffic and data traffic are priced and capped
-// separately, so they cannot share a cell.
-type regionKind struct {
-	region string
-	kind   string
+// breakdownCell is one cell of the breakdown: where the bytes moved, which
+// component moved them, and which product they belong to. Player traffic and
+// data traffic are priced and capped separately, so they cannot share a cell;
+// the product cannot either, or one product's bytes are attributed to the other
+// by the upsert.
+type breakdownCell struct {
+	region  string
+	kind    string
+	product string
+}
+
+// trafficProductOf reads the product off the counter's SUBJECT.
+//
+// The subject already carries it and no producer had to be changed: Core writes
+// an "owner:<userID>" subject for a route-only address, because a route-only
+// tenant has no server of ours to key on, and a bare server UUID for a server
+// running on a machine the tenant owns. Anything else is a shape this does not
+// know, and it says so rather than guessing - those bytes are still in the
+// billing total.
+//
+// Note what this means for data traffic: the beam relay only ever meters a
+// server UUID, so relay bytes are BYON by construction. A route-only customer
+// runs their own server and never touches beam, so an empty route-only cell for
+// file transfers is correct rather than missing.
+func trafficProductOf(subject string) string {
+	if strings.HasPrefix(subject, trafficOwnerSubjectPrefix) {
+		return store.TrafficProductRoute
+	}
+	if subject != "" {
+		return store.TrafficProductBYON
+	}
+	return store.TrafficProductUnknown
 }
 
 // seenUpdate is a `seen` key write deferred until the tenant's DB row is written.
@@ -162,8 +188,8 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 			if bytes <= 0 {
 				continue
 			}
-			if err := a.store.AddTrafficUsageRegion(tenant, period, rk.region, rk.kind, bytes); err != nil {
-				log.Printf("traffic aggregator: add region usage for %s/%s/%s: %v", tenant, rk.region, rk.kind, err)
+			if err := a.store.AddTrafficUsageRegion(tenant, period, rk.region, rk.kind, rk.product, bytes); err != nil {
+				log.Printf("traffic aggregator: add region usage for %s/%s/%s/%s: %v", tenant, rk.region, rk.kind, rk.product, err)
 			}
 		}
 		for _, su := range tenantSeen[tenant] {
@@ -285,7 +311,7 @@ func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners m
 			}
 			acc := perTenant[tenant]
 			if acc == nil {
-				acc = &trafficAcc{byRegion: map[regionKind]int64{}}
+				acc = &trafficAcc{byRegion: map[breakdownCell]int64{}}
 				perTenant[tenant] = acc
 			}
 			if isEdge {
@@ -297,7 +323,7 @@ func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners m
 			// transfers and is region-aware in its own right, so leaving it out
 			// would put a US customer's data traffic nowhere - which is the
 			// cross-region case the split exists for.
-			a.collectRegions(ctx, subject, kind, fields, last > 0, acc, tenantSeen, tenant)
+			a.collectRegions(ctx, subject, kind, trafficProductOf(subject), fields, last > 0, acc, tenantSeen, tenant)
 			tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
 		}
 		cursor = next
@@ -353,7 +379,7 @@ func regionBytes(fields map[string]string) map[string]int64 {
 // what the total does on the same tick.
 func (a *TrafficAggregator) collectRegions(
 	ctx context.Context,
-	subject, kind string,
+	subject, kind, product string,
 	fields map[string]string,
 	hadTotalSeen bool,
 	acc *trafficAcc,
@@ -387,9 +413,9 @@ func (a *TrafficAggregator) collectRegions(
 			continue
 		}
 		if acc.byRegion == nil {
-			acc.byRegion = map[regionKind]int64{}
+			acc.byRegion = map[breakdownCell]int64{}
 		}
-		acc.byRegion[regionKind{region: region, kind: kind}] += delta
+		acc.byRegion[breakdownCell{region: region, kind: kind, product: product}] += delta
 		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
 	}
 }

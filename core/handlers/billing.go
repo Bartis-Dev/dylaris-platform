@@ -68,6 +68,19 @@ type trafficPool struct {
 	IncludedGB *int64 `json:"includedGb"`
 	Pct        int    `json:"pct"`
 	Warn       int    `json:"warn"`
+	// ByProductBytes splits UsedGB by which product moved the bytes ("byon",
+	// "route", "" for rows written before the split existed).
+	//
+	// BYTES, and the field name says so, because the rest of this struct is in
+	// GB: a share under a gigabyte truncates to 0, and two of them beside a
+	// total of 1 GB reads as a bug rather than as rounding. The panel formats
+	// them.
+	//
+	// A breakdown, never a second pool. The allowance is granted per unit HELD
+	// and pooled across products, so these shares are judged against nothing -
+	// giving each product its own ceiling would hand a tenant the same free
+	// allowance once per product they own.
+	ByProductBytes map[string]int64 `json:"byProductBytes,omitempty"`
 }
 
 // GetMyBilling GET /api/me/billing - the caller's lifecycle state for the banner.
@@ -160,29 +173,15 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 	}
 	units := trafficUnits(b)
 
-	// Non-regional kinds are folded onto one pool BEFORE limits are resolved, or
-	// a tenant whose transfers were attributed to two regions would be shown the
-	// whole allowance in each of them.
-	type key struct{ region, kind string }
-	used := map[key]int64{}
-	order := make([]key, 0, len(cells))
-	for _, c := range cells {
-		k := key{services.TrafficLimitRegion(c.Region, c.Kind), c.Kind}
-		if _, seen := used[k]; !seen {
-			order = append(order, k)
-		}
-		used[k] += c.Bytes
-	}
-
 	out := &myTrafficStatus{BillingEnabled: b.TrafficBillingEnabled}
 	limited := false
-	for _, k := range order {
-		lim, err := services.ResolveTrafficLimit(h.state.Store, userID, k.region, k.kind)
+	for _, c := range foldTrafficCells(cells) {
+		lim, err := services.ResolveTrafficLimit(h.state.Store, userID, c.region, c.kind)
 		if err != nil {
 			return nil
 		}
-		usedGB := used[k] / trafficGB
-		p := trafficPool{Kind: k.kind, Region: k.region, UsedGB: usedGB}
+		usedGB := c.bytes / trafficGB
+		p := trafficPool{Kind: c.kind, Region: c.region, UsedGB: usedGB, ByProductBytes: c.byProduct}
 		if lim.IncludedGB != nil {
 			limited = true
 			total := *lim.IncludedGB * units
@@ -469,4 +468,48 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 			"r2QuotaGb":     get(services.BillingR2QuotaKey, "0"),
 		},
 	})
+}
+
+// trafficCell is one POOL: the unit an allowance is resolved for and compared
+// against.
+type trafficCell struct {
+	region, kind string
+	bytes        int64
+	// byProduct describes who filled the pool. Never a second pool - see below.
+	byProduct map[string]int64
+}
+
+// foldTrafficCells collapses the stored breakdown rows into the pools that are
+// actually judged.
+//
+// Two dimensions are folded away here, and both would multiply an allowance if
+// they were not:
+//
+//   - REGION, for kinds that are not regional. File transfers hold one global
+//     pool, so leaving them split would hand the tenant the whole allowance
+//     once per region their transfers happened to be attributed to.
+//   - PRODUCT, always. The included traffic is granted per unit HELD and pooled
+//     across products, so a tenant with a node and a route-only address has one
+//     allowance and not one each. This is the reason the product split was safe
+//     to add at all, and it is the property to check first if a pool ever starts
+//     showing twice the ceiling it should.
+//
+// Order follows first appearance, which is bytes-descending as the store
+// returns it, so the busiest pool is drawn first.
+func foldTrafficCells(cells []store.RegionUsage) []trafficCell {
+	type key struct{ region, kind string }
+	at := map[key]int{}
+	out := make([]trafficCell, 0, len(cells))
+	for _, c := range cells {
+		k := key{services.TrafficLimitRegion(c.Region, c.Kind), c.Kind}
+		i, seen := at[k]
+		if !seen {
+			i = len(out)
+			at[k] = i
+			out = append(out, trafficCell{region: k.region, kind: k.kind, byProduct: map[string]int64{}})
+		}
+		out[i].bytes += c.Bytes
+		out[i].byProduct[c.Product] += c.Bytes
+	}
+	return out
 }

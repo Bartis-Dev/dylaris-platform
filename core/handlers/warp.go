@@ -851,16 +851,18 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if lim.MaxNodes != nil {
 		// Both kinds of pending identity, not just this endpoint's own keys: an
-		// enroll token is a machine mid-setup exactly as an unredeemed key is,
-		// and counting one but not the other let the two mint gates hand out
-		// more slots between them than the cap allows. See NodeSlotsUsed.
-		used, uerr := services.NodeSlotsUsed(h.state.Store, userID)
-		if uerr != nil {
+		// enroll token is the OTHER half of the machine an unredeemed key
+		// belongs to, and counting one but not the other let the two mint gates
+		// hand out more slots between them than the cap allows. Asked as "what
+		// would they hold after this", so the second half of a machine already
+		// counted is not refused. See services.NodeSlots.
+		slots, serr := services.CountNodeSlots(h.state.Store, userID)
+		if serr != nil {
 			sendJSONError(w, "Failed to count nodes", http.StatusInternalServerError)
 			return
 		}
-		if services.AtOrOver(lim.MaxNodes, used) {
-			sendJSONError(w, fmt.Sprintf("Node limit reached (%d). Revoke an unused key or enroll token, or remove a machine first.", *lim.MaxNodes), http.StatusForbidden)
+		if services.Exceeds(lim.MaxNodes, slots.UsedWithWarpKey()) {
+			sendJSONError(w, fmt.Sprintf("Node limit reached (%d). Remove a machine, or revoke an unused key or enroll token, before adding another.", *lim.MaxNodes), http.StatusForbidden)
 			return
 		}
 	}
@@ -943,14 +945,16 @@ func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
 		out = append(out, nodeKey{ID: k.ID, Name: k.Name, NodeID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00")})
 	}
 	lim, _ := services.EffectiveLimits(h.state.Store, userID)
-	nodes, _ := h.state.Store.CountNodesByOwner(userID)
+	// Through the same counter the mint gates use, or the panel shows a number
+	// the endpoint does not enforce and the cap looks arbitrary the moment it is
+	// hit. It did: this counted nodes plus every unrevoked key in the list -
+	// which includes keys already redeemed by a machine that is now a node, and
+	// omits pending enroll tokens entirely.
+	used, _ := services.NodeSlotsUsed(h.state.Store, userID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true, "keys": out,
-		// used counts nodes AND unredeemed keys, matching the mint gate - the
-		// panel must show the same number the endpoint enforces or the cap looks
-		// arbitrary the moment it is hit.
-		"used": nodes + len(out), "limit": lim.MaxNodes,
+		"used": used, "limit": lim.MaxNodes,
 	})
 }
 

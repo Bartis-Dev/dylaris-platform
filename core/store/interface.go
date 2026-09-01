@@ -79,7 +79,7 @@ type Store interface {
 	AddTrafficUsage(userID string, period time.Time, edgeBytes, relayBytes int64) error
 	// Per-region breakdown of the same edge bytes. A breakdown, never a second
 	// source of truth - see AddTrafficUsageRegion.
-	AddTrafficUsageRegion(userID string, period time.Time, region, kind string, bytes int64) error
+	AddTrafficUsageRegion(userID string, period time.Time, region, kind, product string, bytes int64) error
 	GetTrafficUsageRegions(userID string, period time.Time) ([]RegionUsage, error)
 	SetTrafficBackupBytes(userID string, period time.Time, backupBytes int64) error
 	GetTrafficUsage(userID string, period time.Time) (*TrafficUsage, error)
