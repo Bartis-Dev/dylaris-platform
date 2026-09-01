@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.01.12
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- The system event stream sent every account's identifier to every signed-in
+  session. A frame naming an account now reaches that account and admins only.
+  `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.01.11
 
 ### Features

@@ -36,6 +36,30 @@ type SystemEventsHandler struct {
 // from refreshing; forwarding one leaks an integer. So only a resolution that
 // actually says "no" drops the frame.
 func (h *SystemEventsHandler) mayReceive(r *http.Request, payload string) bool {
+	userID, _ := r.Context().Value("userID").(string)
+	username, _ := r.Context().Value("username").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+
+	// A frame naming an ACCOUNT goes only to that account, and to admins.
+	//
+	// packs.changed carries the pack owner's id and users.changed the subject's,
+	// and the filter below looks only at serverId - so both reached every
+	// authenticated session, handing any account the user ids of everyone else
+	// who touched a modpack, plus the timing of that activity. The pack owner id
+	// is the more expensive of the two: it is the first path segment of
+	// modpacks/<ownerID>/<slug>/<version>/pack.mrpack, which /solder/mirror
+	// serves to anyone, unauthenticated, on purpose (the Technic launcher cannot
+	// present a credential). That storage layout is accepted BECAUSE the path is
+	// not derivable from outside; broadcasting one of its two unknown segments is
+	// what makes it derivable.
+	//
+	// Nothing loses a refresh: every subscriber in the panel ignores the payload
+	// and re-fetches, and what it re-fetches is its OWN packs (listPacks) and its
+	// OWN entitlement. An id that is not yours was never actionable.
+	if subject := eventAccountID(payload); subject != "" && !isAdmin && subject != userID {
+		return false
+	}
+
 	serverID := eventServerID(payload)
 	if serverID == 0 {
 		return true // no server named: a platform-wide signal, or an empty one
@@ -43,9 +67,6 @@ func (h *SystemEventsHandler) mayReceive(r *http.Request, payload string) bool {
 	if h.state == nil || h.state.Authz == nil {
 		return true
 	}
-	userID, _ := r.Context().Value("userID").(string)
-	username, _ := r.Context().Value("username").(string)
-	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	res, err := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
 	if err != nil {
 		return true
@@ -53,6 +74,31 @@ func (h *SystemEventsHandler) mayReceive(r *http.Request, payload string) bool {
 	// overview.read is "may this account see that this server exists at all",
 	// which is exactly what a bare id discloses. Every invite carries it.
 	return res.HasCap("overview.read")
+}
+
+// eventAccountID pulls the account an event is ABOUT out of its payload: the
+// pack owner (ownerId) or the subject of a user change (userId). Returns "" when
+// the frame names neither, which is the common case - most of these payloads are
+// empty cache-invalidation signals.
+//
+// Both spellings are read here rather than one being normalised at the publish
+// sites, because the point is to catch the id wherever it appears: a frame that
+// names an account under a name this does not know is a frame that goes out
+// unscoped, and there is nothing to fail on.
+func eventAccountID(payload string) string {
+	var ev struct {
+		Payload struct {
+			OwnerID string `json:"ownerId"`
+			UserID  string `json:"userId"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(payload), &ev) != nil {
+		return ""
+	}
+	if ev.Payload.OwnerID != "" {
+		return ev.Payload.OwnerID
+	}
+	return ev.Payload.UserID
 }
 
 // eventServerID pulls the serverId out of an event payload, or 0 when it names
