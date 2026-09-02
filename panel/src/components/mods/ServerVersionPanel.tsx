@@ -1,17 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, ArrowUpRight, X, Copy, Link2, RefreshCw } from 'lucide-react';
+import { Loader2, ArrowUpRight, X, Copy } from 'lucide-react';
 import CompatMatrix from '@/components/mods/CompatMatrix';
+import { UnmanagedJars } from '@/components/mods/UnmanagedJars';
 import UnlinkedContentWarning from '@/components/mods/UnlinkedContentWarning';
 import { useCompat } from '@/components/mods/useCompat';
 import {
     copySubServer,
     getUnmanagedMods,
-    identifyMods,
     updateServerVersion,
     type CompatVersion,
-    type UnmanagedFile,
 } from '@/lib/api/modcompat';
 import Checkbox from '@/components/ui/Checkbox';
 import { isKnownLoader } from '@/lib/serverLoaderMetadata';
@@ -39,38 +38,22 @@ export default function ServerVersionPanel({
     const loaderKnown = isKnownLoader(server.installerType || '');
     const compat = useCompat({ kind: 'server', serverId: server.id }, current);
 
-    const [unmanaged, setUnmanaged] = useState<UnmanagedFile[]>([]);
-    const [scanning, setScanning] = useState(false);
-    const [identifying, setIdentifying] = useState(false);
     const [target, setTarget] = useState<CompatVersion | null>(null);
-
+    // Kept only to colour the compat matrix's own warning. The list, the
+    // identify action and the per-file reasons live in UnmanagedJars now, which
+    // the Content tab shows too - somebody who uploaded a jar looks there, not
+    // on a version-migration screen.
+    const [unmanagedCount, setUnmanagedCount] = useState(0);
     const scan = useCallback(async () => {
-        setScanning(true);
-        setUnmanaged(await getUnmanagedMods(server.id));
-        setScanning(false);
-    }, [server.id]);
-
-    useEffect(() => { scan(); }, [scan]);
-
-    const handleIdentify = async () => {
-        setIdentifying(true);
-        const res = await identifyMods(server.id, unmanaged.map(f => ({ directory: f.directory, name: f.name })));
-        setIdentifying(false);
-        if (!res.success) {
-            showToast(res.message || 'Identifying failed', false);
-            return;
+        try {
+            setUnmanagedCount((await getUnmanagedMods(server.id)).length);
+        } catch {
+            // The banner below is decoration for this panel; UnmanagedJars is
+            // what reports a failed scan, and it is on the screen.
+            setUnmanagedCount(0);
         }
-        const linked = res.linked || 0;
-        const missed = (res.results || []).filter(r => !r.matched).length;
-        showToast(
-            linked === 0
-                ? 'None of these files matched a Modrinth version.'
-                : `Linked ${linked} ${linked === 1 ? 'file' : 'files'}${missed > 0 ? `, ${missed} still unidentified` : ''}.`,
-            linked > 0,
-        );
-        await scan();
-        onChanged();
-    };
+    }, [server.id]);
+    useEffect(() => { scan(); }, [scan]);
 
     if (!current || !loaderKnown) {
         return (
@@ -91,37 +74,13 @@ export default function ServerVersionPanel({
         // scrolls inside it. Without them it is as tall as its content, and the
         // page's overflow-hidden clips the end of it out of reach.
         <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto">
-            {unmanaged.length > 0 && (
-                <UnlinkedContentWarning
-                    count={unmanaged.length}
-                    context="server"
-                    action={
-                        <div className="flex flex-wrap items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={handleIdentify}
-                                disabled={identifying}
-                                className="btn btn-secondary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                                {identifying ? <Loader2 size={12} className="animate-spin" /> : <Link2 size={12} />}
-                                {identifying ? 'Identifying' : 'Identify against Modrinth'}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={scan}
-                                disabled={scanning}
-                                className="btn btn-secondary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                                <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} />
-                                Rescan
-                            </button>
-                            <span className="text-xs text-(--base-06) font-mono truncate">
-                                {unmanaged.map(f => `${f.directory}/${f.name}`).join('  ')}
-                            </span>
-                        </div>
-                    }
-                />
-            )}
+            <UnmanagedJars
+                serverId={server.id}
+                serverUuid={server.uuid}
+                activeSubServer={server.activeSubServer}
+                onChanged={() => { scan(); onChanged(); }}
+                showToast={showToast}
+            />
 
             <CompatMatrix
                 data={compat.data}
@@ -150,7 +109,7 @@ export default function ServerVersionPanel({
                 <MoveDialog
                     server={server}
                     target={target}
-                    unmanaged={unmanaged.length}
+                    unmanaged={unmanagedCount}
                     onClose={() => setTarget(null)}
                     onChanged={onChanged}
                     showToast={showToast}

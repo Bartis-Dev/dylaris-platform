@@ -19,6 +19,7 @@ import {
 import { pickNewestMatchingVersion, compareInstalledVsLatest, type ModStatus } from '@/lib/modVersionCompare';
 import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
 import ServerVersionPanel from '@/components/mods/ServerVersionPanel';
+import { UnmanagedJars } from '@/components/mods/UnmanagedJars';
 import { isMcVersion } from '@/lib/validation';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { declareServerLoaderMetadata } from '@/lib/api';
@@ -1069,7 +1070,20 @@ export default function ServerContentPage() {
             )}
 
             {section === 'installed' && (
-                <div className="flex-1 overflow-y-auto">
+                <div className="flex-1 overflow-y-auto space-y-2">
+                    {/* Before the branch below, not inside its non-empty arm: a server
+                        whose jars were all placed by hand has NO managed mods, which is
+                        the likeliest way to end up looking for this - and the empty
+                        branch would have won. Renders nothing when there are none. */}
+                    {server && (
+                        <UnmanagedJars
+                            serverId={serverId}
+                            serverUuid={server.uuid}
+                            activeSubServer={server.activeSubServer}
+                            onChanged={refreshInstalled}
+                            showToast={showToast}
+                        />
+                    )}
                     {installedError ? (
                         <div className="text-center py-12 text-sm text-(--warning-light)">
                             <AlertTriangle size={20} className="mx-auto mb-2" />

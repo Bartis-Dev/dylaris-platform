@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.10
+
+### Features
+- Jars placed by hand - by SFTP, the file manager or the desktop client - are
+  now listed on the Content tab and can be identified against Modrinth from
+  there. Identified ones become ordinary entries with update checks. This only
+  existed on the Minecraft-version screen before. `core` `panel`
+- A file that identify cannot link now shows the reason, and can be deleted
+  from the list. That is how the duplicate jars left by the pre-fix update path
+  are cleared: they resolve to a project that is already installed under
+  another name, and Core says so. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The unknown-jar check reported a server whose node could not be reached as a
+  server with nothing out of place. Core already distinguished the two; the
+  panel flattened them. `core` `panel`
+
 ## 2026.09.02.9
 
 ### Features

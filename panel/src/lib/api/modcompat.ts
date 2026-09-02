@@ -1,4 +1,4 @@
-import { API_URL, getAuthHeader, handleError } from '@/lib/api/core';
+import { API_URL, getAuthHeader, handleError, handleResponse } from '@/lib/api/core';
 
 // Cross-Minecraft-version availability, shared by the modpack builder and a
 // modded server. Both endpoints return the identical matrix shape, which is why
@@ -142,15 +142,26 @@ export interface UnmanagedFile {
     size: number;
 }
 
+// RAISES on a failed request.
+//
+// Core goes out of its way to keep these apart, and says why in its own comment
+// at the handler: the node answers a MISSING directory with an empty list, so an
+// error there is a real failure to look, and "reporting that as nothing
+// unmanaged would hide exactly the thing this endpoint exists to reveal". It
+// returns 502 for it.
+//
+// This wrapper then flattened the 502 back into an empty list, which put the
+// guard on one side of the boundary only. A server whose node could not be
+// reached read as a server with nothing out of place.
 export async function getUnmanagedMods(serverId: number): Promise<UnmanagedFile[]> {
-    try {
-        const res = await fetch(`${API_URL}/servers/${serverId}/mods/unmanaged`, {
-            headers: getAuthHeader(),
-        });
-        if (!res.ok) return [];
-        const data = await res.json();
-        return data.files || [];
-    } catch { return []; }
+    const res = await fetch(`${API_URL}/servers/${serverId}/mods/unmanaged`, {
+        headers: getAuthHeader(),
+    });
+    const data = await handleResponse(res);
+    if (!(data as any)?.success) {
+        throw new Error((data as any)?.message || 'Could not check this server for unknown jars.');
+    }
+    return (data as any).files || [];
 }
 
 export interface IdentifyResult {

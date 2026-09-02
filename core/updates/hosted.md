@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.10
+
+### Features
+- Files you uploaded yourself now show up on the Content tab, where they can be
+  matched against Modrinth. Matched ones become normal entries and get update
+  checks like anything you installed from the panel.
+- A file that cannot be matched says why, and can be deleted from there. This is
+  how you clear the duplicate jars left behind by mod updates before this week:
+  they are recognised as a second copy of something already installed.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The same check reported "nothing out of place" when it had failed to look at
+  all. It now says so.
+
 ## 2026.09.02.9
 
 ### Features

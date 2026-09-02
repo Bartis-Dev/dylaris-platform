@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { getLinkUpdateStates } from './linkUpdates';
 import { listInstalledMods, getServerModpackContents } from './modrinth';
+import { getUnmanagedMods } from './modcompat';
 
 afterEach(() => {
     vi.unstubAllGlobals();
@@ -57,5 +58,32 @@ describe('the two mod lists fail differently on purpose', () => {
     it('getServerModpackContents still fails open', async () => {
         respond(500, { success: false, message: 'no snapshot' });
         await expect(getServerModpackContents(1)).resolves.toEqual([]);
+    });
+});
+
+// The strongest instance of the shape, because Core deliberately built the
+// other half of it. Its handler comment says the node answers a MISSING
+// directory with an empty list, so an error there is a real failure to LOOK,
+// and "reporting that as nothing unmanaged would hide exactly the thing this
+// endpoint exists to reveal" - so it returns 502.
+//
+// The wrapper then flattened that 502 back into an empty list. The guard
+// existed on one side of the boundary only, and a server whose node could not
+// be reached read as a server with nothing out of place.
+describe('getUnmanagedMods', () => {
+    it('raises rather than reporting that nothing is out of place', async () => {
+        respond(502, { success: false, message: "Could not read this server's files from its node" });
+        await expect(getUnmanagedMods(1)).rejects.toThrow('files from its node');
+    });
+
+    it('returns the files on success', async () => {
+        respond(200, { success: true, files: [{ directory: 'mods', name: 'stray.jar', size: 10 }] });
+        await expect(getUnmanagedMods(1)).resolves.toHaveLength(1);
+    });
+
+    // A tidy server is a real answer and must stay one.
+    it('a server with nothing unmanaged is an empty list', async () => {
+        respond(200, { success: true, files: [] });
+        await expect(getUnmanagedMods(1)).resolves.toEqual([]);
     });
 });
