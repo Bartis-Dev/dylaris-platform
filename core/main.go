@@ -717,6 +717,11 @@ func main() {
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(bgCtx)
 
+	// Mod installs report their outcome on the same per-node channel shape the
+	// backup runs use. Leader-gated for the same reason: Pub/Sub reaches every
+	// replica, and each one would apply the same report.
+	services.NewModInstallResultService(pgStore, redisClient, coreLeader).Start(bgCtx)
+
 	// Scheduled-tasks executor — per-server cron jobs (restart, say).
 	// Leader-gated, 30s tick. Publishes scheduled_tasks.changed via the SSE
 	// channel after each dispatch so the panel updates last-run/next-run.

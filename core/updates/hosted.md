@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.8
+
+### Features
+- The build list of a mod now shows which build your server actually has, and
+  whether an install is still running or failed.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Updating a mod or plugin left the old file next to the new one, so your server
+  loaded both builds of it. Updating now replaces the file. The old build is
+  only removed once the new one has downloaded and been verified, so a failed
+  update leaves your server running what it had. `node`
+- A mod that failed to install was still listed as installed. It now says so,
+  with the reason. `node`
+
 ## 2026.09.02.7
 
 ### Features

@@ -169,6 +169,17 @@ export interface InstalledMod {
     sha512: string;
     installedAt: string;
     installedBy?: string;
+    /**
+     * What the NODE reported, not what the panel hoped for.
+     *
+     * An install is queued work, so this row exists before the node has done
+     * anything: "installing" until it answers, then "installed" or "failed".
+     * Rows written before the node reported at all read as "installed", which
+     * is what they were always taken to be.
+     */
+    status?: 'installing' | 'installed' | 'failed';
+    /** The node's reason for a failure. Empty otherwise. */
+    statusMessage?: string;
 }
 
 // RAISES on a failed request, unlike getServerModpackContents below, which

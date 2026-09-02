@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.8
+
+### Features
+- The build list of a mod now marks the build that is on the server, and says
+  when one is still installing or failed to install. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Updating a mod or plugin left the old jar in place beside the new one, so the
+  server loaded both builds. The new file is downloaded and verified first, then
+  swapped in, and only then is the old one deleted - a failed download now
+  leaves the working build alone. `core` `node`
+- An install that never landed was listed as installed. The node reports the
+  outcome and a failed one says so, with the reason. Update the node to get
+  this; an older node still installs correctly and is recorded the way it was
+  before. `core` `node`
+
 ## 2026.09.02.7
 
 ### Features

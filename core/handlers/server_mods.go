@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"path"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-pkg/validate"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
@@ -168,13 +170,45 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// What this install REPLACES, read BEFORE the upsert overwrites it.
+	//
+	// The row is keyed on the project, so updating a mod rewrote file_name onto
+	// the new jar's name and the old one became unnameable - which is how a
+	// server came to carry both builds with only the newer one removable. The
+	// node needs the old name to delete it, and the history table needs the
+	// whole row to offer a way back.
+	//
+	// A lookup failure is not fatal to the install: the worst case is the old
+	// jar surviving, which is exactly today's behaviour, and refusing the whole
+	// install over it would be a worse trade.
+	prev, prevErr := h.state.Store.GetServerModByProject(serverID, srv.ActiveSubServer, req.ProjectID)
+	if prevErr != nil {
+		log.Printf("install mod: reading the previous row for project %s failed, the old jar may survive: %v",
+			req.ProjectID, prevErr)
+		prev = nil
+	}
+	previousFileName := ""
+	if prev != nil {
+		previousFileName = prev.FileName
+	}
+
+	// One attempt, one id. The node echoes it back and Core only accepts a
+	// report that still names the attempt the row holds, so a slow answer about
+	// a superseded install cannot overwrite the state of the one that replaced
+	// it - two clicks in a row is all that takes.
+	installID := uuid.NewString()
+
 	configPayload := map[string]interface{}{
-		"uuid":            srv.UUID,
-		"activeSubServer": srv.ActiveSubServer,
-		"targetDir":       targetDir,
-		"fileName":        cleanName,
-		"downloadUrl":     req.DownloadURL,
-		"sha512":          req.SHA512,
+		"uuid":             srv.UUID,
+		"activeSubServer":  srv.ActiveSubServer,
+		"targetDir":        targetDir,
+		"fileName":         cleanName,
+		"downloadUrl":      req.DownloadURL,
+		"sha512":           req.SHA512,
+		"previousFileName": previousFileName,
+		"installId":        installID,
+		"serverId":         serverID,
+		"projectId":        req.ProjectID,
 	}
 	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "install_mod", configPayload, nil); err != nil {
 		sendJSONError(w, "Failed to queue install", http.StatusInternalServerError)
@@ -201,6 +235,26 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		TargetDir:   targetDir,
 		SHA512:      req.SHA512,
 		InstalledBy: installedBy,
+		// Not "installed": nothing has been installed yet. The node reports the
+		// outcome on its own channel and Core moves the row from here. A row
+		// used to be written as a fact before dispatch and stayed one whatever
+		// the node found, so a 404 and a hash mismatch both read as success.
+		// installing only when the node is new enough to answer; see
+		// installStatusFor for why an old one is recorded the way it always was.
+		Status:    installStatusFor(r.Context(), h.state, node.Token),
+		InstallID: installID,
+	}
+	// Filed BEFORE the upsert, which is the write that destroys it. A history
+	// failure is logged rather than fatal: the install is already queued, and
+	// losing the way back is smaller than losing the install.
+	//
+	// Only when the version actually changes. Re-installing the same build is a
+	// repair, not a step worth being able to undo.
+	if prev != nil && prev.ModrinthVersionID != req.VersionID {
+		if err := h.state.Store.RecordServerModHistory(serverID, srv.ActiveSubServer, prev); err != nil {
+			log.Printf("install mod: recording history for project %s failed, rollback will not offer this version: %v",
+				req.ProjectID, err)
+		}
 	}
 	if _, err := h.state.Store.UpsertServerMod(mod); err != nil {
 		sendJSONError(w, "Install queued, but DB write failed: "+err.Error(), http.StatusInternalServerError)
@@ -215,6 +269,23 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": "Mod install queued. Restart the server to apply.",
 	})
+}
+
+// ModHistory GET /api/servers/{id}/mods/history - the superseded versions of
+// this sub-server's mods, newest first, so a bad update can be undone.
+func (h *ServerModsHandler) ModHistory(w http.ResponseWriter, r *http.Request) {
+	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
+	srv, ok := h.getServer(serverID)
+	if !ok {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	entries, err := h.state.Store.ListServerModHistory(serverID, srv.ActiveSubServer)
+	if err != nil {
+		sendJSONError(w, "Could not read the mod history", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "history": entries})
 }
 
 // Uninstall DELETE /api/servers/{id}/mods/{modId} - queues removal of one mod

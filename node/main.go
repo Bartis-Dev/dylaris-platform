@@ -1857,7 +1857,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		RunRestore(ctx, rdb, storage, dm, rcmd)
 
 	case "install_mod":
-		runInstallMod(storage, payload)
+		runInstallMod(ctx, rdb, storage, payload)
 	case "remove_mod":
 		runRemoveMod(storage, payload)
 

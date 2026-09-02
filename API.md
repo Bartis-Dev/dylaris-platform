@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **491 routes** in 50 sections: 219 GET, 146 POST, 37 PUT, 36 PATCH, 54 DELETE.
+- **492 routes** in 50 sections: 220 GET, 146 POST, 37 PUT, 36 PATCH, 54 DELETE.
 - **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **336** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **8** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (75)
+- [/api/servers](#apiservers) (76)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -661,6 +661,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/mods` | session | `mods.read` | - | `ServerModsHandler.List` | the mods installed on the server's ACTIVE sub-server, not on every sub-server it has. |
 | POST | `/api/servers/{id:[0-9]+}/mods` | session | `mods.write` | - | `ServerModsHandler.Install` | queues a mod install onto the active sub-server. |
 | GET | `/api/servers/{id:[0-9]+}/mods/compat` | session | `mods.read` | - | `ServerModsHandler.ServerCompat` | - |
+| GET | `/api/servers/{id:[0-9]+}/mods/history` | session | `mods.read` | - | `ServerModsHandler.ModHistory` | the superseded versions of this sub-server's mods, newest first, so a bad update can be undone. |
 | POST | `/api/servers/{id:[0-9]+}/mods/identify` | session | `mods.write` | - | `ServerModsHandler.IdentifyMods` | Asks the node to hash the named files and looks each hash up on Modrinth. |
 | GET | `/api/servers/{id:[0-9]+}/mods/unmanaged` | session | `mods.read` | - | `ServerModsHandler.UnmanagedMods` | A jar placed by hand (SFTP, beam, the file manager) has no row saying which Modrinth project it is, so a version move cannot carry it and cannot even tell whether it would survive. |
 | DELETE | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}` | session | `mods.delete` | - | `ServerModsHandler.Uninstall` | queues removal of one mod from the active sub-server. |

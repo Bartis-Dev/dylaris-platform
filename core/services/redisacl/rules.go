@@ -237,7 +237,10 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 	// and compares it with the token in the channel name.
 	rules = append(rules,
 		"&"+queue.BackupResultsChannel(token),
-		"&"+queue.BackupRestoresChannel(token))
+		"&"+queue.BackupRestoresChannel(token),
+		// Mod-install results, same per-token scoping and for the same reason:
+		// the report names a server and a project, and Core acts on it.
+		"&"+queue.ModResultsChannel(token))
 	for _, u := range serverUUIDs {
 		rules = append(rules, "&dylaris:server:"+u+":stats:live")
 	}

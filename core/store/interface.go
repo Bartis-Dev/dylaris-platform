@@ -639,6 +639,18 @@ type Store interface {
 	UpsertServerMod(m *models.ServerMod) (int, error)
 	ListServerMods(serverID int, subServerName string) ([]models.ServerMod, error)
 	DeleteServerMod(id, serverID int) error
+	// GetServerModByProject is what an install has to read BEFORE its own
+	// upsert: that upsert overwrites file_name, and the overwritten value is
+	// the name of the jar the old version left behind.
+	GetServerModByProject(serverID int, subServerName, projectID string) (*models.ServerMod, error)
+	// SetServerModStatus applies a node's report. Reports false when the row
+	// has moved on to another attempt, which is a late answer rather than an
+	// error.
+	SetServerModStatus(serverID int, subServerName, projectID, installID, status, message string) (bool, error)
+	// RecordServerModHistory files the version an install replaces, keeping the
+	// newest three per project so a bad update can be undone.
+	RecordServerModHistory(serverID int, subServerName string, prev *models.ServerMod) error
+	ListServerModHistory(serverID int, subServerName string) ([]models.ServerModHistoryEntry, error)
 
 	// SetUserBillingConsent records what a tenant agreed to be charged for.
 	// A nil argument leaves that flag alone.

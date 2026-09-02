@@ -22,4 +22,38 @@ type ServerMod struct {
 	SHA512      string    `json:"sha512"`
 	InstalledAt time.Time `json:"installedAt"`
 	InstalledBy *string   `json:"installedBy,omitempty"`
+	// Status is what the NODE reported, not what Core hoped for: "installing"
+	// until it answers, then "installed" or "failed". Rows written before this
+	// existed read as "installed", which is what they were taken to be.
+	Status string `json:"status"`
+	// StatusMessage carries the node's reason for a failure. Empty otherwise.
+	StatusMessage string `json:"statusMessage,omitempty"`
+	// InstallID correlates one attempt with its report. A report naming an
+	// attempt this row no longer holds is a late answer about a superseded
+	// install and is dropped.
+	InstallID string `json:"-"`
 }
+
+// ServerModHistoryEntry is a version this mod USED to be, kept so an update can
+// be undone. Written when an install replaces a different version, newest
+// first, three per project.
+type ServerModHistoryEntry struct {
+	ID                int       `json:"id"`
+	ModrinthProjectID string    `json:"modrinthProjectId"`
+	ModrinthVersionID string    `json:"modrinthVersionId"`
+	Title             string    `json:"title"`
+	FileName          string    `json:"fileName"`
+	TargetDir         string    `json:"targetDir"`
+	SHA512            string    `json:"sha512"`
+	InstalledAt       time.Time `json:"installedAt"`
+	ReplacedAt        time.Time `json:"replacedAt"`
+}
+
+// The three states a server_mods row can be in. An install is queued, so
+// "installed" is something the NODE reports, never something Core assumes at
+// dispatch.
+const (
+	ServerModInstalling = "installing"
+	ServerModInstalled  = "installed"
+	ServerModFailed     = "failed"
+)

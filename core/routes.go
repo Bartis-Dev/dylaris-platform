@@ -97,6 +97,7 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}":              "mods.delete",
 	"/api/servers/{id:[0-9]+}/mods/compat":                      "mods.read",
 	"/api/servers/{id:[0-9]+}/mods/unmanaged":                   "mods.read",
+	"/api/servers/{id:[0-9]+}/mods/history":                     "mods.read",
 	"/api/servers/{id:[0-9]+}/mods/identify":                    "mods.write",
 	"/api/servers/{id:[0-9]+}/modpack-contents":                 "mods.read",
 	"/api/servers/{id:[0-9]+}/installs":                         "server.settings.write",
@@ -807,6 +808,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// numeric-constrained.
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/compat", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.ServerCompat))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/unmanaged", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.UnmanagedMods))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.ModHistory))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/identify", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.IdentifyMods))).Methods("POST")
 	// A version move and a sub-server copy both rewrite what the server IS, so
 	// they take the same capability as reinstall rather than a mods one.

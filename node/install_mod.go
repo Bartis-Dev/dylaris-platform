@@ -15,6 +15,7 @@ package main
 // reason, activeSubServer included - see validActiveSubServer.
 
 import (
+	"context"
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
@@ -27,7 +28,10 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-pkg/queue"
 	"dylaris-pkg/validate"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type installModPayload struct {
@@ -37,6 +41,30 @@ type installModPayload struct {
 	FileName        string `json:"fileName"`
 	DownloadURL     string `json:"downloadUrl"`
 	SHA512          string `json:"sha512"`
+	// PreviousFileName is the jar this install REPLACES, deleted only once the
+	// new one is verified and in place. Empty for a first install, and equal to
+	// FileName when a version keeps the same name - in which case the rename
+	// has already replaced it and there is nothing left to remove.
+	PreviousFileName string `json:"previousFileName"`
+	// Identity for the report. Core cannot match a result to a row without it,
+	// and InstallID additionally tells a late answer about a superseded attempt
+	// apart from the answer to the current one.
+	InstallID string `json:"installId"`
+	ServerID  int    `json:"serverId"`
+	ProjectID string `json:"projectId"`
+}
+
+// modInstallResult is what the node publishes back. Status is "installed" or
+// "failed"; a failure carries the reason, because the operator reading the
+// panel has no access to this node's log.
+type modInstallResult struct {
+	InstallID string `json:"installId"`
+	ServerID  int    `json:"serverId"`
+	SubServer string `json:"subServer"`
+	ProjectID string `json:"projectId"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 type removeModPayload struct {
@@ -46,29 +74,45 @@ type removeModPayload struct {
 	FileName        string `json:"fileName"`
 }
 
-func runInstallMod(storage *StorageManager, payload string) {
+// downloadModFile is the fetch step, named so a test can replace it.
+//
+// Only this step, and deliberately not validateModrinthURL: the host pin is a
+// trust boundary, and a boundary that a variable can move is not one. A test
+// therefore still passes a real cdn.modrinth.com URL and still goes through the
+// same check - it just does not go to the network to decide what happens next.
+var downloadModFile = downloadAndVerify
+
+func runInstallMod(ctx context.Context, rdb *redis.Client, storage *StorageManager, payload string) {
 	var pl installModPayload
 	if err := json.Unmarshal([]byte(payload), &struct {
 		Config *installModPayload `json:"config"`
 	}{Config: &pl}); err != nil {
+		// Nothing to report against: the identity Core matches a result to
+		// lives inside the payload that would not decode.
 		log.Printf("install_mod: decode failed: %v", err)
 		return
 	}
+	// From here on every way out reports, the validation refusals included.
+	fail := func(format string, args ...interface{}) {
+		msg := fmt.Sprintf(format, args...)
+		log.Printf("install_mod: %s", msg)
+		reportModInstall(ctx, rdb, pl, "failed", msg)
+	}
 	if err := validateModrinthURL(pl.DownloadURL); err != nil {
-		log.Printf("install_mod: %v", err)
+		fail("%v", err)
 		return
 	}
 	serverPath := storage.GetServerDir(pl.UUID)
 	if serverPath == "" {
-		log.Printf("install_mod: storage lookup for %s returned empty path", pl.UUID)
+		fail("storage lookup for %s returned empty path", pl.UUID)
 		return
 	}
 	if !validSubDir(pl.TargetDir) {
-		log.Printf("install_mod: invalid target dir %q", pl.TargetDir)
+		fail("invalid target dir %q", pl.TargetDir)
 		return
 	}
 	if !validActiveSubServer(pl.ActiveSubServer) {
-		log.Printf("install_mod: invalid active sub-server %q", pl.ActiveSubServer)
+		fail("invalid active sub-server %q", pl.ActiveSubServer)
 		return
 	}
 	// Same rule Core now applies before queueing (validate.IsPlainFileName), so
@@ -77,7 +121,7 @@ func runInstallMod(storage *StorageManager, payload string) {
 	// is the last thing between it and the filesystem.
 	cleanName := pl.FileName
 	if !validate.IsPlainFileName(cleanName) {
-		log.Printf("install_mod: invalid file name %q", pl.FileName)
+		fail("invalid file name %q", pl.FileName)
 		return
 	}
 	// GetServerDir returns the path up to <uuid>; the active sub-server and
@@ -101,11 +145,11 @@ func runInstallMod(storage *StorageManager, payload string) {
 	// creates the target.
 	destDir, err := resolveWithinDir(serverPath, filepath.Join(pl.ActiveSubServer, pl.TargetDir))
 	if err != nil {
-		log.Printf("install_mod: %v", err)
+		fail("%v", err)
 		return
 	}
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		log.Printf("install_mod: mkdir %s: %v", destDir, err)
+		fail("mkdir %s: %v", destDir, err)
 		return
 	}
 	// The .part file is the one the download actually opens, so it is the one
@@ -113,22 +157,77 @@ func runInstallMod(storage *StorageManager, payload string) {
 	// does not follow a link.
 	tmpFile, err := resolveWithinDir(destDir, cleanName+".part")
 	if err != nil {
-		log.Printf("install_mod: %v", err)
+		fail("%v", err)
 		return
 	}
 	destFile := filepath.Join(destDir, cleanName)
 
-	if err := downloadAndVerify(pl.DownloadURL, tmpFile, pl.SHA512); err != nil {
+	if err := downloadModFile(pl.DownloadURL, tmpFile, pl.SHA512); err != nil {
 		os.Remove(tmpFile)
-		log.Printf("install_mod: download failed for %s: %v", cleanName, err)
+		fail("download failed for %s: %v", cleanName, err)
 		return
 	}
 	if err := os.Rename(tmpFile, destFile); err != nil {
 		os.Remove(tmpFile)
-		log.Printf("install_mod: rename %s → %s: %v", tmpFile, destFile, err)
+		fail("rename %s to %s: %v", tmpFile, destFile, err)
 		return
 	}
+	// ONLY now, and this order is the whole fix.
+	//
+	// The jar an update replaced was never removed, so an updated server carried
+	// both builds in mods/ and loaded both. Deleting it FIRST - the obvious
+	// reading of "replace" - is worse than the bug it fixes: a download that 404s
+	// or fails its hash would leave the server with neither build. Download,
+	// verify, swap in, and only then drop the old one.
+	//
+	// Deleting a jar the running server has open is safe and needs no stop. The
+	// JVM holds the inode, not the name, so it keeps reading the old file until
+	// it exits and picks the new one up on the next start - which is also why an
+	// install has always only taken effect after a restart.
+	if pl.PreviousFileName != "" && pl.PreviousFileName != cleanName {
+		switch old, rerr := resolveWithinDir(destDir, pl.PreviousFileName); {
+		case !validate.IsPlainFileName(pl.PreviousFileName):
+			log.Printf("install_mod: not deleting previous %q: not a plain file name", pl.PreviousFileName)
+		case rerr != nil:
+			log.Printf("install_mod: previous %q: %v", pl.PreviousFileName, rerr)
+		default:
+			if err := os.Remove(old); err != nil && !os.IsNotExist(err) {
+				// Still reported as installed below, because it IS: the new jar is
+				// in place and only the cleanup failed. Calling that "failed" would
+				// invite a retry that cannot help.
+				log.Printf("install_mod: removing previous %s: %v", old, err)
+			} else {
+				log.Printf("install_mod: removed previous %s", pl.PreviousFileName)
+			}
+		}
+	}
 	log.Printf("install_mod: installed %s into %s", cleanName, destDir)
+	reportModInstall(ctx, rdb, pl, "installed", "")
+}
+
+// reportModInstall publishes the outcome on THIS node's own channel.
+//
+// The channel name is the only thing Core can attribute a Pub/Sub message by -
+// see pkg/queue/modchannels.go - so it is per node, and Core re-derives the
+// server's node and compares. A publish that fails is logged and nothing more:
+// the row then stays "installing", which is wrong in the safe direction, unlike
+// a row claiming a success nobody confirmed.
+func reportModInstall(ctx context.Context, rdb *redis.Client, pl installModPayload, status, message string) {
+	if rdb == nil || pl.InstallID == "" {
+		return
+	}
+	data, _ := json.Marshal(modInstallResult{
+		InstallID: pl.InstallID,
+		ServerID:  pl.ServerID,
+		SubServer: pl.ActiveSubServer,
+		ProjectID: pl.ProjectID,
+		Status:    status,
+		Message:   message,
+		Timestamp: time.Now().Unix(),
+	})
+	if err := rdb.Publish(ctx, queue.ModResultsChannel(nodeID), data).Err(); err != nil {
+		log.Printf("install_mod: result publish failed: %v", err)
+	}
 }
 
 func runRemoveMod(storage *StorageManager, payload string) {

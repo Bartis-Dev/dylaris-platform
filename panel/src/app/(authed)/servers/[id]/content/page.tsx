@@ -23,6 +23,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { declareServerLoaderMetadata } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
+import { installedState, isOnServer } from '@/lib/installedState';
 import { useBusy } from '@/lib/useBusy';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
@@ -723,7 +724,12 @@ export default function ServerContentPage() {
                                 <div className="text-center py-12 text-sm text-(--base-06)">No projects match.</div>
                             ) : (
                                 searchResult.hits.map(hit => {
-                                    const installedMod = installedByProject.get(hit.project_id);
+                                    // isOnServer, not "a row exists": a queued install has not
+                                    // happened yet and a failed one never will, so neither is a
+                                    // thing to compare a newer build against - and neither should
+                                    // wear the badge that says the server has this mod.
+                                    const row = installedByProject.get(hit.project_id);
+                                    const installedMod = isOnServer(row) ? row : undefined;
                                     const candidates = installedMod ? installedRowVersions.get(hit.project_id) : undefined;
                                     const status: RowStatus = !installedMod
                                         ? 'not-installed'
@@ -835,25 +841,39 @@ export default function ServerContentPage() {
                                                 ) : (
                                                     sortedVersions.slice(0, 30).map(v => {
                                                         const highlight = v.id === highlightVersionId;
+                                                        // Which build is on the server. The list used to say only
+                                                        // which build is NEWEST, so the one question you open it
+                                                        // with - what have I got - had no answer here.
+                                                        const state = installedState(installedByProject.get(projectDetail.id), v.id);
                                                         return (
                                                             <div
                                                                 key={v.id}
                                                                 className={`flex items-center gap-2 p-2 rounded-md border ${
-                                                                    highlight ? 'border-(--accent-border) bg-(--accent-ghost)' : 'border-(--base-04)'
+                                                                    state === 'installed' ? 'border-(--success)/40 bg-(--success-ghost)'
+                                                                        : state === 'failed' ? 'border-(--warning)/40 bg-(--warning-ghost)'
+                                                                        : highlight ? 'border-(--accent-border) bg-(--accent-ghost)'
+                                                                        : 'border-(--base-04)'
                                                                 }`}
                                                             >
                                                                 <div className="min-w-0 flex-1">
-                                                                    <div className="flex items-center gap-1.5">
+                                                                    <div className="flex items-center gap-1.5 flex-wrap">
                                                                         <span className="text-sm font-medium text-(--base-09) truncate">{v.version_number}</span>
-                                                                        {highlight && <span className="mono-label text-(--accent-light) shrink-0">newest · {defaultMcVersion}</span>}
+                                                                        {state === 'installed' && <span className="mono-label text-(--success) shrink-0">on this server</span>}
+                                                                        {state === 'installing' && <span className="mono-label text-(--base-06) shrink-0">installing…</span>}
+                                                                        {state === 'failed' && <span className="mono-label text-(--warning-light) shrink-0">install failed</span>}
+                                                                        {highlight && state === null && <span className="mono-label text-(--accent-light) shrink-0">newest · {defaultMcVersion}</span>}
                                                                     </div>
                                                                     <div className="text-[10px] font-mono text-(--base-06) truncate">
                                                                         {v.version_type} · {v.loaders.join(', ')} · MC {v.game_versions.join(', ')}
                                                                     </div>
                                                                 </div>
-                                                                <button onClick={() => handleInstall(projectDetail, v)} className="btn btn-primary btn-sm shrink-0">
+                                                                <button
+                                                                    onClick={() => handleInstall(projectDetail, v)}
+                                                                    disabled={state === 'installing'}
+                                                                    className="btn btn-secondary btn-sm shrink-0"
+                                                                >
                                                                     <Download size={11} />
-                                                                    Install
+                                                                    {state === 'installed' ? 'Reinstall' : state === 'failed' ? 'Try again' : 'Install'}
                                                                 </button>
                                                             </div>
                                                         );
@@ -907,8 +927,24 @@ export default function ServerContentPage() {
                                         <div className="text-sm font-medium text-(--base-09)">{m.title || m.fileName}</div>
                                         <div className="text-xs text-(--base-06) font-mono">{m.fileName}</div>
                                         <div className="text-xs text-(--base-06) mt-0.5">
-                                            Installed {new Date(m.installedAt).toLocaleString()}
+                                            {m.status === 'installing'
+                                                ? 'Installing - the node is downloading it'
+                                                : m.status === 'failed'
+                                                ? null
+                                                : `Installed ${new Date(m.installedAt).toLocaleString()}`}
                                         </div>
+                                        {/* The node reported a reason and this is the only place it can
+                                            reach. Core used to write this row before dispatching and never
+                                            revisit it, so a download that 404ed listed as an installed mod. */}
+                                        {m.status === 'failed' && (
+                                            <div className="mt-1 flex items-start gap-1.5 text-xs text-(--warning-light)">
+                                                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                                <span>
+                                                    This did not install. The server is still running whatever it
+                                                    had before.{m.statusMessage ? ` ${m.statusMessage}` : ''}
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
                                         <a

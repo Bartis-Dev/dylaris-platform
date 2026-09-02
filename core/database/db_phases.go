@@ -115,6 +115,57 @@ func applyPhase10Schema(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS target_dir VARCHAR(16) NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("phase 10: add server_mods.target_dir: %w", err)
 	}
+	// An install is queued, not performed, so the row used to be written as a
+	// fact before the node had done anything - and it stayed a fact whatever the
+	// node found. A download that 404ed, a hash that did not match and a
+	// successful install were the same row.
+	//
+	// 'installed' is the DEFAULT so every row written before this reads as what
+	// it was taken to be. Only new attempts pass through 'installing'.
+	for _, stmt := range []string{
+		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'installed'`,
+		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS status_message TEXT NOT NULL DEFAULT ''`,
+		// Correlates one attempt with the node's report. Without it a report
+		// from a superseded attempt would overwrite the state of the one that
+		// replaced it - two clicks in a row is all that takes.
+		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS install_id VARCHAR(64) NOT NULL DEFAULT ''`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("phase 10: %s: %w", stmt, err)
+		}
+	}
+
+	// What a mod USED to be, so an update can be undone.
+	//
+	// The row in server_mods is keyed on the project and is overwritten by an
+	// update, which is how the previous file name came to be destroyed by the
+	// very operation that needed it: the new jar was written beside the old one
+	// and nothing could name the old one afterwards. This is where the
+	// superseded entry goes, one row per replaced version, newest kept.
+	//
+	// Bounded to three per project rather than unbounded: past the last couple
+	// of builds nobody rolls back by memory, they pick a build from the list,
+	// and an unbounded table would grow with every update forever.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS server_mod_history (
+		id                    SERIAL PRIMARY KEY,
+		server_id             INTEGER      NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		sub_server_name       VARCHAR(128) NOT NULL DEFAULT '',
+		modrinth_project_id   VARCHAR(64)  NOT NULL,
+		modrinth_version_id   VARCHAR(64)  NOT NULL,
+		title                 VARCHAR(255) NOT NULL DEFAULT '',
+		file_name             VARCHAR(255) NOT NULL,
+		target_dir            VARCHAR(16)  NOT NULL DEFAULT '',
+		sha512                VARCHAR(128) NOT NULL DEFAULT '',
+		-- When this version was installed, and when it stopped being current.
+		installed_at          TIMESTAMPTZ  NOT NULL,
+		replaced_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("phase 10: create server_mod_history: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_server_mod_history_project
+		ON server_mod_history(server_id, sub_server_name, modrinth_project_id, replaced_at DESC)`); err != nil {
+		return fmt.Errorf("phase 10: create server_mod_history index: %w", err)
+	}
 	return nil
 }
 
