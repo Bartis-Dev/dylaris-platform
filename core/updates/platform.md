@@ -26,7 +26,9 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Security
-- Nothing.
+- `golang.org/x/crypto` moved to v0.56.0. Two of the vulnerabilities it fixes
+  were reachable from the node agent; the same version is now used everywhere
+  this platform builds. `core` `node`
 
 ### Fixes
 - No switch under Settings, Features could be saved. The card never registered
