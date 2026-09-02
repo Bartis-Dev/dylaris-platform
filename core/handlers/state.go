@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/metrics"
 	"sync"
 	"time"
 
@@ -16,6 +17,12 @@ import (
 )
 
 type AppState struct {
+	// Metrics is the long-term statistics recorder, or nil when it is off or
+	// its database could not be reached. Nil is a supported state: every
+	// handler that reads it must cope, because a statistics store is never a
+	// reason for anything else to fail.
+	Metrics *metrics.Handle
+
 	Store            store.Store
 	Redis            *redis.Client
 	Queue            *services.QueueService

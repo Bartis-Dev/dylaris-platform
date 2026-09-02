@@ -44,7 +44,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, metrics: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -336,6 +336,15 @@ export default function FeaturesTab() {
                 {/* Auto-move and BYON are gateway-only. Both toggles are hard
                     disabled while routing is on IP:Port, since enabling either
                     then would 409 on the backend. */}
+                <SettingsGroup title="Statistics">
+                    <SwitchRow
+                        label="Long-term statistics"
+                        description="Records what this platform handles - players, traffic, CPU and RAM, uptime per component - into hour or minute buckets that survive, so months of operation can be shown later. Off by default. Everything stays in this installation; nothing is sent anywhere."
+                        checked={platformFlags.metrics}
+                        onChange={v => editPlatformFlag('metrics', v)}
+                    />
+                </SettingsGroup>
+
                 <SettingsGroup title="Gateway-dependent">
                     <SwitchRow
                         label="Auto-move"

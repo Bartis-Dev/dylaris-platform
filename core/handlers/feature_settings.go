@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/services"
 )
 
 // FeatureSettingsHandler is the admin GET/PUT bundle for platform-wide
@@ -38,6 +39,12 @@ type featureSettingsPayload struct {
 	ApplyAuthoringToManual bool `json:"applyAuthoringToManual"`
 	AutoMove               bool `json:"autoMove"`
 	Byon                   bool `json:"byon"`
+	// Metrics turns on the long-term statistics record. Off by default and
+	// deliberately so: it starts writing history that is meant to survive for
+	// years, which is a decision with a date attached rather than something
+	// that begins because the software supports it. Nothing leaves the
+	// installation either way.
+	Metrics bool `json:"metrics"`
 	// UserAPIKeys decides whether a NON-ADMIN may hold an API key at all. It is
 	// enforced at mint AND at use (see APIKeysHandler.ownerStillHolds): turning
 	// it off has to stop keys that already exist, or an operator who switched it
@@ -58,6 +65,7 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ModpackAuthoring: h.state.FeatureFlags.IsModpackAuthoringEnabled(r.Context()),
 		AutoMove:         h.state.FeatureFlags.IsAutoMoveEnabled(r.Context()),
 		Byon:             h.state.FeatureFlags.IsBYONEnabled(r.Context()),
+		Metrics:          h.state.FeatureFlags.Get(r.Context(), services.MetricsEnabledSetting, false),
 		UserAPIKeys:      h.state.FeatureFlags.UserAPIKeysEnabled(r.Context()),
 		UserAPIKeyAllowedCaps: strings.Join(
 			h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context()), ","),
@@ -132,6 +140,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"feature_modpack_authoring_enabled", req.ModpackAuthoring, "feature_modpack_authoring_enabled", "modpackAuthoring"},
 		{"feature_auto_move_enabled", req.AutoMove, "feature_auto_move_enabled", "autoMove"},
 		{"feature_byon_enabled", req.Byon, "feature_byon_enabled", "byon"},
+		{services.MetricsEnabledSetting, req.Metrics, services.MetricsEnabledSetting, "metrics"},
 		{"apikeys_user_enabled", req.UserAPIKeys, "apikeys_user_enabled", "userApiKeys"},
 	}
 	for _, kv := range writes {

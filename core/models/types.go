@@ -364,6 +364,38 @@ type SharedStorageConflict struct {
 
 // IsExternal reports whether this node is an external/home node (tag "external").
 // External nodes force gateway+beam locally, so SFTP + direct ports are unusable.
+// NodeKind is whose machine this is. Three answers, and the difference is
+// ownership rather than capability: a BYON machine belongs to a customer who
+// has root on it, an external one is the operator's own hardware outside the
+// swarm, and everything else is the platform's.
+type NodeKind string
+
+const (
+	NodeKindPlatform NodeKind = "platform"
+	NodeKindExternal NodeKind = "external"
+	NodeKindBYON     NodeKind = "byon"
+)
+
+// Kind classifies the node. Ownership is asked FIRST, deliberately: a tenant
+// machine that also carries the external tag is still the customer's, and
+// getting that order wrong files a customer's box under the operator's own
+// hardware with nothing failing anywhere.
+//
+// An owner pointer to the empty string is treated as no owner. It is a data
+// anomaly either way - nothing can own a node under an empty id, and the
+// ownership check elsewhere already refuses to match one - so the two readings
+// differ only in which heading such a row appears under, and "unowned" is the
+// safer of the two. The panel's lib/nodeKind mirrors this exactly.
+func (n *Node) Kind() NodeKind {
+	if n.OwnerID != nil && *n.OwnerID != "" {
+		return NodeKindBYON
+	}
+	if n.IsExternal() {
+		return NodeKindExternal
+	}
+	return NodeKindPlatform
+}
+
 func (n *Node) IsExternal() bool {
 	for _, t := range strings.Split(n.Tags, ",") {
 		if strings.TrimSpace(t) == "external" {

@@ -18,6 +18,7 @@ import (
 	"dylaris-core/database"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
+	"dylaris-core/metrics"
 	"dylaris-core/models"
 	"dylaris-core/panelfs"
 	"dylaris-core/pkg/leader"
@@ -373,6 +374,24 @@ func main() {
 	trafficAggregator := services.NewTrafficAggregator(pgStore, redisClient, appState.FeatureFlags)
 	trafficAggregator.SetLeader(coreLeader)
 	trafficAggregator.Start(bgCtx)
+
+	// Long-term metrics — leader-gated and OFF by default
+	// (feature_metrics_enabled). Records what the platform handled over months,
+	// into hour buckets in this database or minute buckets in a dedicated one
+	// (METRICS_DB_URL). Nothing leaves the installation: telemetry that phoned
+	// home was removed in full and the README says so.
+	//
+	// An unreachable metrics database is logged and skipped, never fatal. It is
+	// a statistics store; it must not be a reason Core does not come up.
+	if mh, mErr := metrics.Open(bgCtx, db, cfg.MetricsDBURL, config.UsesTimescale(cfg.DBType)); mErr != nil {
+		log.Printf("metrics: disabled (%v)", mErr)
+	} else {
+		metricsCollector := services.NewMetricsCollector(pgStore, redisClient, mh.Recorder, appState.FeatureFlags)
+		metricsCollector.SetLeader(coreLeader)
+		metricsCollector.Start(bgCtx)
+		appState.Metrics = mh
+		defer func() { _ = mh.Close() }()
+	}
 
 	// Billing lifecycle — leader-gated. Progresses past_due tenants whose grace
 	// window has elapsed into suspended (hard cutoff deferred to SuspendGrace

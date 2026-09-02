@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.16
+
+### Features
+- Long-term statistics. Switch it on under Settings, Features and the platform
+  starts recording what it handles - players, traffic, CPU and RAM per machine,
+  and uptime per component - in buckets that survive rather than the 24 hours
+  the live graphs keep. Off by default. `core` `panel`
+- The record goes into this database at hour resolution by default, which needs
+  no extension and costs a few hundred megabytes a year. Point `METRICS_DB_URL`
+  at a TimescaleDB instance for minute resolution; `docker-stack.yml` carries a
+  ready service to uncomment. `core`
+- Nothing leaves the installation. This is a local record, and the platform
+  still sends nothing anywhere. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.02.15
 
 ### Features

@@ -86,6 +86,13 @@ services:
       # Must be flipped on Core AND every Node together, or the mesh breaks.
       GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"
       DB_TYPE: "${DB_TYPE:-timescaledb}"
+      # Long-term statistics. EMPTY is the supported default: the buckets go
+      # into the Core database at HOUR resolution, a few hundred megabytes a
+      # year, no extension needed. Point this at a TimescaleDB instance and the
+      # recorder switches to MINUTE resolution - see the commented `metricsdb`
+      # service. Either way the switch is Settings -> Features (off by default),
+      # and nothing ever leaves this installation.
+      METRICS_DB_URL: "${METRICS_DB_URL:-}"
       EXTERNAL_TICKET_DB_URL: "${EXTERNAL_TICKET_DB_URL:-}"
       BILLING_SUSPEND_GRACE: "${BILLING_SUSPEND_GRACE:-48h}"
       # DNS updater (owner/SaaS, off by default). Present here so a value put in
@@ -363,7 +370,58 @@ services:
   #     restart_policy:
   #       condition: any
 
+  # ───────────────────────────────────────────────────────────────────────
+  # metricsdb - the long-term statistics store. COMMENTED OUT by default.
+  #
+  # Only needed for MINUTE resolution. With METRICS_DB_URL empty the recorder
+  # writes HOUR buckets into the Core database and this service is not used at
+  # all, which is the supported default and what a self-hoster runs.
+  #
+  # Why a separate database rather than the Core one: the Core Postgres here is
+  # Supabase's, where the platform user is not superuser and cannot install the
+  # timescaledb extension. And minute resolution kept for years is a QUERY
+  # problem before it is a storage one - a year is over half a million rows per
+  # series, which only chunking and continuous aggregates make readable.
+  #
+  # To enable:
+  #   1. uncomment this service and the metricsdb_data volume below
+  #   2. put a password in .env and set
+  #      METRICS_DB_URL=postgres://dylaris:<pw>@metricsdb:5432/dylaris_metrics?sslmode=disable
+  #   3. pin it to a host with room:
+  #      docker node update --label-add dylaris.metricsdb=true <node>
+  #   4. deploy, then turn it on in Settings -> Features
+  #
+  # It is deliberately NOT published to the host. Only Core talks to it, over
+  # the overlay network. And if it is down, Core does not care: the recorder
+  # drops rather than queueing, and nothing else reads it.
+  #
+  # metricsdb:
+  #   image: timescale/timescaledb:latest-pg16
+  #   environment:
+  #     POSTGRES_USER: dylaris
+  #     POSTGRES_PASSWORD: "${METRICS_DB_PASSWORD:?set METRICS_DB_PASSWORD in .env}"
+  #     POSTGRES_DB: dylaris_metrics
+  #   volumes:
+  #     - metricsdb_data:/var/lib/postgresql/data
+  #   networks:
+  #     - dylaris_net
+  #   deploy:
+  #     replicas: 1
+  #     placement:
+  #       constraints: [node.labels.dylaris.metricsdb == true]
+  #     restart_policy:
+  #       condition: any
+  #     resources:
+  #       limits:
+  #         memory: 2G
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U dylaris -d dylaris_metrics"]
+  #     interval: 15s
+  #     timeout: 5s
+  #     retries: 5
+
 volumes:
+  # metricsdb_data:     # re-enable together with the metricsdb service above
   # timescaledb_data:   # re-enable together with the bundled timescaledb service
   dylaris_data:
   core_data:

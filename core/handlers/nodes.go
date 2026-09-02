@@ -64,8 +64,10 @@ func (h *NodeHandler) nodeExists(nodeID int) bool {
 // sets it. The external tag is reported by the node itself; before 2026-08-19
 // no external node reported it at all, so a machine that has not reconnected
 // since then is missing from the external tab until it does.
-func isExternalPlatformNode(n models.Node) bool { return n.IsExternal() && n.OwnerID == nil }
-func isBYONNode(n models.Node) bool             { return n.OwnerID != nil }
+// Both delegate to models.Node.Kind so the scope filter, the placement rules
+// and the metrics collector cannot drift into three answers to one question.
+func isExternalPlatformNode(n models.Node) bool { return n.Kind() == models.NodeKindExternal }
+func isBYONNode(n models.Node) bool             { return n.Kind() == models.NodeKindBYON }
 
 // ownedBYONNode is the "Your machines" predicate: a BYON node belonging to this
 // caller. An empty caller matches nothing, so a request that arrived without an

@@ -85,6 +85,18 @@ type Config struct {
 	// Normalized to exactly "timescaledb" or "postgres".
 	DBType string
 
+	// MetricsDBURL points the long-term statistics recorder at its OWN
+	// database. Empty is the supported default: the buckets go into the Core
+	// database at HOUR resolution, which costs a few hundred megabytes a year
+	// and needs no extension. Set it - typically at a TimescaleDB instance -
+	// and the recorder switches to MINUTE resolution, because minute-resolution
+	// history for years is a query problem that only chunking and continuous
+	// aggregates solve.
+	//
+	// Whatever it points at, a failure there must never block Core. The
+	// recorder drops rather than queues; see core/metrics.
+	MetricsDBURL string
+
 	// Core Redis
 	RedisAddr string
 	RedisUser string
@@ -258,6 +270,9 @@ func LoadConfig() (Config, error) {
 		// Defaults to timescaledb (the bundled image). Set DB_TYPE=postgres to
 		// run on plain PostgreSQL with no TimescaleDB extension.
 		DBType: NormalizeDBType(getEnv("DB_TYPE", "timescaledb")),
+
+		// Unset = record into the Core database at hour resolution.
+		MetricsDBURL: getEnv("METRICS_DB_URL", ""),
 
 		RedisAddr: getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisUser: getEnv("REDIS_USER", ""),
