@@ -161,7 +161,14 @@ function MetricChart({ info, series, range }: ChartProps) {
                             <Tooltip
                                 contentStyle={tooltipStyle}
                                 labelFormatter={v => new Date(v as string).toLocaleString()}
-                                formatter={(v?: number) => [formatMetric(v ?? 0, info.unit), info.label]}
+                                // `unknown`, not `number`, and not by preference:
+                                // recharts types the formatter's value as a
+                                // union that has been spelled differently
+                                // across builds of the same version, and a
+                                // narrower parameter is only assignable to the
+                                // one that happens to be installed. A parameter
+                                // this wide is assignable to all of them.
+                                formatter={(v: unknown) => [formatMetric(typeof v === 'number' ? v : 0, info.unit), info.label]}
                             />
                             <Area
                                 type="monotone"
