@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.9
+
+### Features
+- Roll a mod or plugin back to an earlier build. The three most recent builds a
+  server actually ran are kept per mod, and going back uses the same install
+  path, so it is verified and the current jar is replaced rather than joined.
+  `core` `panel`
+- Update all installed mods in one run, with a per-mod summary at the end that
+  names what failed and what could not be checked, not only what worked.
+  `core` `panel`
+- Roll every mod back to the build it had before its last update, for when a
+  bulk update turns out to be the problem. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.02.8
 
 ### Features

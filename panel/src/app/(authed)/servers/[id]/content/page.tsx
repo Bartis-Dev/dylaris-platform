@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 
-import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight } from 'lucide-react';
+import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { visibleCategoriesFor, categoryLabel } from '@/lib/modrinthCategories';
 import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
@@ -11,7 +11,8 @@ import { systemEvents } from '@/lib/systemEvents';
 import {
     searchModrinth, getModrinthProject, getModrinthVersions, getModrinthCategories,
     listInstalledMods, installMod, uninstallMod, pickPrimaryFile,
-    getServerModpackContents,
+    getServerModpackContents, getModHistory, getModrinthVersion,
+    type ModHistoryEntry,
     type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject,
     type ModrinthVersion, type ModrinthCategory, type InstalledMod,
 } from '@/lib/api/modrinth';
@@ -24,6 +25,11 @@ import { declareServerLoaderMetadata } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import { installedState, isOnServer } from '@/lib/installedState';
+import {
+    updatableMods, nextBuildFor, summarise, runWasClean, emptyTally,
+    updateScopeLabel,
+    type BulkProgress,
+} from '@/lib/bulkModUpdate';
 import { useBusy } from '@/lib/useBusy';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
@@ -199,6 +205,37 @@ export default function ServerContentPage() {
     // ----- Installed mods -----
 
     const [installedError, setInstalledError] = useState<string | null>(null);
+    const [history, setHistory] = useState<ModHistoryEntry[]>([]);
+    const [rollbackFor, setRollbackFor] = useState<string | null>(null);
+
+    // Newest first, which is the order Core returns and the order a rollback
+    // wants: the build you had immediately before is the one you almost always
+    // mean.
+    // Non-null while a bulk run is going. Read by the button labels, the
+    // progress line and the close guard.
+    const [bulk, setBulk] = useState<BulkProgress | null>(null);
+    // The ref, not the state, is what the loop checks: state does not update
+    // until the next render, and the loop is inside one tick.
+    const bulkCancelled = useRef(false);
+
+    // Closing the tab mid-run leaves the rest un-issued. What HAS been issued is
+    // queued on Core and finishes regardless, so this warns about the remainder
+    // rather than pretending work would be lost.
+    useEffect(() => {
+        if (!bulk) return;
+        const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+        window.addEventListener('beforeunload', warn);
+        return () => window.removeEventListener('beforeunload', warn);
+    }, [bulk]);
+
+    // Leaving the page in-app stops the loop rather than letting it run against
+    // an unmounted component.
+    useEffect(() => () => { bulkCancelled.current = true; }, []);
+
+    const historyFor = useCallback(
+        (projectId: string) => history.filter(h => h.modrinthProjectId === projectId),
+        [history],
+    );
     const [retryingInstalled, retryInstalled] = useBusy();
 
     const refreshInstalled = useCallback(async () => {
@@ -206,6 +243,15 @@ export default function ServerContentPage() {
         try {
             setInstalled(await listInstalledMods(serverId));
             setInstalledError(null);
+            // Fail-open, and the difference from the list above is deliberate:
+            // the list decides what is on the server, the history only offers a
+            // way back. Losing it hides a button; losing the list would invite
+            // installing something twice.
+            try {
+                setHistory(await getModHistory(serverId));
+            } catch {
+                setHistory([]);
+            }
         } catch (e) {
             // The list is not decoration here: it is what the browse rows read
             // to decide whether a mod is already on the server. An empty one
@@ -382,6 +428,131 @@ export default function ServerContentPage() {
     const handleInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
         if (!await confirmModpackCrossCheck(project, version)) return;
         await doInstall(project, version);
+    };
+
+    // Rolling back is an install of an older build, not a separate mechanism.
+    //
+    // Going through the same path is what makes it safe: the node downloads and
+    // verifies before it swaps, deletes the jar that is there now because Core
+    // passes it as the previous file, and reports the outcome. It also files the
+    // build being rolled back FROM into the history, so rolling forward again is
+    // the same button.
+    //
+    // The version is fetched by id rather than picked out of a list, because the
+    // list the tab holds is filtered by this server's loader and Minecraft
+    // version, and the build being returned to need not match today's filter.
+    const handleRollback = async (m: InstalledMod, entry: ModHistoryEntry) => {
+        setRollbackFor(null);
+        await withBusy(m.modrinthProjectId, async () => {
+            let version;
+            try {
+                version = await getModrinthVersion(entry.modrinthVersionId);
+            } catch (e) {
+                showToast(e instanceof Error ? e.message : 'Could not load that build', false);
+                return;
+            }
+            const file = pickPrimaryFile(version);
+            if (!file) { showToast('That build has no downloadable file', false); return; }
+            const res = await installMod(serverId, {
+                projectId: m.modrinthProjectId,
+                projectSlug: m.modrinthProjectSlug,
+                versionId: version.id,
+                title: m.title,
+                fileName: file.filename,
+                downloadUrl: file.url,
+                sha512: file.hashes.sha512,
+            });
+            if (res.success) {
+                showToast(`Rolling ${m.title || m.fileName} back to ${version.version_number}…`, true);
+                refreshInstalled();
+            } else {
+                showToast(res.message || 'Rollback failed', false);
+            }
+        });
+    };
+
+    // Update every installed mod that has a newer matching build.
+    //
+    // Sequential on purpose. Each install is a queued command plus a Modrinth
+    // version lookup, and firing thirty of both at once buys nothing - the work
+    // happens on the node afterwards either way - while making the failure of
+    // any one of them harder to attribute and the progress meaningless.
+    const handleUpdateAll = async () => {
+        const targets = updatableMods(installed);
+        if (targets.length === 0) { showToast('Nothing installed to update', false); return; }
+        bulkCancelled.current = false;
+        const tally = emptyTally();
+        const loaders = filterLoaders.length ? filterLoaders : undefined;
+        const mcVersions = filterVersions.length ? filterVersions : undefined;
+
+        for (const [i, m] of targets.entries()) {
+            if (bulkCancelled.current) break;
+            setBulk({ done: i, total: targets.length, current: m.title || m.fileName });
+            const slug = m.modrinthProjectSlug || m.modrinthProjectId;
+            const candidates = await getModrinthVersions(slug, { loaders, versions: mcVersions });
+            // getModrinthVersions returns [] both for "no build matches" and for
+            // a request that failed, and those are not the same answer. An empty
+            // list is counted as unchecked rather than as current, so the summary
+            // cannot report a mod as up to date on the strength of a lookup that
+            // never happened.
+            if (candidates.length === 0) { tally.unknown++; continue; }
+            const next = nextBuildFor(m, candidates, { loaders, mcVersions });
+            if (!next) { tally.current++; continue; }
+            const file = pickPrimaryFile(next);
+            if (!file) { tally.failed++; continue; }
+            const res = await installMod(serverId, {
+                projectId: m.modrinthProjectId,
+                projectSlug: m.modrinthProjectSlug,
+                versionId: next.id,
+                title: m.title,
+                fileName: file.filename,
+                downloadUrl: file.url,
+                sha512: file.hashes.sha512,
+            });
+            if (res.success) tally.updated++; else tally.failed++;
+        }
+
+        setBulk(null);
+        refreshInstalled();
+        showToast(summarise(tally), runWasClean(tally));
+    };
+
+    // Put every mod back to the build it had before its last update.
+    //
+    // The counterpart to the run above and the reason it can be offered at all:
+    // each update files the build it replaced, so a bulk update that breaks the
+    // server has a bulk way back.
+    const handleRollbackAll = async () => {
+        const targets = updatableMods(installed).filter(m => historyFor(m.modrinthProjectId).length > 0);
+        if (targets.length === 0) { showToast('No earlier builds to go back to', false); return; }
+        bulkCancelled.current = false;
+        const tally = emptyTally();
+
+        for (const [i, m] of targets.entries()) {
+            if (bulkCancelled.current) break;
+            setBulk({ done: i, total: targets.length, current: m.title || m.fileName });
+            const entry = historyFor(m.modrinthProjectId)[0];
+            let version;
+            try {
+                version = await getModrinthVersion(entry.modrinthVersionId);
+            } catch { tally.unknown++; continue; }
+            const file = pickPrimaryFile(version);
+            if (!file) { tally.failed++; continue; }
+            const res = await installMod(serverId, {
+                projectId: m.modrinthProjectId,
+                projectSlug: m.modrinthProjectSlug,
+                versionId: version.id,
+                title: m.title,
+                fileName: file.filename,
+                downloadUrl: file.url,
+                sha512: file.hashes.sha512,
+            });
+            if (res.success) tally.updated++; else tally.failed++;
+        }
+
+        setBulk(null);
+        refreshInstalled();
+        showToast(summarise(tally), runWasClean(tally));
     };
 
     const handleUninstall = async (m: InstalledMod) => {
@@ -918,6 +1089,44 @@ export default function ServerContentPage() {
                         <div className="text-center py-12 text-sm text-(--base-06)">No mods installed.</div>
                     ) : (
                         <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-3 flex-wrap pb-1">
+                                <div className="text-xs text-(--base-06)">
+                                    {bulk
+                                        ? `Working through ${bulk.done + 1} of ${bulk.total} - ${bulk.current}`
+                                        : updateScopeLabel(filterLoaders, filterVersions)}
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    <button
+                                        onClick={handleUpdateAll}
+                                        disabled={bulk !== null}
+                                        className="btn btn-secondary btn-sm"
+                                    >
+                                        <RefreshCw size={12} className={bulk ? 'animate-spin' : ''} />
+                                        {bulk ? 'Working…' : 'Update all'}
+                                    </button>
+                                    {installed.some(m => historyFor(m.modrinthProjectId).length > 0) && (
+                                        <button
+                                            onClick={handleRollbackAll}
+                                            disabled={bulk !== null}
+                                            className="btn btn-secondary btn-sm"
+                                            title="Put every mod back to the build it had before its last update"
+                                        >
+                                            <RotateCcw size={12} />
+                                            Roll back all
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            {/* Said once, next to the button that starts it, rather than in a
+                                dialog nobody reads: the run is issued from this tab, so closing
+                                it stops whatever has not been issued yet. What HAS been issued
+                                is queued on Core and finishes either way. */}
+                            {bulk && (
+                                <p className="text-[11px] text-(--warning-light) pb-1">
+                                    Keep this tab open. Closing it stops the mods that have not been
+                                    started yet; the ones already started will finish.
+                                </p>
+                            )}
                             {installed.map(m => (
                                 <article key={m.id} className="card p-3 flex items-start gap-3">
                                     <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
@@ -947,6 +1156,40 @@ export default function ServerContentPage() {
                                         )}
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
+                                        {/* Only the builds this server actually ran. Modrinth's own
+                                            version list is one click away and offers everything; what it
+                                            cannot tell you is which build you had before the update that
+                                            broke something. */}
+                                        {historyFor(m.modrinthProjectId).length > 0 && (
+                                            <div className="relative">
+                                                <button
+                                                    onClick={() => setRollbackFor(rollbackFor === m.modrinthProjectId ? null : m.modrinthProjectId)}
+                                                    disabled={busyProjects.has(m.modrinthProjectId)}
+                                                    className="btn btn-secondary btn-sm"
+                                                    title="Go back to an earlier build"
+                                                >
+                                                    <RotateCcw size={12} />
+                                                    Roll back
+                                                </button>
+                                                {rollbackFor === m.modrinthProjectId && (
+                                                    <div className="dropdown-menu right-0 mt-1 w-72 animate-fade-in origin-top-right">
+                                                        <div className="dropdown-label px-3 pt-2 pb-1">Builds this server had</div>
+                                                        {historyFor(m.modrinthProjectId).map(h => (
+                                                            <button
+                                                                key={h.id}
+                                                                onClick={() => handleRollback(m, h)}
+                                                                className="dropdown-item flex-col items-start gap-0"
+                                                            >
+                                                                <span className="font-mono text-xs truncate w-full text-left">{h.fileName}</span>
+                                                                <span className="text-[10px] text-(--base-06)">
+                                                                    replaced {new Date(h.replacedAt).toLocaleString()}
+                                                                </span>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                         <a
                                             href={`https://modrinth.com/project/${m.modrinthProjectSlug || m.modrinthProjectId}`}
                                             target="_blank"

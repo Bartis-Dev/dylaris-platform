@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.9
+
+### Features
+- You can roll a mod or plugin back to an earlier build. We keep the three most
+  recent builds your server actually ran, and going back replaces the file the
+  same careful way an update does.
+- An "Update all" button updates every installed mod in one run and tells you
+  afterwards what was updated, what was already current and what did not work.
+  There is a matching way back for the whole set.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.02.8
 
 ### Features

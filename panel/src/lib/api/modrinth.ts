@@ -261,3 +261,57 @@ export async function getServerModpackContents(serverId: number): Promise<Server
         return [];
     }
 }
+
+// --- Rollback: what a mod USED to be -------------------------------------
+
+/**
+ * One superseded version of an installed mod. Core keeps the three most recent
+ * per project, written when an install replaces a different version.
+ *
+ * fileName is the jar that version installed, and it is the field the whole
+ * table exists for: server_mods is keyed on the project, so an update
+ * overwrites it and nothing else in the system remembers what the previous
+ * build was called.
+ */
+export interface ModHistoryEntry {
+    id: number;
+    modrinthProjectId: string;
+    modrinthVersionId: string;
+    title: string;
+    fileName: string;
+    targetDir: string;
+    sha512: string;
+    installedAt: string;
+    replacedAt: string;
+}
+
+export async function getModHistory(serverId: number): Promise<ModHistoryEntry[]> {
+    const res = await fetch(`${API_URL}/servers/${serverId}/mods/history`, { headers: getAuthHeader() });
+    const data = await handleResponse(res);
+    if (!(data as any)?.success) {
+        throw new Error((data as any)?.message || 'Could not load the mod history.');
+    }
+    return (data as any).history || [];
+}
+
+/**
+ * One Modrinth version by id, through Core's cached proxy.
+ *
+ * Rolling back needs the download URL and the hash of a build that is no longer
+ * in any list the tab is holding - the version list is filtered by the server's
+ * loader and Minecraft version, and the build being rolled back to may not
+ * match today's filter at all. Asking for it by id sidesteps that entirely.
+ *
+ * Raises rather than returning null: the caller is about to replace a working
+ * jar, and "no version" would read as "roll back to nothing".
+ */
+export async function getModrinthVersion(versionId: string): Promise<ModrinthVersion> {
+    const res = await fetch(`${API_URL}/modrinth/version/${encodeURIComponent(versionId)}`, {
+        headers: getAuthHeader(),
+    });
+    const data = await handleResponse(res);
+    if (!data || (data as any).success === false || !(data as any).id) {
+        throw new Error((data as any)?.message || 'Could not load that build from Modrinth.');
+    }
+    return data as unknown as ModrinthVersion;
+}
