@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The full description of a mod now shows the pictures, tables and links it is
+  written with, instead of a block of raw markup, and there is a button that
+  opens the mod's own page. Nothing to update on your side.
+
 ## 2026.09.02.3
 
 ### Features

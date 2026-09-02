@@ -3,6 +3,7 @@ package panelfs
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -257,6 +258,33 @@ func TestCSPCarriesTheApiOriginWithoutItsPath(t *testing.T) {
 	// img-src needs it too: the server-icon preview is an <img> at Core.
 	if !strings.Contains(split, "img-src 'self' data: blob: https://api.example.com") {
 		t.Errorf("img-src = %q", split)
+	}
+}
+
+// A mod's description is written by its author and embeds images from whatever
+// host that author uses. Narrowing img-src back to an allowlist of vendors
+// would break every one of those with no error anywhere - the panel would just
+// render broken images - so the blanket https: is pinned here rather than left
+// to read as an oversight.
+func TestCSPAllowsAnyHTTPSImageHost(t *testing.T) {
+	csp := testHandler(t, "", "").csp.build("N")
+	img := csp[strings.Index(csp, "img-src "):]
+	img = img[:strings.IndexByte(img, ';')]
+	// Compared per source rather than with Contains, because "https:" is a
+	// prefix of every named https host: the first version of this test passed
+	// against an img-src of exactly the vendor allowlist it was written to
+	// forbid.
+	sources := strings.Fields(strings.TrimPrefix(img, "img-src "))
+	if !slices.Contains(sources, "https:") {
+		t.Errorf("img-src = %q; mod descriptions embed images from arbitrary hosts", img)
+	}
+	// It buys images, nothing else: an author-supplied URL must not become a
+	// script source or a frame, and http: would let one downgrade the page.
+	if slices.Contains(sources, "http:") {
+		t.Errorf("img-src allows plaintext http: %q", img)
+	}
+	if scr := csp[strings.Index(csp, "script-src "):]; slices.Contains(strings.Fields(scr[:strings.IndexByte(scr, ';')]), "https:") {
+		t.Errorf("the widening reached script-src: %q", csp)
 	}
 }
 

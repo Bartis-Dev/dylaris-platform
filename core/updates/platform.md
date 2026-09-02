@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.4
+
+### Features
+- The Modrinth panel now has an "Open on Modrinth" button, in place of the small
+  text link that sat next to the download count. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A mod's full description showed raw HTML markup instead of the badges,
+  screenshots and tables it is written with. It now renders, sanitized, and the
+  panel's image policy accepts any https host because mod authors host their
+  screenshots wherever they like. `core` `panel`
+
 ## 2026.09.02.3
 
 ### Features

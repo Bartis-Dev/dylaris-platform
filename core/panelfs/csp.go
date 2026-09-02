@@ -52,12 +52,24 @@ func (c cspConfig) build(nonce string) string {
 	// img-src needs the API origin for the same reason connect-src does: the
 	// server-icon preview is an <img> pointing at Core's /files/download, so on
 	// a split-origin deployment the browser refuses it and the icon simply never
-	// appears. The vendor hosts are fixed third parties, not operator config.
+	// appears.
+	//
+	// The blanket https: replaced a two-host allowlist (cravatar, cdn.modrinth)
+	// because a mod's description is written by the mod author and embeds images
+	// from wherever that author hosts them - imgur, a project's own domain, a
+	// raw GitHub URL. An allowlist cannot enumerate that, and the failure was
+	// invisible: the panel rendered a broken image with nothing said anywhere.
+	//
+	// What it costs is one thing and worth naming: an image host chosen by a mod
+	// author sees that some IP viewed a panel. Not a path and not a referrer -
+	// the descriptions render every image with referrerpolicy=no-referrer. It
+	// grants no script and no frame, and frame-src below is already wider than
+	// this.
 	img := []string{"'self'", "data:", "blob:"}
 	if c.apiOrigin != "" {
 		img = append(img, c.apiOrigin)
 	}
-	img = append(img, "https://cravatar.eu", "https://cdn.modrinth.com")
+	img = append(img, "https:")
 
 	return strings.Join([]string{
 		"default-src 'self'",

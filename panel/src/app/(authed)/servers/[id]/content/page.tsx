@@ -3,11 +3,10 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 
 import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { useAppData } from '@/lib/AppDataContext';
 import { visibleCategoriesFor, categoryLabel } from '@/lib/modrinthCategories';
 import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
+import { ModDescription } from '@/components/mods/ModDescription';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     searchModrinth, getModrinthProject, getModrinthVersions, getModrinthCategories,
@@ -759,12 +758,19 @@ export default function ServerContentPage() {
                                         )}
                                         <div className="min-w-0 flex-1">
                                             <h3 className="text-sm font-semibold text-(--base-09) truncate">{projectDetail.title}</h3>
-                                            <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-(--base-06)">
-                                                <span>{projectDetail.downloads.toLocaleString()} downloads</span>
-                                                <a href={`https://modrinth.com/project/${projectDetail.slug}`} target="_blank" rel="noopener noreferrer" className="text-(--accent-light) flex items-center gap-1">
-                                                    modrinth.com <ExternalLink size={9} />
-                                                </a>
-                                            </div>
+                                            <p className="mt-1 text-[10px] font-mono text-(--base-06)">{projectDetail.downloads.toLocaleString()} downloads</p>
+                                            {/* The description below is what Modrinth renders on its own page, but
+                                                only what a description can be: no version history, no gallery, no
+                                                comments. This is the way out to the rest, so it is a button rather
+                                                than the 10px text link it used to be next to the download count. */}
+                                            <a
+                                                href={`https://modrinth.com/project/${projectDetail.slug}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="btn btn-secondary btn-sm mt-2"
+                                            >
+                                                Open on Modrinth <ExternalLink size={12} />
+                                            </a>
                                         </div>
                                         <button onClick={closeProjectDetail} className="text-(--base-06) hover:text-(--base-09) transition-colors shrink-0" title="Close">
                                             <X size={16} />
@@ -793,14 +799,7 @@ export default function ServerContentPage() {
                                             {descMode === 'short' ? (
                                                 <p className="text-sm text-(--base-07) leading-relaxed">{projectDetail.description}</p>
                                             ) : projectDetail.body ? (
-                                                <div className="text-sm text-(--base-08) leading-relaxed wrap-break-word [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-(--base-09) [&_h1]:mt-3 [&_h1]:mb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-(--base-09) [&_h2]:mt-3 [&_h2]:mb-1 [&_h3]:font-semibold [&_h3]:text-(--base-09) [&_h3]:mt-2 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:my-2 [&_a]:text-(--accent-light) [&_a]:underline [&_code]:font-mono [&_code]:text-xs [&_code]:bg-(--base-03) [&_code]:px-1 [&_code]:rounded [&_pre]:bg-(--base-01) [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto [&_pre]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 [&_hr]:my-3 [&_hr]:border-(--base-03) [&_blockquote]:border-l-2 [&_blockquote]:border-(--base-04) [&_blockquote]:pl-3 [&_blockquote]:text-(--base-06) [&_table]:text-xs">
-                                                    <ReactMarkdown
-                                                        remarkPlugins={[remarkGfm]}
-                                                        components={{ a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
-                                                    >
-                                                        {projectDetail.body}
-                                                    </ReactMarkdown>
-                                                </div>
+                                                <ModDescription body={projectDetail.body} />
                                             ) : (
                                                 <p className="text-xs text-(--base-06) italic">No full description provided.</p>
                                             )}
