@@ -47,6 +47,20 @@ type PickNodeRequest struct {
 	// scheduler never picks a node the placement gate would reject. The admin
 	// preview endpoint leaves it nil (sees every node). Not JSON-decoded.
 	OwnerScope *string `json:"-"`
+
+	// PlatformOnly excludes every TENANT-owned node from the pick. Set by
+	// CreateServer when the caller is an admin and no node was named, which is
+	// the case where a machine gets chosen and nobody decided which one.
+	//
+	// Without it, auto-placement for an admin considered the whole fleet, so a
+	// server could be put on a customer's own hardware - hardware that customer
+	// has root on - because it happened to be the least loaded box in the
+	// region. An admin who genuinely wants that can still say so by naming the
+	// node: this only governs the automatic pick.
+	//
+	// Not set on the preview endpoint, so an admin's capacity view still shows
+	// every node. Not JSON-decoded.
+	PlatformOnly bool `json:"-"`
 }
 
 // NodeCandidate is one node considered for placement. `Available` means
@@ -87,15 +101,16 @@ func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// BYON: a non-admin tenant may only preview placement on THEIR OWN nodes.
-	// Without scoping, a tenant could POST an empty body and enumerate the whole
-	// fleet's capacity/topology/load. Off-BYON (all authed users are trusted staff)
-	// leaves OwnerScope nil so the deploy wizard still sees every node.
-	if !IsAdmin(r) && byonActive(h.state, r) {
-		if uid, ok := r.Context().Value("userID").(string); ok && uid != "" {
-			req.OwnerScope = &uid
-		}
-	}
+	// The SAME scope CreateServer applies, and it has to be the same one: the
+	// deploy wizard calls this to show the admin which node the create is about
+	// to choose ("so admins aren't deploying blind", in its own words). A
+	// preview scoped differently from the placement is a preview that names a
+	// machine the create will not use.
+	//
+	// For a tenant it also stops an empty POST from enumerating the whole
+	// fleet's capacity and topology. Nothing is lost for an admin picking a node
+	// by hand: that list comes from /nodes, not from here.
+	applyPlacementScope(h.state, r, &req)
 
 	resp := h.pickNode(r.Context(), req)
 	json.NewEncoder(w).Encode(resp)
@@ -128,6 +143,10 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 	// their redeploy. Only new placements are blocked here.
 	gatewayOn := h.state.gatewayEnabled()
 
+	// Counted so the failure can SAY that customer machines were passed over.
+	// Without it an operator reads "no node available" while looking at a panel
+	// full of online nodes with room, and the reason is invisible.
+	skippedTenantNodes := 0
 	candidates := make([]NodeCandidate, 0, len(all))
 	for i := range all {
 		n := &all[i]
@@ -142,6 +161,12 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 		// the rented-server path instead. Mirrors canPlaceOnNode so the pick can't
 		// be rejected downstream for ownership.
 		if req.OwnerScope != nil && (n.OwnerID == nil || *n.OwnerID != *req.OwnerScope) {
+			continue
+		}
+		// The mirror of the line above, for the caller who has no owner scope
+		// of their own. See PlatformOnly.
+		if req.PlatformOnly && n.OwnerID != nil {
+			skippedTenantNodes++
 			continue
 		}
 		if req.NodeID > 0 && n.ID != req.NodeID {
@@ -186,6 +211,9 @@ func (h *PlacementHandler) pickNode(ctx context.Context, req PickNodeRequest) Pi
 		resp.Reason = "no eligible node found for " + strings.Join(parts, ", ")
 	} else {
 		resp.Reason = "no eligible node found"
+	}
+	if skippedTenantNodes > 0 {
+		resp.Reason += fmt.Sprintf(" (%d customer-owned node(s) were not considered: automatic placement never uses them. Name a node explicitly to place there.)", skippedTenantNodes)
 	}
 	return resp
 }

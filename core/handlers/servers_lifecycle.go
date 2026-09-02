@@ -62,13 +62,10 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 			CPUCores: req.Docker.CPULimit,
 			DiskGB:   diskMBToGBCeil(req.Docker.DiskLimit),
 		}
-		// BYON: scope auto-placement to nodes this tenant may use (platform or
-		// own), so the scheduler never picks a foreign node only to be rejected
-		// by the ownership gate below. No-op when BYON is off or caller is admin.
-		if byonActive(h.state, r) && !IsAdmin(r) {
-			uid := byonCallerID(r)
-			pickReq.OwnerScope = &uid
-		}
+		// BYON: scope auto-placement to nodes the caller's party owns, so the
+		// scheduler never picks a foreign node. No-op when BYON is off. See
+		// applyPlacementScope for why an admin is scoped too.
+		applyPlacementScope(h.state, r, &pickReq)
 		pick := (&PlacementHandler{state: h.state}).pickNode(r.Context(), pickReq)
 		if !pick.Success || pick.Picked == nil {
 			sendJSONError(w, "No node available: "+pick.Reason, http.StatusServiceUnavailable)

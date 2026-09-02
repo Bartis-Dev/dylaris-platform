@@ -315,6 +315,52 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 			t.Fatalf("expected node 4 (same tenant), got %+v", got)
 		}
 	})
+
+	// The other half of the same rule, and the one that was missing. A
+	// platform-owned source skipped the ownership check completely, so a rented
+	// server belonging to one customer could be moved onto ANOTHER customer's
+	// own machine - by no one's decision, and onto hardware that customer has
+	// root on.
+	t.Run("platform source never lands on a tenant node", func(t *testing.T) {
+		fs := &rebalanceFakeStore{settings: map[string]string{"routing_mode": "gateway"}}
+		w := &RebalanceWorker{store: fs}
+		tenantA := strPtr("tenant-a")
+		src := &models.Node{ID: 1, Status: "online"} // OwnerID nil: a platform node
+		// Deliberately the LEAST loaded, so it wins on every other criterion and
+		// only ownership can exclude it. A test where the right answer also
+		// happens to be the cheapest proves nothing.
+		tenantNode := models.Node{ID: 2, Status: "online", OwnerID: tenantA, TotalRAMMB: 8192, RAMOvercommitRatio: 1.0}
+		platformNode := models.Node{ID: 3, Status: "online", TotalRAMMB: 8192, RAMOvercommitRatio: 1.0}
+		nodes := []models.Node{*src, tenantNode, platformNode}
+		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
+		loads := map[int]float64{2: 5, 3: 50}
+
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
+		if got == nil || got.ID != 3 {
+			t.Fatalf("expected node 3 (the platform node), got %+v", got)
+		}
+	})
+
+	// With no platform node to fall back on, the answer is "no target", not
+	// "the tenant's machine will do".
+	t.Run("platform source with only tenant nodes has nowhere to go", func(t *testing.T) {
+		fs := &rebalanceFakeStore{settings: map[string]string{"routing_mode": "gateway"}}
+		w := &RebalanceWorker{store: fs}
+		tenantA := strPtr("tenant-a")
+		tenantB := strPtr("tenant-b")
+		src := &models.Node{ID: 1, Status: "online"}
+		nodes := []models.Node{
+			*src,
+			{ID: 2, Status: "online", OwnerID: tenantA, TotalRAMMB: 8192, RAMOvercommitRatio: 1.0},
+			{ID: 3, Status: "online", OwnerID: tenantB, TotalRAMMB: 8192, RAMOvercommitRatio: 1.0},
+		}
+		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
+		loads := map[int]float64{2: 5, 3: 5}
+
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
+			t.Fatalf("expected no target, got node %d", got.ID)
+		}
+	})
 }
 
 // --- pickCandidate() ---

@@ -8,6 +8,31 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.12
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Automatic placement and rebalancing no longer put a server on a node that
+  belongs to a different party. A tenant's own machines were already fenced off
+  from everyone else, but a platform-owned server had no such rule and could be
+  moved onto a customer's own hardware, which that customer has root on. Only
+  reachable with BYON on; auto-move made it automatic. `core`
+- Naming a node explicitly is unaffected, so an operator can still place
+  anywhere deliberately. Only the pick nobody made is restricted, and when that
+  leaves nothing to pick, the message now says how many customer nodes were
+  passed over rather than reporting a capacity problem that is not there. `core`
+
+### Fixes
+- The deploy wizard's node preview and the actual placement now answer the same
+  question. The preview is what tells an admin which machine a tag-based deploy
+  will use, so the two being scoped differently would have named a node the
+  deploy then refused. `core`
+
 ## 2026.09.02.11
 
 ### Features

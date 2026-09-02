@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.12
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Servers are no longer placed or moved onto hardware belonging to a different
+  customer. If you run your own node, only your own servers can land on it.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.02.11
 
 ### Features

@@ -210,6 +210,19 @@ func (w *RebalanceWorker) pickCandidate(ctx context.Context, src *models.Node) *
 	return best
 }
 
+// sameNodeOwner reports whether two nodes belong to the same party: both to the
+// platform (owner nil), or both to the same tenant.
+//
+// Written as one predicate rather than as a condition at the call site because
+// the nil case is the whole point and it is easy to write a comparison that
+// only holds in one direction - which is exactly what was here before.
+func sameNodeOwner(a, b *models.Node) bool {
+	if a.OwnerID == nil || b.OwnerID == nil {
+		return a.OwnerID == nil && b.OwnerID == nil
+	}
+	return *a.OwnerID == *b.OwnerID
+}
+
 // migrationLocked reports whether an orchestrator migration is already in flight
 // for this server (the per-server lock key exists). Skip such servers so we
 // don't double-enqueue.
@@ -244,14 +257,20 @@ func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, sr
 		if t.IsExternal() && !gatewayOn {
 			continue
 		}
-		// BYON isolation (BC6): a tenant-owned source keeps its server within
-		// that SAME tenant's nodes - never a platform node, never a different
-		// tenant. Mirrors canPlaceOnNode / placement.go's OwnerScope guard. A
-		// platform-owned source (src.OwnerID nil) keeps today's behavior.
-		if src.OwnerID != nil {
-			if t.OwnerID == nil || *t.OwnerID != *src.OwnerID {
-				continue
-			}
+		// BYON isolation (BC6): a server never crosses an ownership boundary,
+		// in EITHER direction. Mirrors canPlaceOnNode / placement.go's
+		// OwnerScope guard.
+		//
+		// Only the tenant-to-elsewhere half was implemented, and the missing
+		// half is the worse one: a PLATFORM-owned source skipped the check
+		// entirely, and the candidate list is every node there is. A rented
+		// server belonging to one customer could therefore be moved, by nobody's
+		// decision, onto another customer's own machine - hardware that customer
+		// has root on. Nothing downstream would have caught it: the migration
+		// orchestrator reads OwnerID only to decide whether to hand over LAN
+		// addresses.
+		if !sameNodeOwner(src, t) {
+			continue
 		}
 		// Keep the server in the same region + match the source's tags so a move
 		// doesn't silently relocate a server across a placement boundary.
