@@ -2,10 +2,12 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"dylaris-core/metrics"
 	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
+	"dylaris-pkg/protocol"
 	"log"
 	"time"
 
@@ -23,15 +25,48 @@ import (
 type MetricsCollector struct {
 	store    store.Store
 	redis    *redis.Client
+	db       *sql.DB
 	recorder *metrics.Recorder
 	flags    *FeatureFlags
 	leader   leader.Election
+
+	// gwStats is the live gateway telemetry, read through the consumer that
+	// already holds it rather than through a second consumer group per stream.
+	gwStats gatewayStatsSource
+
+	pgCounters    *counterSource
+	redisCounters *counterSource
+
+	// Previous CPU-time reading for the Core process, so cpu_pct is a rate
+	// rather than a total.
+	lastCPUSeconds float64
+	lastCPUAt      time.Time
+
+	// lastUptime is the previous UptimeSec of each gateway component. A value
+	// that went DOWN means that component restarted between two samples, which
+	// is the only way this record can see a restart at all - and it is what
+	// makes the splice handover counters interpretable, because a handover with
+	// no restart beside it is a different event from one caused by a deploy.
+	lastUptime map[string]int64
+}
+
+// gatewayStatsSource is the live view of every gateway component, satisfied by
+// GatewayBandwidthConsumerService. An interface so the collector can be tested
+// without Redis.
+type gatewayStatsSource interface {
+	Snapshot() []protocol.GatewayStats
 }
 
 const (
 	// Matches the cadence the gateway bandwidth consumer already samples at, so
 	// the two sit on the same grid and can be read against each other.
 	metricsSampleInterval = 30 * time.Second
+
+	// The slow lane. Everything on it is either expensive to compute or moves
+	// over days rather than seconds: a scan of every tenant monthly usage row,
+	// and the on-disk size of the database. Sampling those every 30s would cost
+	// far more than the resolution is worth.
+	metricsSlowInterval = 5 * time.Minute
 )
 
 // MetricsEnabledSetting is the switch. Default OFF: recording a year of history
@@ -39,9 +74,19 @@ const (
 // software supports it.
 const MetricsEnabledSetting = "feature_metrics_enabled"
 
-func NewMetricsCollector(s store.Store, r *redis.Client, rec *metrics.Recorder, flags *FeatureFlags) *MetricsCollector {
-	return &MetricsCollector{store: s, redis: r, recorder: rec, flags: flags}
+func NewMetricsCollector(s store.Store, r *redis.Client, db *sql.DB, rec *metrics.Recorder, flags *FeatureFlags) *MetricsCollector {
+	return &MetricsCollector{
+		store: s, redis: r, db: db, recorder: rec, flags: flags,
+		pgCounters:    newCounterSource(),
+		redisCounters: newCounterSource(),
+		lastUptime:    map[string]int64{},
+	}
 }
+
+// SetGatewayStats wires the live gateway telemetry view. Call once at boot;
+// without it the gateway counters are simply absent and everything else is
+// recorded as before.
+func (c *MetricsCollector) SetGatewayStats(src gatewayStatsSource) { c.gwStats = src }
 
 // SetLeader wires the leader-election gate. Call once at boot.
 func (c *MetricsCollector) SetLeader(l leader.Election) { c.leader = l }
@@ -52,6 +97,7 @@ func (c *MetricsCollector) Start(ctx context.Context) {
 	}
 	log.Println("Metrics collector started")
 	go c.loop(ctx)
+	go c.slowLoop(ctx)
 	go c.recorder.Run(ctx, metrics.FlushInterval)
 }
 
@@ -66,6 +112,35 @@ func (c *MetricsCollector) loop(ctx context.Context) {
 			c.sampleOnce(ctx)
 		}
 	}
+}
+
+func (c *MetricsCollector) slowLoop(ctx context.Context) {
+	t := time.NewTicker(metricsSlowInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			c.sampleSlow(ctx)
+		}
+	}
+}
+
+// sampleSlow takes the expensive readings. Gated identically to sampleOnce -
+// the gate is repeated rather than shared because a second entry point that
+// forgot it would record from every replica, which is how a per-replica counter
+// once billed every customer twice.
+func (c *MetricsCollector) sampleSlow(ctx context.Context) {
+	if c.leader != nil && !c.leader.IsLeader() {
+		return
+	}
+	if c.flags != nil && !c.flags.Get(ctx, MetricsEnabledSetting, false) {
+		return
+	}
+	now := time.Now()
+	c.sampleUserTraffic(now)
+	c.sampleDatabaseSize(ctx, c.db, now)
 }
 
 // sampleOnce takes one reading of everything.
@@ -84,6 +159,73 @@ func (c *MetricsCollector) sampleOnce(ctx context.Context) {
 	now := time.Now()
 	c.samplePlatform(ctx, now)
 	c.sampleGateway(ctx, now)
+	c.sampleGatewayComponents(now)
+	c.sampleSelf(now)
+	c.samplePostgres(ctx, c.db, now)
+	c.sampleRedis(ctx, now)
+	c.samplePresence(ctx, now)
+}
+
+// sampleGatewayComponents records the counters and gauges every gateway
+// component publishes about itself, plus the restarts derived from their uptime.
+//
+// The names are the component own names, prefixed with the component: a counter
+// "handover_ok" from the splice becomes splice.handover_ok. That is what lets a
+// component add a measurement without either repository changing the shared
+// telemetry contract - and it is why the names are validated rather than
+// trusted. Each distinct name is a stored series that outlives the process that
+// published it, so a producer folding a session id or an address into one would
+// grow the store with TRAFFIC instead of with code.
+func (c *MetricsCollector) sampleGatewayComponents(now time.Time) {
+	if c.gwStats == nil {
+		return
+	}
+	for _, gs := range c.gwStats.Snapshot() {
+		if gs.Component == "" || gs.ID == "" {
+			continue
+		}
+		accepted := 0
+		for name, v := range gs.Counters {
+			if accepted >= protocol.MaxCustomMetrics || !protocol.ValidMetricName(name) {
+				continue
+			}
+			accepted++
+			c.obs(gs.Component+"."+name, gs.ID, gs.Region, float64(v), now)
+		}
+		for name, v := range gs.Gauges {
+			if accepted >= protocol.MaxCustomMetrics || !protocol.ValidMetricName(name) {
+				continue
+			}
+			accepted++
+			c.obs(gs.Component+"."+name, gs.ID, gs.Region, v, now)
+		}
+		c.recordRestart(gs, now)
+	}
+}
+
+// recordRestart turns a component uptime into a restart COUNT.
+//
+// An uptime lower than the previous reading is the restart: nothing else in the
+// system reports one. It is recorded as 1 at the moment it is noticed, so
+// summing the series over a window gives the number of restarts in it. A
+// component seen for the first time records nothing - Core restarting must not
+// be reported as every gateway component restarting.
+func (c *MetricsCollector) recordRestart(gs protocol.GatewayStats, now time.Time) {
+	if gs.UptimeSec <= 0 {
+		return // an older build that does not report uptime
+	}
+	key := gs.Component + ":" + gs.ID
+	prev, seen := c.lastUptime[key]
+	c.lastUptime[key] = gs.UptimeSec
+	if !seen {
+		return
+	}
+	restarted := 0.0
+	if gs.UptimeSec < prev {
+		restarted = 1
+	}
+	c.obs(gs.Component+".restarts", gs.ID, gs.Region, restarted, now)
+	c.obs(gs.Component+".uptime_sec", gs.ID, gs.Region, float64(gs.UptimeSec), now)
 }
 
 // obs is the shorthand this file uses; the recorder tolerates a nil receiver so
@@ -177,6 +319,7 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 	edges := GetEdgesFromRedis(ctx, c.redis)
 	var onlineEdges int
 	var players int64
+	var totalRx, totalTx uint64
 	for _, e := range edges {
 		up := 0.0
 		if e.Status == "online" {
@@ -194,6 +337,8 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 		c.obs("edge.tx_bps", e.EdgeID, e.Region, float64(s.TxSpeed), now)
 		c.obs("edge.players", e.EdgeID, e.Region, float64(s.ActiveMCStreams), now)
 		players += s.ActiveMCStreams
+		totalRx += s.RxSpeed
+		totalTx += s.TxSpeed
 	}
 	if len(edges) > 0 {
 		c.obs("platform.edges", "", "", float64(len(edges)), now)
@@ -201,6 +346,16 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 		// The players number the whole record is built around. It comes from
 		// the edges because that is where a connection actually terminates.
 		c.obs("platform.players", "", "", float64(players), now)
+		c.obs("platform.player_rx_bps", "", "", float64(totalRx), now)
+		c.obs("platform.player_tx_bps", "", "", float64(totalTx), now)
+		// What ONE player costs in bandwidth, sampled rather than divided later:
+		// a quotient of two averages is not the average of the quotient, so
+		// dividing the monthly totals at read time would give a number that is
+		// close and wrong. Recorded per sample, the bucket min/max are then the
+		// real quietest and busiest player load seen in that window.
+		if players > 0 {
+			c.obs("platform.bps_per_player", "", "", float64(totalRx+totalTx)/float64(players), now)
+		}
 	}
 
 	links := GetLinksFromRedis(ctx, c.redis)

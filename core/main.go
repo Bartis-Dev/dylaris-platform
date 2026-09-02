@@ -386,8 +386,12 @@ func main() {
 	if mh, mErr := metrics.Open(bgCtx, db, cfg.MetricsDBURL, config.UsesTimescale(cfg.DBType)); mErr != nil {
 		log.Printf("metrics: disabled (%v)", mErr)
 	} else {
-		metricsCollector := services.NewMetricsCollector(pgStore, redisClient, mh.Recorder, appState.FeatureFlags)
+		metricsCollector := services.NewMetricsCollector(pgStore, redisClient, db, mh.Recorder, appState.FeatureFlags)
 		metricsCollector.SetLeader(coreLeader)
+		// The gateway telemetry this Core already consumes. Reading it through
+		// the existing consumer keeps one set of Redis consumer groups per
+		// stream instead of two per Core.
+		metricsCollector.SetGatewayStats(gwBandwidth)
 		metricsCollector.Start(bgCtx)
 		appState.Metrics = mh
 		defer func() { _ = mh.Close() }()

@@ -50,6 +50,12 @@ export default function InfrastructureShell({ children }: { children: React.Reac
         { slug: 'edges', label: 'Edges', count: infra.edges.length, visible: infra.gatewayDeployed },
         { slug: 'routes', label: 'Routes', count: infra.routeCount, visible: infra.gatewayDeployed },
         { slug: 'bandwidth', label: 'Bandwidth', visible: infra.gatewayEnabled },
+        // Always shown. Whether there is anything recorded is a SERVER fact
+        // (the feature flag, and whether the metrics database opened), and the
+        // page says which. Hiding the tab when the panel cannot know would make
+        // the feature undiscoverable for exactly the operator who has not
+        // switched it on yet - the one person who needs to find it.
+        { slug: 'statistics', label: 'Statistics', visible: true },
         // Only ERROR/WARN drive the count: the same streams carry INFO, and a
         // badge that is never zero is a badge nobody reads.
         { slug: 'errors', label: 'Errors', count: attentionCount(infra.errors), visible: infra.errors.length > 0 },

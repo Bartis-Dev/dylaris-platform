@@ -146,6 +146,11 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 	fmt.Fprintf(w, "data: {\"type\":\"hello\"}\n\n")
 	flusher.Flush()
 
+	// This stream is the platform's definition of "a user is here now" - see
+	// presence.go for why that is counted in Redis rather than in memory.
+	userID, _ := r.Context().Value("userID").(string)
+	defer presenceTrack(r.Context(), h.state.Redis, h.state.CoreID, userID)()
+
 	pubsub := h.state.Redis.Subscribe(r.Context(), services.SystemEventsChannel)
 	defer pubsub.Close()
 

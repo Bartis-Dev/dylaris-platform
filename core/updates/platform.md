@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.17
+
+### Features
+- The statistics now cover the gateway. Every edge restart is counted along with
+  how many players were carried through it and how many were dropped, so the
+  handover you rely on is measurable rather than assumed. `core` `panel`
+- Warp reports its tunnels and the link reports its own, which had no telemetry
+  at all until now - a customer's tunnel dropping and reconnecting was visible
+  only in their own log. `core` `panel`
+- Core, Postgres and Redis now record what they cost: memory, CPU, connections,
+  query and cache rates, and the size of the database over time. `core` `panel`
+- A Statistics tab under Infrastructure charts all of it over any period up to a
+  year, with headline figures and a CSV or JSON export. `core` `panel`
+- Concurrent panel users are counted for the first time, once per person however
+  many tabs they have open. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The beam relay reported a live transfer count that was always zero: the field
+  existed on both sides and nothing ever set it. `core`
+
 ## 2026.09.02.16
 
 ### Features

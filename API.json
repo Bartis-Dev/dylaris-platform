@@ -82,6 +82,46 @@
     },
     {
       "method": "GET",
+      "path": "/api/admin/metrics/catalog",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "The series this build records, plus how far back the record goes.",
+      "handler": "MetricsHandler.Catalog",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/metrics/export",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "The point of the export is that the numbers can leave with the person reading them - into a spreadsheet, a due-diligence pack, a mail.",
+      "handler": "MetricsHandler.Export",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/metrics/series",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "?metric=platform.players\u0026from=…\u0026to=…\u0026step=300\u0026subject=…\u0026region=…\u0026split=1",
+      "handler": "MetricsHandler.Series",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/metrics/summary",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "The headline numbers, reduced over the window.",
+      "handler": "MetricsHandler.Summary",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/admin/nodes/{id:[0-9]+}/disk-analysis",
       "auth": "session",
       "authorization": "nodes.read",
@@ -4924,15 +4964,15 @@
     }
   ],
   "counts": {
-    "total": 493,
+    "total": 497,
     "byAuth": {
       "none": 35,
-      "session": 445,
+      "session": 449,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 108,
+      "admin": 112,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,

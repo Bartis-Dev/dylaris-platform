@@ -35,6 +35,11 @@ type Handle struct {
 	Dedicated *sql.DB
 	// Resolution is the bucket size actually in use.
 	Resolution time.Duration
+	// Read is the pool to QUERY through - the dedicated one when there is one,
+	// otherwise Core's. Held separately from Dedicated so a reader never has to
+	// know which backend it got, and never has to guess that a nil Dedicated
+	// means "use the other handle".
+	Read *sql.DB
 }
 
 func (h *Handle) Close() error {
@@ -62,7 +67,11 @@ func Open(ctx context.Context, coreDB *sql.DB, metricsURL string, coreUsesTimesc
 			return nil, err
 		}
 		log.Printf("metrics: recording into the core database at %s resolution", ResolutionShared)
-		return &Handle{Recorder: NewRecorder(NewSQLStore(coreDB), ResolutionShared), Resolution: ResolutionShared}, nil
+		return &Handle{
+			Recorder:   NewRecorder(NewSQLStore(coreDB), ResolutionShared),
+			Resolution: ResolutionShared,
+			Read:       coreDB,
+		}, nil
 	}
 
 	db, err := sql.Open("postgres", metricsURL)
@@ -94,5 +103,6 @@ func Open(ctx context.Context, coreDB *sql.DB, metricsURL string, coreUsesTimesc
 		Recorder:   NewRecorder(NewSQLStore(db), ResolutionDedicated),
 		Dedicated:  db,
 		Resolution: ResolutionDedicated,
+		Read:       db,
 	}, nil
 }

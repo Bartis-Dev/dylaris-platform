@@ -3,6 +3,7 @@ package services
 import (
 	"dylaris-pkg/protocol"
 	"testing"
+	"time"
 )
 
 func TestAggregateByHost(t *testing.T) {
@@ -41,5 +42,56 @@ func TestAggregateByHostCapMismatch(t *testing.T) {
 	}
 	if !got.CapMismatch {
 		t.Error("differing non-zero caps must set CapMismatch")
+	}
+}
+
+func TestOnlyThroughputCarryingComponentsReachTheBandwidthView(t *testing.T) {
+	// The splice and the link publish to the same telemetry stream but carry no
+	// throughput of their own: the splice shares a host and a network namespace
+	// with an edge that already reports every byte, and the link ships without a
+	// system monitor. Letting them through would put a component into the
+	// bandwidth view showing a permanent 0 bps, which a reader cannot tell from
+	// an outage - and would add rows of zeros to the history table.
+	for _, c := range []string{"edge", "warp", "beam"} {
+		if !carriesThroughput(c) {
+			t.Errorf("%s reports throughput and was excluded from the bandwidth view", c)
+		}
+	}
+	for _, c := range []string{"splice", "link", "", "something-new"} {
+		if carriesThroughput(c) {
+			t.Errorf("%q was let into the bandwidth view and reports no throughput", c)
+		}
+	}
+}
+
+func TestSnapshotDropsAComponentThatStoppedPublishing(t *testing.T) {
+	// The same staleness bound persistOnce applies. Without it a dead edge keeps
+	// contributing its last reading to every average, so an outage reads as a
+	// quiet period - which is the opposite of what happened.
+	s := NewGatewayBandwidthConsumerService(nil, nil, "core-1")
+	s.latest["edge:live"] = seenStat{
+		gs:   protocol.GatewayStats{Component: "edge", ID: "live"},
+		seen: time.Now(),
+	}
+	s.latest["edge:gone"] = seenStat{
+		gs:   protocol.GatewayStats{Component: "edge", ID: "gone"},
+		seen: time.Now().Add(-2 * gwbwStaleAfter),
+	}
+
+	got := s.Snapshot()
+	if len(got) != 1 || got[0].ID != "live" {
+		t.Fatalf("snapshot = %+v, want only the live component", got)
+	}
+}
+
+func TestSnapshotIsACopyRatherThanTheLiveMap(t *testing.T) {
+	// The consumer goroutines write into latest while the collector reads. A
+	// snapshot that shared the map would be a data race on every sample.
+	s := NewGatewayBandwidthConsumerService(nil, nil, "core-1")
+	s.latest["edge:a"] = seenStat{gs: protocol.GatewayStats{Component: "edge", ID: "a"}, seen: time.Now()}
+	got := s.Snapshot()
+	got[0].ID = "mutated"
+	if s.latest["edge:a"].gs.ID != "a" {
+		t.Fatal("mutating the snapshot changed the consumer's own state")
 	}
 }

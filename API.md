@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **492 routes** in 50 sections: 220 GET, 146 POST, 37 PUT, 36 PATCH, 54 DELETE.
+- **496 routes** in 50 sections: 224 GET, 146 POST, 37 PUT, 36 PATCH, 54 DELETE.
 - **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **336** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **340** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **8** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (108)
+- [/api/admin](#apiadmin) (112)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -205,6 +205,10 @@ can still show what exists.
 | POST | `/api/admin/db/migration/verify` | session | `settings.write` | - | `DBMigrationHandler.VerifyMigration` | run the source-vs-target comparison on demand (the manual "Verify / Test" button). |
 | GET | `/api/admin/health` | session | `settings.read` | - | `HealthHandler.GetStatus` | Aggregated platform health, PANEL settings.read (RequireCap at the route). |
 | PUT | `/api/admin/maintenance` | session | `settings.write` | - | `MaintenanceHandler.SaveState` | PANEL settings.write (RequireCap at the route). |
+| GET | `/api/admin/metrics/catalog` | session | `topology.read` | - | `MetricsHandler.Catalog` | The series this build records, plus how far back the record goes. |
+| GET | `/api/admin/metrics/export` | session | `topology.read` | - | `MetricsHandler.Export` | The point of the export is that the numbers can leave with the person reading them - into a spreadsheet, a due-diligence pack, a mail. |
+| GET | `/api/admin/metrics/series` | session | `topology.read` | - | `MetricsHandler.Series` | ?metric=platform.players&from=…&to=…&step=300&subject=…&region=…&split=1 |
+| GET | `/api/admin/metrics/summary` | session | `topology.read` | - | `MetricsHandler.Summary` | The headline numbers, reduced over the window. |
 | GET | `/api/admin/nodes/{id:[0-9]+}/disk-analysis` | session | `nodes.read` | - | `NodeHandler.GetDiskAnalysis` | cross-references disk folders on a node with DB servers. |
 | DELETE | `/api/admin/nodes/{id:[0-9]+}/orphan` | session | `nodes.delete` | - | `NodeHandler.DeleteOrphanedFolder` | deletes an orphaned UUID folder from a node via gRPC. |
 | POST | `/api/admin/nodes/{id:[0-9]+}/reset-pairing` | session | `nodes.write` | - | `NodeAdmissionHandler.ResetPairing` | REVOKE + RECOVER: clear the node's secret, hard-cut its live Redis ACL, and mint a single-use recovery token bound to its identity. |

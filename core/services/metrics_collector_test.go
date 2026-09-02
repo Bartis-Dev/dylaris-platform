@@ -70,7 +70,7 @@ func newCollectorForTest(t *testing.T, st store.Store, on bool, isLeader bool) (
 	if on {
 		set[MetricsEnabledSetting] = "true"
 	}
-	c := NewMetricsCollector(st, nil, rec, NewFeatureFlags(set))
+	c := NewMetricsCollector(st, nil, nil, rec, NewFeatureFlags(set))
 	c.SetLeader(fakeLeader{leader: isLeader})
 	return c, capt
 }

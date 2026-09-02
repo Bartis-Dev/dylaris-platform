@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.17
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing you need to do. We now measure how many players stay connected when a
+  routing server restarts, and how often the tunnel from your machine drops and
+  comes back - so a problem on your route is something we can see rather than
+  something you have to report.
+
 ## 2026.09.02.13
 
 ### Features

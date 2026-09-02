@@ -118,6 +118,14 @@ func (s *GatewayBandwidthConsumerService) discoverStreams(ctx context.Context) [
 	} else {
 		log.Printf("gateway bandwidth discovery: SMembers sys:beams: %v", err)
 	}
+	// Splice: one per edge HOST, and it is keyed by that hostname rather than
+	// by an edge id, so it cannot be derived from sys:edges. Scanning its own
+	// streams is the only way to find one - which also means a splice too old
+	// to publish simply does not appear, instead of appearing empty.
+	keys = append(keys, scanStatsStreams(ctx, s.redis, "dylaris:splice:*:stats")...)
+	// Link: keyed by the link's node id (never its token).
+	keys = append(keys, scanStatsStreams(ctx, s.redis, "dylaris:link:*:stats")...)
+
 	// Warp: scan the per-leader alive keys (dylaris:warp:{id}:alive).
 	var cursor uint64
 	for {
@@ -138,6 +146,68 @@ func (s *GatewayBandwidthConsumerService) discoverStreams(ctx context.Context) [
 		cursor = next
 	}
 	return keys
+}
+
+// scanStatsStreams returns every key matching pattern. Used for the components
+// that publish a stats stream without also being listed in a registry set.
+func scanStatsStreams(ctx context.Context, rdb *redis.Client, pattern string) []string {
+	var out []string
+	var cursor uint64
+	for {
+		batch, next, err := rdb.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			log.Printf("gateway bandwidth discovery: Scan %s: %v", pattern, err)
+			return out
+		}
+		out = append(out, batch...)
+		if next == 0 {
+			return out
+		}
+		cursor = next
+	}
+}
+
+// carriesThroughput reports whether a component belongs in the BANDWIDTH view.
+//
+// The splice and the link publish to the same telemetry stream, but neither
+// reports throughput of its own: the splice shares a host and a network
+// namespace with an edge that already reports every byte, and the link
+// deliberately ships without a system monitor. Persisting them would put rows
+// of zeros into gateway_bandwidth_stats and, worse, make them appear as
+// components in the panel's bandwidth view with a permanent 0 bps - a reader
+// would have to know the architecture to tell that apart from an outage.
+//
+// They are still CONSUMED, because their counters are the point; this decides
+// only what reaches the bandwidth view.
+func carriesThroughput(component string) bool {
+	switch component {
+	case "edge", "warp", "beam":
+		return true
+	}
+	return false
+}
+
+// Snapshot returns the latest sample of every live component.
+//
+// The long-term metrics collector reads through this rather than opening its
+// own consumer group on the same streams. One reader, one set of groups: a
+// second group per stream per Core would double the pending-entry bookkeeping
+// on Redis for data this service already has in memory.
+func (s *GatewayBandwidthConsumerService) Snapshot() []protocol.GatewayStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]protocol.GatewayStats, 0, len(s.latest))
+	now := time.Now()
+	for _, v := range s.latest {
+		// Same staleness bound persistOnce applies. A component that stopped
+		// publishing must not keep contributing its last reading to an average,
+		// or a dead edge reads as a quiet one.
+		if now.Sub(v.seen) > gwbwStaleAfter {
+			continue
+		}
+		out = append(out, v.gs)
+	}
+	return out
 }
 
 // consume reads one stream via a per-Core consumer group and updates the
@@ -236,6 +306,17 @@ func (s *GatewayBandwidthConsumerService) persistOnce(ctx context.Context) {
 	// live; its host aggregate self-expires via the mirror TTL once we stop re-Setting it.
 	for _, id := range staleIDs {
 		s.redis.Del(ctx, "dylaris:gwbw:component:"+id)
+	}
+	if len(snapshot) == 0 {
+		return
+	}
+
+	// Only the components that actually carry throughput reach the bandwidth
+	// view; see carriesThroughput.
+	for k, gs := range snapshot {
+		if !carriesThroughput(gs.Component) {
+			delete(snapshot, k)
+		}
 	}
 	if len(snapshot) == 0 {
 		return

@@ -376,6 +376,10 @@ var requiredCaps = map[string]string{
 	"/api/gateway/sync":                      "topology.write",
 	"/api/gateway/errors":                    "topology.read",
 	"/api/infrastructure/overview":           "topology.read",
+	"/api/admin/metrics/catalog":             "topology.read",
+	"/api/admin/metrics/series":              "topology.read",
+	"/api/admin/metrics/summary":             "topology.read",
+	"/api/admin/metrics/export":              "topology.read",
 	"/api/infrastructure/routing-migration":  "topology.read",
 	"/api/warp/regions":                      "topology.read",
 	"/api/warp/regions/{region}":             "topology.write",
@@ -1353,6 +1357,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	dnsHandler := handlers.NewDNSHandler(appState)
 	trafficLimitHandler := handlers.NewTrafficLimitHandler(appState)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
+	metricsHandler := handlers.NewMetricsHandler(appState)
 
 	// Admin endpoints (PANEL topology.* - global gateway oversight; Phase 4 Task 18)
 	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetLinks))).Methods("GET")
@@ -1408,6 +1413,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/traffic-limits/resolve", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(trafficLimitHandler.ResolveTrafficLimit))).Methods("GET")
 
 	api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetOverview))).Methods("GET")
+
+	// The long-term record. Read-only, behind the same capability as the rest
+	// of Infrastructure, because that is the tab it is read from and the
+	// numbers describe the same fleet.
+	api.HandleFunc("/admin/metrics/catalog", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(metricsHandler.Catalog))).Methods("GET")
+	api.HandleFunc("/admin/metrics/series", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(metricsHandler.Series))).Methods("GET")
+	api.HandleFunc("/admin/metrics/summary", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(metricsHandler.Summary))).Methods("GET")
+	api.HandleFunc("/admin/metrics/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(metricsHandler.Export))).Methods("GET")
 	api.HandleFunc("/infrastructure/routing-migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetRoutingMigrationStatus))).Methods("GET")
 
 	// XDP / eBPF DDoS Protection (deployment-wide config managed by Panel,
