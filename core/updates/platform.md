@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A database password that was EMPTY or contained a space could not connect.
+  Connection strings were built unquoted, so an empty password consumed the
+  field after it and the error named a database nobody had typed
+  (`database "<user>" does not exist`); a space failed while quoting part of the
+  password back at you. Affects the statistics database form and the
+  cross-database migration screen. `core`
+
 ## 2026.09.03
 
 ### Features

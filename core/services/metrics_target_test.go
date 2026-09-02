@@ -50,7 +50,9 @@ func TestTheStoredTargetIsWhatBootApplies(t *testing.T) {
 	if err := SaveMetricsDBTarget(st, want); err != nil {
 		t.Fatal(err)
 	}
-	if dsn := LoadMetricsDBTarget(st).DSN(); !strings.Contains(dsn, "host=metricsdb") {
+	// Quoted: an unquoted value ends at whitespace, which is how an empty
+	// password used to eat the dbname after it.
+	if dsn := LoadMetricsDBTarget(st).DSN(); !strings.Contains(dsn, "host='metricsdb'") {
 		t.Fatalf("boot would apply %q, which is not what was saved", dsn)
 	}
 }

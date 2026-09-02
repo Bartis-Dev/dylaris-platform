@@ -32,13 +32,40 @@ type DBConnParams struct {
 
 // DSN renders a lib/pq connection string. SSLMode defaults to "disable" to match
 // the bundled in-Docker database.
+//
+// Every value is QUOTED, and that is not tidiness. In libpq's keyword/value
+// format an unquoted value ends at whitespace, so two ordinary passwords broke
+// this before it was:
+//
+//	an EMPTY one - `password= dbname=x` makes libpq skip the space and read
+//	`dbname=x` as the PASSWORD. dbname is then never set, libpq falls back to
+//	the user name, and the error is "database <user> does not exist" - which
+//	names neither the field that was wrong nor the one that swallowed it.
+//	Observed in production 2026-09-03 against a trust-auth metrics database,
+//	where an empty password is the correct configuration.
+//
+//	one containing a SPACE - `password=a b dbname=x` fails outright with
+//	`missing "=" after "b"`, naming a fragment of the password rather than the
+//	field.
+//
+// Quoting closes both, and is what the format is for.
 func (p DBConnParams) DSN() string {
 	ssl := strings.TrimSpace(p.SSLMode)
 	if ssl == "" {
 		ssl = "disable"
 	}
 	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		p.Host, p.Port, p.User, p.Password, p.DBName, ssl)
+		quoteDSNValue(p.Host), quoteDSNValue(p.Port), quoteDSNValue(p.User),
+		quoteDSNValue(p.Password), quoteDSNValue(p.DBName), quoteDSNValue(ssl))
+}
+
+// quoteDSNValue wraps a value the way libpq expects: single quotes, with
+// backslashes and single quotes escaped by a backslash. An empty value becomes
+// a pair of quotes rather than nothing, which is the whole point.
+func quoteDSNValue(v string) string {
+	escaped := strings.ReplaceAll(v, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `'`, `\'`)
+	return `'` + escaped + `'`
 }
 
 // Open opens the connection and verifies it answers within the timeout. The

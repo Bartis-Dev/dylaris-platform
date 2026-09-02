@@ -9,15 +9,20 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+// Values are QUOTED as of 2026-09-03. This test pinned the unquoted form, which
+// was the form that let an empty or space-containing password swallow the
+// keyword after it - see TestADSNValueCannotSwallowTheNextField for the two
+// failures that caused, one of them in production. The expectation moved
+// because the meaning did.
 func TestDBConnParamsDSN(t *testing.T) {
 	p := DBConnParams{Host: "h", Port: "5432", User: "u", Password: "p", DBName: "d"}
 	got := p.DSN()
-	want := "host=h port=5432 user=u password=p dbname=d sslmode=disable"
+	want := "host='h' port='5432' user='u' password='p' dbname='d' sslmode='disable'"
 	if got != want {
 		t.Fatalf("DSN()\n got: %q\nwant: %q", got, want)
 	}
 	p.SSLMode = "require"
-	if got := p.DSN(); got != "host=h port=5432 user=u password=p dbname=d sslmode=require" {
+	if got := p.DSN(); got != "host='h' port='5432' user='u' password='p' dbname='d' sslmode='require'" {
 		t.Fatalf("DSN() with sslmode: %q", got)
 	}
 }
