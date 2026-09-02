@@ -4,8 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Gauge, AlertTriangle, Trash2, Globe } from 'lucide-react';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard from '@/components/settings/SettingsCard';
-import { LimitField, LimitHelp } from '@/components/settings/LimitField';
-import HelpTip from '@/components/ui/HelpTip';
+import TrafficAllowanceFields, {
+    emptyAllowance,
+    sameAllowance,
+    type TrafficAllowance,
+} from '@/components/settings/TrafficAllowanceFields';
 import { toast } from '@/components/ui/Toast';
 import { getInfrastructureOverview } from '@/lib/api';
 import {
@@ -30,27 +33,18 @@ import {
  */
 const DEFAULT_SCOPE = 'user_default';
 
-interface CellState {
-    set: boolean;
-    includedGb: number | null;
-    maxPurchaseGb: number | null;
-}
-
 const cellKey = (region: string, kind: string) => `${limitRegionFor(region, kind)}|${kind}`;
 
-function cellFrom(row: TrafficLimit | undefined): CellState {
-    if (!row) return { set: false, includedGb: null, maxPurchaseGb: null };
+function cellFrom(row: TrafficLimit | undefined): TrafficAllowance {
+    if (!row) return emptyAllowance;
     return { set: true, includedGb: row.includedGb, maxPurchaseGb: row.maxPurchaseGb };
 }
-
-const sameCell = (a: CellState, b: CellState) =>
-    a.set === b.set && a.includedGb === b.includedGb && a.maxPurchaseGb === b.maxPurchaseGb;
 
 export default function TrafficLimitsTab() {
     const [rows, setRows] = useState<TrafficLimit[]>([]);
     const [liveRegions, setLiveRegions] = useState<string[]>([]);
-    const [cells, setCells] = useState<Record<string, CellState>>({});
-    const [baseline, setBaseline] = useState<Record<string, CellState>>({});
+    const [cells, setCells] = useState<Record<string, TrafficAllowance>>({});
+    const [baseline, setBaseline] = useState<Record<string, TrafficAllowance>>({});
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [loadFailed, setLoadFailed] = useState(false);
@@ -106,7 +100,7 @@ export default function TrafficLimitsTab() {
     // reloading. It used to run after a per-cell save, which discarded whatever
     // the operator had typed into the cells they had not saved yet.
     useEffect(() => {
-        const next: Record<string, CellState> = {};
+        const next: Record<string, TrafficAllowance> = {};
         for (const region of regions) {
             for (const kind of TRAFFIC_KINDS) {
                 if (!isRegionalKind(kind)) continue;
@@ -121,13 +115,13 @@ export default function TrafficLimitsTab() {
         setBaseline(next);
     }, [regions, rowFor]);
 
-    const update = (region: string, kind: string, patch: Partial<CellState>) => {
+    const update = (region: string, kind: string, patch: Partial<TrafficAllowance>) => {
         const k = cellKey(region, kind);
         setCells(c => ({ ...c, [k]: { ...c[k], ...patch } }));
     };
 
     const dirtyKeys = useMemo(
-        () => Object.keys(cells).filter(k => !baseline[k] || !sameCell(cells[k], baseline[k])),
+        () => Object.keys(cells).filter(k => !baseline[k] || !sameAllowance(cells[k], baseline[k])),
         [cells, baseline],
     );
 
@@ -185,66 +179,14 @@ export default function TrafficLimitsTab() {
         const c = cells[k];
         if (!c) return null;
         return (
-            <div className="space-y-3">
-                <label className="checkbox-row text-xs text-(--base-07)">
-                    <input
-                        type="checkbox"
-                        className="checkbox"
-                        checked={c.set}
-                        onChange={e => update(region, kind, { set: e.target.checked })}
-                    />
-                    Set an allowance here
-                </label>
-                {!c.set ? (
-                    // Not a limit of zero, and the copy has to say so: the
-                    // difference between "nothing decided" and "decided, no
-                    // limit" is invisible in a number field.
-                    <p className="text-xs text-(--base-06)">
-                        Nothing decided. Traffic here is not limited and nobody is stopped or billed for it.
-                    </p>
-                ) : (
-                    <div className="flex flex-wrap items-center gap-6">
-                        <div className="flex items-center gap-3">
-                            <span className="mono-label text-(--base-06) w-28 flex items-center gap-1.5">
-                                Included
-                                <HelpTip label="About the included allowance">
-                                    <p className="mb-2">
-                                        The traffic that costs nothing here. Metered billing, if it is
-                                        on, only starts above this.
-                                    </p>
-                                    {LimitHelp}
-                                </HelpTip>
-                            </span>
-                            <LimitField
-                                value={c.includedGb}
-                                onChange={v => update(region, kind, { includedGb: v })}
-                                unit="GB"
-                            />
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <span className="mono-label text-(--base-06) w-28 flex items-center gap-1.5">
-                                May buy
-                                <HelpTip label="About the purchase ceiling">
-                                    <p className="mb-2">
-                                        The most a customer may add on top of the included amount, and
-                                        where their spending stops.
-                                    </p>
-                                    {LimitHelp}
-                                    <p className="mt-2">
-                                        This is the one place a cap of 0 is the useful answer: it lets
-                                        them use what is included and buy nothing beyond it.
-                                    </p>
-                                </HelpTip>
-                            </span>
-                            <LimitField
-                                value={c.maxPurchaseGb}
-                                onChange={v => update(region, kind, { maxPurchaseGb: v })}
-                                unit="GB"
-                            />
-                        </div>
-                    </div>
-                )}
-            </div>
+            <TrafficAllowanceFields
+                value={c}
+                onChange={patch => update(region, kind, patch)}
+                // Not a limit of zero, and the copy has to say so: the
+                // difference between "nothing decided" and "decided, no limit"
+                // is invisible in a number field.
+                unsetNote="Nothing decided. Traffic here is not limited and nobody is stopped or billed for it."
+            />
         );
     };
 

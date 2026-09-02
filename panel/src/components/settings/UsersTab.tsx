@@ -17,6 +17,21 @@ import {
     type UserBillingAdmin,
 } from '@/lib/api/billing';
 import { setUserLimitOverrides } from '@/lib/api/plans';
+import {
+    listTrafficLimits,
+    setTrafficLimit,
+    writeFor,
+    limitRegionFor,
+    isRegionalKind,
+    TRAFFIC_KINDS,
+    TRAFFIC_REGION_ANY,
+    KIND_LABELS,
+    type TrafficLimit,
+} from '@/lib/api/trafficLimits';
+import TrafficAllowanceFields, {
+    emptyAllowance,
+    type TrafficAllowance,
+} from '@/components/settings/TrafficAllowanceFields';
 import { getUserEntitlement, grantEntitlement, revokeEntitlement, type Entitlement, type EntitlementResponse } from '@/lib/api/entitlement';
 import { entitlementOf, formatDaysLeft } from '@/lib/entitlementState';
 import { entitlementExplanation } from '@/lib/entitlementText';
@@ -992,6 +1007,19 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const [tCombined, setTCombined] = useState('');
     const [savingLimits, setSavingLimits] = useState(false);
 
+    // The metered traffic allowance, which is a different thing from the three
+    // GB fields above and has to be told apart from them: those are warn-only
+    // (they raise a banner on the tenant's usage page), while these are the
+    // pools that are actually billed and that cap what a tenant may buy. They
+    // are also per (region, kind), because a terabyte does not cost the same
+    // everywhere. Settings holds the platform default; this is the one tenant
+    // who answers differently.
+    const [tlRows, setTlRows] = useState<TrafficLimit[]>([]);
+    const [tlKind, setTlKind] = useState<string>(TRAFFIC_KINDS[0]);
+    const [tlRegion, setTlRegion] = useState('');
+    const [tlCell, setTlCell] = useState<TrafficAllowance>(emptyAllowance);
+    const [tlSaving, setTlSaving] = useState(false);
+
     // Entitlement: WHAT the tenant may use, as opposed to the status and caps
     // below. Shown first because it is the question an operator actually opens
     // this modal with ("can this person do BYON yet"), and because a grant is
@@ -1029,9 +1057,79 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
             }
             setLoading(false);
         });
+        void loadTrafficLimits();
     }, [user.id]);
 
     const show = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3000); };
+
+    // The traffic scope this dialog writes. Deleting the row is what hands the
+    // question back to the platform default, so "no override" has to stay
+    // reachable from here - it is the undo for everything below.
+    const trafficScope = `user:${user.id}`;
+
+    async function loadTrafficLimits() {
+        const res = await listTrafficLimits();
+        if (res.success) setTlRows(res.limits || []);
+    }
+
+    /**
+     * The regions worth offering: every one the platform has decided something
+     * about, plus every one this tenant already overrides.
+     *
+     * Deriving it from the stored rows rather than from the live edges is
+     * deliberate - an override for a region that is temporarily down is still a
+     * valid thing to write, and the edge list is one more request for a dialog
+     * that is not the place to configure regions in the first place.
+     */
+    const trafficRegions = [...new Set(
+        tlRows.filter(r => isRegionalKind(r.kind)).map(r => r.region).filter(r => r !== TRAFFIC_REGION_ANY),
+    )].sort();
+
+    const trafficOverrides = tlRows.filter(r => r.scope === trafficScope);
+
+    // The region the form is actually writing. A non-regional kind has exactly
+    // one row, so its region is not the operator's to choose.
+    const effectiveTrafficRegion = isRegionalKind(tlKind)
+        ? (tlRegion || trafficRegions[0] || '')
+        : TRAFFIC_REGION_ANY;
+
+    // Load whatever is already stored for the selected (region, kind) into the
+    // form, so a second edit changes the existing override instead of silently
+    // starting from empty and overwriting it with blanks.
+    useEffect(() => {
+        const region = isRegionalKind(tlKind) ? (tlRegion || trafficRegions[0] || '') : TRAFFIC_REGION_ANY;
+        const row = tlRows.find(r => r.scope === trafficScope && r.kind === tlKind && r.region === region);
+        setTlCell(row ? { set: true, includedGb: row.includedGb, maxPurchaseGb: row.maxPurchaseGb } : emptyAllowance);
+        // trafficRegions is derived from tlRows, so tlRows covers it.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tlRows, tlKind, tlRegion, trafficScope]);
+
+    const saveTrafficOverride = async () => {
+        if (isRegionalKind(tlKind) && !effectiveTrafficRegion) {
+            show('Pick a region first.', false);
+            return;
+        }
+        setTlSaving(true);
+        const included = writeFor(tlCell.set, tlCell.includedGb);
+        const purchase = writeFor(tlCell.set, tlCell.maxPurchaseGb);
+        const res = await setTrafficLimit({
+            scope: trafficScope,
+            region: limitRegionFor(effectiveTrafficRegion, tlKind),
+            kind: tlKind,
+            includedMode: included.mode,
+            includedGb: included.gb,
+            purchaseMode: purchase.mode,
+            purchaseGb: purchase.gb,
+        });
+        if (res.success) await loadTrafficLimits();
+        setTlSaving(false);
+        show(
+            res.success
+                ? (tlCell.set ? 'Traffic override saved.' : 'Traffic override removed.')
+                : (res.message || 'Could not save the traffic override.'),
+            res.success,
+        );
+    };
 
     const applyEntitlement = (r: EntitlementResponse, okMsg: string) => {
         if (!r.success) { show(r.message || 'Failed', false); return; }
@@ -1287,9 +1385,9 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                 </div>
                                 <LimitField label="Max nodes" value={maxNodes} onChange={setMaxNodes} />
                                 <LimitField label="Max links" value={maxLinks} onChange={setMaxLinks} />
-                                <LimitField label="Traffic combined (GB/mo)" value={tCombined} onChange={setTCombined} />
-                                <LimitField label="Traffic edge (GB/mo)" value={tEdge} onChange={setTEdge} />
-                                <LimitField label="Traffic relay (GB/mo)" value={tRelay} onChange={setTRelay} />
+                                <LimitField label="Traffic combined (GB/mo, warn only)" value={tCombined} onChange={setTCombined} />
+                                <LimitField label="Traffic edge (GB/mo, warn only)" value={tEdge} onChange={setTEdge} />
+                                <LimitField label="Traffic relay (GB/mo, warn only)" value={tRelay} onChange={setTRelay} />
                                 <div className="flex items-center justify-end">
                                     <button
                                         type="button"
@@ -1300,6 +1398,105 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                         {savingLimits ? 'Saving…' : 'Save limits'}
                                     </button>
                                 </div>
+                            </section>
+
+                            <section className="space-y-3">
+                                <div>
+                                    <label className="mono-label text-(--base-06) flex items-center gap-1.5">
+                                        Metered traffic allowance
+                                        <HelpTip label="About the metered allowance">
+                                            <p className="mb-2">
+                                                The pools that are billed, and that cap what this tenant may
+                                                buy. Not the same as the three GB fields above, which only
+                                                raise a warning banner on their usage page.
+                                            </p>
+                                            <p>
+                                                One answer per region and traffic kind, because a terabyte
+                                                does not cost the same everywhere. An override answers on its
+                                                own - it does not inherit the half it leaves empty.
+                                            </p>
+                                        </HelpTip>
+                                    </label>
+                                    <p className="text-xs text-(--base-06) mt-0.5">
+                                        Overrides the platform default from Settings, for this tenant only.
+                                        Clearing the checkbox removes the override and hands the question
+                                        back to the default.
+                                    </p>
+                                </div>
+
+                                {trafficOverrides.length > 0 && (
+                                    <div className="rounded-md border border-(--base-03) divide-y divide-(--base-03)">
+                                        {trafficOverrides.map(o => (
+                                            <div key={o.id} className="flex flex-wrap items-center gap-2 p-2 text-xs">
+                                                <span className="mono-label text-(--accent-light)">
+                                                    {o.region === TRAFFIC_REGION_ANY ? 'all regions' : o.region}
+                                                </span>
+                                                <span className="mono-label text-(--base-06)">
+                                                    {KIND_LABELS[o.kind] ?? o.kind}
+                                                </span>
+                                                <span className="text-(--base-07)">
+                                                    included {o.includedGb === null ? 'unlimited' : `${o.includedGb} GB`}
+                                                    {' · '}
+                                                    may buy {o.maxPurchaseGb === null ? 'unlimited' : `${o.maxPurchaseGb} GB`}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <div className="flex flex-wrap items-center gap-3">
+                                    <select
+                                        className="input input-sm"
+                                        value={tlKind}
+                                        onChange={e => setTlKind(e.target.value)}
+                                        aria-label="Traffic kind"
+                                    >
+                                        {TRAFFIC_KINDS.map(k => (
+                                            <option key={k} value={k}>{KIND_LABELS[k] ?? k}</option>
+                                        ))}
+                                    </select>
+                                    {isRegionalKind(tlKind) && (
+                                        trafficRegions.length > 0 ? (
+                                            <select
+                                                className="input input-sm"
+                                                value={effectiveTrafficRegion}
+                                                onChange={e => setTlRegion(e.target.value)}
+                                                aria-label="Region"
+                                            >
+                                                {trafficRegions.map(r => (
+                                                    <option key={r} value={r}>{r}</option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            // Nothing to pick from is not the same as an empty
+                                            // dropdown: say WHY, and where the region comes from.
+                                            <span className="text-xs text-(--base-06)">
+                                                No region has an allowance yet. Set the platform default in
+                                                Settings first.
+                                            </span>
+                                        )
+                                    )}
+                                </div>
+
+                                {(!isRegionalKind(tlKind) || trafficRegions.length > 0) && (
+                                    <>
+                                        <TrafficAllowanceFields
+                                            value={tlCell}
+                                            onChange={patch => setTlCell(c => ({ ...c, ...patch }))}
+                                            unsetNote="No override. The platform default from Settings decides for this tenant."
+                                        />
+                                        <div className="flex items-center justify-end">
+                                            <button
+                                                type="button"
+                                                onClick={saveTrafficOverride}
+                                                disabled={tlSaving}
+                                                className="btn btn-primary btn-sm disabled:opacity-40"
+                                            >
+                                                {tlSaving ? 'Saving…' : (tlCell.set ? 'Save override' : 'Remove override')}
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
                             </section>
                         </>
                     )}

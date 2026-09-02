@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.14
+
+### Features
+- A tenant's metered traffic allowance can now be set on the tenant. Settings
+  listed per-tenant overrides and offered no way to create one, so an exception
+  for a single customer was reachable only through the API. `panel`
+- The three warn-only traffic fields in the billing dialog say "warn only" now.
+  They raise a banner on the tenant's usage page and are not the metered pools
+  that are billed, which the new control beside them sets. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.02.13
 
 ### Features
