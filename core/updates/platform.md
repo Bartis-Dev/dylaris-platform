@@ -14,11 +14,12 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Breaking
-- `METRICS_DB_URL` is gone. Where the long-term statistics are written is set in
-  the panel only, under Settings, Features, and stored in the Core database. If
-  you had the variable set, enter the same host, database, user and password
-  there once - it is now ignored, and until you do, recording falls back to hour
-  buckets in the Core database. `core`
+- `METRICS_DB_URL` is gone. Where the long-term statistics are written is set
+  in the panel only, under Settings, Features, Long-term statistics, and stored
+  in the Core database. `core`
+- If you had that variable set, enter the same host, database, user and password
+  in that card once and press Test connection - it is ignored now, and until
+  then recording falls back to hour buckets in the Core database. `core`
 
 ### Security
 - Nothing.
