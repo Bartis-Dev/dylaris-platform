@@ -29,6 +29,12 @@ func NewMetricsDBHandler(state *AppState) *MetricsDBHandler {
 type metricsDBRequest struct {
 	services.MetricsDBTarget
 	Enabled bool `json:"enabled"`
+	// NoPassword says the database has none, as opposed to the field simply
+	// being left alone. Without it a blank field means only "keep what is
+	// stored", so a password once saved could never be taken back off - and
+	// "no password" is the CORRECT configuration for a database reached over a
+	// private network, which is how the reference deployment runs it.
+	NoPassword bool `json:"noPassword"`
 }
 
 // metricsDBResponse is what the form renders from. The password is never in it.
@@ -292,7 +298,12 @@ func (h *MetricsDBHandler) decodeAndMerge(w http.ResponseWriter, r *http.Request
 		return metricsDBRequest{}, false
 	}
 	req.MetricsDBTarget = req.MetricsDBTarget.Normalize()
-	if req.Password == "" {
+	switch {
+	case req.NoPassword:
+		// Explicit, so it CLEARS. This is the only way a stored password can be
+		// removed; every other path here either sets one or keeps one.
+		req.Password = ""
+	case req.Password == "":
 		existing := services.LoadMetricsDBTarget(h.state.Store)
 		if sameMetricsEndpoint(req.MetricsDBTarget, existing) {
 			req.Password = existing.Password

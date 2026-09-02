@@ -14,6 +14,7 @@ import Segmented from '@/components/ui/Segmented';
 import { SwitchRow } from '@/components/ui/Switch';
 import Select from '@/components/ui/Select';
 import HelpTip from '@/components/ui/HelpTip';
+import Checkbox from '@/components/ui/Checkbox';
 
 /**
  * Long-term statistics: whether to record, and where.
@@ -37,7 +38,12 @@ export default function MetricsDatabaseCard() {
     const form = useSettingsForm<MetricsDBSettings>({
         load: async () => {
             const res = await getMetricsDB();
-            return res.success && res.settings ? res.settings : null;
+            if (!res.success || !res.settings) return null;
+            // The server reports whether one is STORED; the checkbox is the
+            // inverse of that. Derived on load and again after each save, so
+            // the box always describes what is actually saved rather than what
+            // was last typed.
+            return { ...res.settings, noPassword: !res.settings.passwordSet };
         },
         save: async value => {
             const res = await saveMetricsDB(value);
@@ -46,7 +52,7 @@ export default function MetricsDatabaseCard() {
             // and it blanks the password it just stored.
             const stored = res.settings ?? value;
             if (res.warning) setTest({ ok: true, severity: 'warning', message: res.warning });
-            return { ok: true, value: { ...stored, password: '' } };
+            return { ok: true, value: { ...stored, password: '', noPassword: !stored.passwordSet } };
         },
         successMessage: 'Statistics database saved.',
     });
@@ -177,23 +183,41 @@ export default function MetricsDatabaseCard() {
                             Password
                             <HelpTip label="About the password">
                                 <p className="mb-2">
-                                    Optional. A metrics database reachable only from Core - on its
-                                    own Docker network, say - can legitimately run without one, and
-                                    an empty field here means exactly that.
+                                    A metrics database reachable only from Core - on its own Docker
+                                    network, say - can legitimately run without one. Tick
+                                    <strong> This database has no password</strong> to say so; that
+                                    is also how a password already saved is REMOVED.
                                 </p>
                                 <p>
-                                    Leave it blank to keep the stored password while the host, port,
-                                    database and user are unchanged. Change any of those and the
-                                    blank field means blank, so the old credential is never sent to
-                                    a different machine.
+                                    With the box unticked, leaving the field blank keeps the stored
+                                    password - but only while the host, port, database and user are
+                                    unchanged. Change any of those and blank means blank, so the old
+                                    credential is never sent to a different machine.
                                 </p>
                             </HelpTip>
                         </label>
+                        {/* Above the field, because it decides whether the field
+                            means anything. Blank alone cannot say "there is
+                            none": it already means "keep what is stored", which
+                            left a saved password with no way back off. */}
+                        <div className="mt-1.5 mb-1.5">
+                            <Checkbox
+                                checked={!!target.noPassword}
+                                onChange={v => set({ noPassword: v, ...(v ? { password: '' } : {}) })}
+                                label="This database has no password"
+                                hint={value?.passwordSet
+                                    ? 'One is stored. Ticking this removes it on save.'
+                                    : 'None is stored.'}
+                            />
+                        </div>
                         <input
-                            className="input-field input-mono w-full mt-1"
+                            className="input-field input-mono w-full"
                             type="password"
                             value={target.password ?? ''}
-                            placeholder={value?.passwordSet ? 'Stored - leave blank to keep' : 'None'}
+                            disabled={!!target.noPassword}
+                            placeholder={target.noPassword
+                                ? 'No password'
+                                : value?.passwordSet ? 'Stored - leave blank to keep' : 'Enter a password'}
                             onChange={e => set({ password: e.target.value })}
                             autoComplete="new-password"
                         />

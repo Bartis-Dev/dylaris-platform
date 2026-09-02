@@ -130,3 +130,36 @@ describe('one setting, one writer', () => {
         expect(card).toContain('SwitchRow');
     });
 });
+
+describe('taking a password back off', () => {
+    const card = readFileSync(
+        join(__dirname, '..', '..', 'components', 'settings', 'MetricsDatabaseCard.tsx'),
+        'utf8',
+    );
+
+    // A blank field already means "keep what is stored", so it cannot also mean
+    // "there is none". Without a second signal a password saved once could
+    // never be removed - and none is the correct setting for a database
+    // reachable only from Core.
+    it('the checkbox is what says there is no password', () => {
+        expect(card).toContain('This database has no password');
+        expect(card).toContain('noPassword: v');
+    });
+
+    // Ticking it empties the field too, so the request cannot carry a stale
+    // value alongside the flag that contradicts it.
+    it('ticking it clears the field, so the two cannot disagree', () => {
+        expect(card).toMatch(/noPassword: v,\s*\.\.\.\(v \? \{ password: '' \} : \{\}\)/);
+        expect(card).toContain('disabled={!!target.noPassword}');
+    });
+
+    // The box describes what is SAVED, not what was last typed: it is derived
+    // from the server's passwordSet on load and again after every save.
+    it('reflects the stored state on load and after saving', () => {
+        const derivations = card.match(/noPassword: !\w+(?:\.\w+)*\.passwordSet/g) ?? [];
+        expect(
+            derivations.length,
+            'the checkbox must be re-derived after a save too, or it shows the pre-save state',
+        ).toBe(2);
+    });
+});

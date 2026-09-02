@@ -36,6 +36,14 @@ export interface MetricsDBActive {
  */
 export interface MetricsDBRequest extends MetricsDBTarget {
     enabled: boolean;
+    /**
+     * The database has NO password, as opposed to the field being left alone.
+     *
+     * A blank field already means "keep what is stored", so without this there
+     * is no way to take a password back off once one was saved - and none is
+     * the correct setting for a database reached over a private network.
+     */
+    noPassword: boolean;
 }
 
 export interface MetricsDBSettings extends MetricsDBRequest {
@@ -65,6 +73,7 @@ export interface MetricsDBTestResult {
 
 export const emptyMetricsDBTarget: MetricsDBRequest = {
     enabled: false,
+    noPassword: true,
     mode: 'core',
     host: '',
     port: '5432',

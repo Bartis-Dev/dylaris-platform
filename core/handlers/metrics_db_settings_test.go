@@ -307,3 +307,80 @@ func TestTheFeatureBundleNoLongerWritesTheMetricsSwitch(t *testing.T) {
 		t.Fatal("featureSettingsPayload still has a Metrics field")
 	}
 }
+
+// A stored password has to be removable, and a blank field cannot say that: it
+// already means "keep the one you have". Without an explicit signal a password
+// saved once could never be taken back off - and none is the CORRECT setting
+// for a database reached over a private network, which is how this deployment
+// runs its own.
+func TestNoPasswordClearsAStoredOne(t *testing.T) {
+	st := &metricsDBStore{vals: storedSeparate()}
+	h := metricsDBHandlerFor(st)
+
+	// Same endpoint, blank field, noPassword set: the stored one must go.
+	got, ok := h.decodeAndMerge(httptest.NewRecorder(), httptest.NewRequest("PUT", "/x", strings.NewReader(
+		`{"mode":"separate","host":"metricsdb","port":"5432","dbName":"dylaris_metrics","user":"metrics","password":"","noPassword":true}`)))
+	if !ok {
+		t.Fatal("the body was rejected")
+	}
+	if got.Password != "" {
+		t.Fatalf("password = %q; ticking \"no password\" must clear the stored one", got.Password)
+	}
+}
+
+// And the keep-what-is-stored behaviour has to survive that, or every save
+// without a retyped password would silently wipe it.
+func TestABlankFieldStillKeepsTheStoredPassword(t *testing.T) {
+	h := metricsDBHandlerFor(&metricsDBStore{vals: storedSeparate()})
+	got, _ := h.decodeAndMerge(httptest.NewRecorder(), httptest.NewRequest("PUT", "/x", strings.NewReader(
+		`{"mode":"separate","host":"metricsdb","port":"5432","dbName":"dylaris_metrics","user":"metrics","password":""}`)))
+	if got.Password != "stored-secret" {
+		t.Fatalf("password = %q; a blank field without the flag must keep the stored one", got.Password)
+	}
+}
+
+// The flag WINS over a value sent alongside it. From the panel the two can
+// never disagree - ticking the box empties and disables the field - so a
+// request carrying both is a client that is confused about its own state.
+//
+// Resolving that towards "no password" is the safer of the two directions: the
+// connection then fails loudly if one was actually required, whereas the other
+// way round would quietly authenticate with a credential the operator believes
+// is switched off.
+func TestTheNoPasswordFlagWinsOverAValueSentWithIt(t *testing.T) {
+	h := metricsDBHandlerFor(&metricsDBStore{vals: storedSeparate()})
+	got, _ := h.decodeAndMerge(httptest.NewRecorder(), httptest.NewRequest("PUT", "/x", strings.NewReader(
+		`{"mode":"separate","host":"metricsdb","port":"5432","dbName":"dylaris_metrics","user":"metrics","password":"typed","noPassword":true}`)))
+	if got.Password != "" {
+		t.Fatalf("password = %q; the explicit flag must win over a value sent with it", got.Password)
+	}
+}
+
+// Saving with the flag set actually writes the empty password through, so a
+// reload shows passwordSet false rather than the old one coming back.
+func TestClearingThePasswordSurvivesTheSave(t *testing.T) {
+	st := &metricsDBStore{vals: storedSeparate()}
+	h := metricsDBHandlerFor(st)
+
+	w := httptest.NewRecorder()
+	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(
+		`{"enabled":false,"mode":"core","noPassword":true}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if st.vals[services.MetricsDBPasswordSetting] != "" {
+		t.Fatalf("the stored password survived the save: %q", st.vals[services.MetricsDBPasswordSetting])
+	}
+
+	w = httptest.NewRecorder()
+	h.Get(w, httptest.NewRequest("GET", "/x", nil))
+	var resp struct {
+		Settings struct {
+			PasswordSet bool `json:"passwordSet"`
+		} `json:"settings"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Settings.PasswordSet {
+		t.Fatal("the form would still show a password as stored after it was cleared")
+	}
+}

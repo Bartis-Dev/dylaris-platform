@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.3
+
+### Features
+- The statistics database form has a **This database has no password** tick box.
+  A blank field means "keep the stored password", so it could not also say
+  "there is none" - a password saved once had no way back off. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.03.2
 
 ### Features
