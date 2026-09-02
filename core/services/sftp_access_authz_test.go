@@ -107,7 +107,7 @@ func TestMayUseSFTP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := &sftpAuthzFakeStore{server: srv, grant: tt.grant, role: tt.role}
 			s := &SFTPSyncService{authz: authz.NewResolver(fake)}
-			if got := s.mayUseSFTP(tt.row, tt.isAdmin); got != tt.want {
+			if got, _ := s.mayUseSFTP(tt.row, tt.isAdmin); got != tt.want {
 				t.Errorf("mayUseSFTP = %v, want %v: %s", got, tt.want, tt.why)
 			}
 		})
@@ -119,10 +119,17 @@ func TestMayUseSFTP(t *testing.T) {
 // the direction it fails in has to be pinned.
 func TestMayUseSFTPWithoutAResolver(t *testing.T) {
 	s := &SFTPSyncService{}
-	if s.mayUseSFTP(store.SFTPAccess{ServerID: 1, UserID: "u", Username: "bob"}, false) {
+	if ok, _ := s.mayUseSFTP(store.SFTPAccess{ServerID: 1, UserID: "u", Username: "bob"}, false); ok {
 		t.Error("a nil resolver published a member's SFTP access")
 	}
-	if !s.mayUseSFTP(store.SFTPAccess{ServerID: 1, UserID: "u", Username: "owner", IsOwner: true}, false) {
+	ok, perms := s.mayUseSFTP(store.SFTPAccess{ServerID: 1, UserID: "u", Username: "owner", IsOwner: true}, false)
+	if !ok {
 		t.Error("a nil resolver withheld an OWNER's access to their own server")
+	}
+	// And the owner short-circuit has to produce FULL permissions, not a zero
+	// value: an owner locked out of their own files is the other way to get
+	// this wrong, and it would look identical in the boolean above.
+	if !perms.Read || !perms.Write || !perms.Delete {
+		t.Errorf("an owner was published with %+v; the short-circuit must grant everything the resolver would", perms)
 	}
 }

@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.3
+
+### Features
+- Nothing.
+
+### Breaking
+- SFTP and the beam client now enforce the file capabilities per operation, as
+  the panel's file API already did. An account whose role grants writing but not
+  deleting can no longer delete through either. `core` `node`
+
+### Security
+- A member invited as a Builder could remove any file on the server over SFTP or
+  through the beam client, while the same account was refused that over HTTP.
+  Both surfaces asked only whether a session was allowed at all. `core` `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.02.2
 
 ### Features

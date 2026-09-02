@@ -20,6 +20,7 @@ import (
 
 	beamauth "dylaris-pkg/beam/auth"
 	"dylaris-pkg/beam/quota"
+	"dylaris-pkg/fileperms"
 	pb "dylaris-proto/beam"
 
 	"github.com/redis/go-redis/v9"
@@ -66,6 +67,19 @@ type beamServer struct {
 	// stores claims.Username (only when non-empty); beamConnCleaner clears it
 	// alongside the serverUUID binding when the connection ends.
 	usernameByPeer sync.Map // map[string]string
+
+	// permsByPeer mirrors the two above for the ticket's file permissions, so
+	// every file RPC can ask what this session may DO rather than only which
+	// server it may reach. Until it existed the node had nothing to check and
+	// allowed every operation to anyone holding a valid ticket - so an account
+	// invited as a Builder, a role defined as write-but-not-delete, was refused
+	// a delete over HTTP and could remove server.jar through the beam client.
+	//
+	// Stored as a POINTER: nil means the ticket carried no permissions at all,
+	// which is what a Core older than this field mints, and that is a different
+	// thing from a ticket granting none. Both are refused; only one is worth
+	// telling an operator to update Core about.
+	permsByPeer sync.Map // map[string]*fileperms.Perms
 }
 
 // beamConnKey carries the connection's remote address from TagConn through to
@@ -77,8 +91,9 @@ type beamConnKey struct{}
 // connection that reuses the same (recycled) peer address would inherit the
 // previous session's authorization without authenticating.
 type beamConnCleaner struct {
-	uuid *sync.Map
-	user *sync.Map
+	uuid  *sync.Map
+	user  *sync.Map
+	perms *sync.Map
 }
 
 func (c *beamConnCleaner) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
@@ -96,6 +111,7 @@ func (c *beamConnCleaner) HandleConn(ctx context.Context, st stats.ConnStats) {
 		if addr, _ := ctx.Value(beamConnKey{}).(string); addr != "" {
 			c.uuid.Delete(addr)
 			c.user.Delete(addr)
+			c.perms.Delete(addr)
 		}
 	}
 }
@@ -143,7 +159,7 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 		jwtSecret:  jwtSecret,
 		nodeID:     nodeID,
 	}
-	srv := grpc.NewServer(grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer}))
+	srv := grpc.NewServer(grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer}))
 	pb.RegisterBeamNodeServiceServer(srv, bs)
 
 	log.Printf("beam-server: listening on %s (reachable via overlay; JWT-gated)", listenAddr)
@@ -218,7 +234,7 @@ func startBeamLANListener(ctx context.Context, bs *beamServer, nodeID string) {
 	}
 	tlsSrv := grpc.NewServer(
 		grpc.Creds(credentials.NewServerTLSFromCert(&cert)),
-		grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer}),
+		grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer}),
 	)
 	pb.RegisterBeamNodeServiceServer(tlsSrv, bs)
 	log.Printf("beam-server: LAN fast-path (TLS, pinned) listening on %s, fp=%s", addr, fp[:16]+"...")
@@ -554,6 +570,10 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 		if claims.Username != "" {
 			s.usernameByPeer.Store(p.Addr.String(), claims.Username)
 		}
+		// Stored even when nil, so extractFilePerms can tell "this session was
+		// never authenticated" from "authenticated by a Core that sends no
+		// permissions".
+		s.permsByPeer.Store(p.Addr.String(), claims.Perms)
 	}
 	return &pb.BeamAuthResp{
 		Ok:         true,
@@ -563,7 +583,45 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 
 // ─── File Operations ─────────────────────────────────────────────────
 
+// requireFilePerm answers whether this session may perform one kind of file
+// operation, and returns the refusal to hand back when it may not.
+//
+// Three states, and they are deliberately not collapsed. An unauthenticated peer
+// has no entry at all. An authenticated peer whose ticket predates the
+// permissions field has a nil one, and the message says so, because the fix for
+// that is to update Core and nothing about the account is wrong. Anything else
+// is an ordinary refusal.
+//
+// Refuses when it cannot tell. The alternative reading - "no permissions
+// recorded, so allow" - is the behaviour this replaced.
+func (s *beamServer) requireFilePerm(ctx context.Context, want func(fileperms.Perms) bool, verb string) error {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p == nil || p.Addr == nil {
+		return status.Error(codes.PermissionDenied, "not authenticated")
+	}
+	v, found := s.permsByPeer.Load(p.Addr.String())
+	if !found {
+		return status.Error(codes.PermissionDenied, "not authenticated")
+	}
+	perms, _ := v.(*fileperms.Perms)
+	if perms == nil {
+		return status.Error(codes.PermissionDenied,
+			"this ticket carries no file permissions - the panel that issued it is older than this node, update it")
+	}
+	if !want(*perms) {
+		return status.Errorf(codes.PermissionDenied, "you do not have permission to %s files on this server", verb)
+	}
+	return nil
+}
+
+func canRead(p fileperms.Perms) bool   { return p.Read }
+func canWrite(p fileperms.Perms) bool  { return p.Write }
+func canDelete(p fileperms.Perms) bool { return p.Delete }
+
 func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*pb.BeamFileListResp, error) {
+	if err := s.requireFilePerm(ctx, canRead, "list"); err != nil {
+		return &pb.BeamFileListResp{}, err
+	}
 	serverUUID := s.extractServerUUID(ctx)
 	dirPath, err := s.validateBeamPathRead(req.Path, serverUUID)
 	if err != nil {
@@ -610,6 +668,9 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 }
 
 func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadReq) (*pb.BeamFileContentResp, error) {
+	if err := s.requireFilePerm(ctx, canRead, "read"); err != nil {
+		return nil, err
+	}
 	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPathRead(req.Path, serverUUID)
 	if err != nil {
@@ -625,6 +686,9 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 }
 
 func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveReq) (*pb.BeamOpResp, error) {
+	if err := s.requireFilePerm(ctx, canWrite, "write"); err != nil {
+		return nil, err
+	}
 	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPath(req.Path, serverUUID)
 	if err != nil {
@@ -655,6 +719,9 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 }
 
 func (s *beamServer) CreateFile(ctx context.Context, req *pb.BeamFileCreateReq) (*pb.BeamOpResp, error) {
+	if err := s.requireFilePerm(ctx, canWrite, "create"); err != nil {
+		return nil, err
+	}
 	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPath(req.Path, serverUUID)
 	if err != nil {
@@ -680,6 +747,9 @@ func (s *beamServer) CreateFile(ctx context.Context, req *pb.BeamFileCreateReq) 
 }
 
 func (s *beamServer) DeleteFile(ctx context.Context, req *pb.BeamFileDeleteReq) (*pb.BeamOpResp, error) {
+	if err := s.requireFilePerm(ctx, canDelete, "delete"); err != nil {
+		return nil, err
+	}
 	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPath(req.Path, serverUUID)
 	if err != nil {
@@ -694,6 +764,9 @@ func (s *beamServer) DeleteFile(ctx context.Context, req *pb.BeamFileDeleteReq) 
 }
 
 func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) (*pb.BeamOpResp, error) {
+	if err := s.requireFilePerm(ctx, canWrite, "rename"); err != nil {
+		return nil, err
+	}
 	serverUUID := s.extractServerUUID(ctx)
 	oldPath, err := s.validateBeamPath(req.OldPath, serverUUID)
 	if err != nil {
@@ -726,6 +799,9 @@ func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) 
 }
 
 func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb.BeamOpResp, error) {
+	if err := s.requireFilePerm(ctx, canWrite, "copy"); err != nil {
+		return nil, err
+	}
 	serverUUID := s.extractServerUUID(ctx)
 	srcPath, err := s.validateBeamPath(req.SrcPath, serverUUID)
 	if err != nil {
@@ -760,6 +836,9 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 // ─── Streaming Downloads ─────────────────────────────────────────────
 
 func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {
+	if err := s.requireFilePerm(stream.Context(), canRead, "download"); err != nil {
+		return err
+	}
 	ctx := stream.Context()
 	serverUUID := s.extractServerUUID(ctx)
 	filePath, err := s.validateBeamPathRead(req.Path, serverUUID)
@@ -866,6 +945,9 @@ func readUploadIDFromContext(ctx context.Context) string {
 }
 
 func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadMsg, pb.BeamOpResp]) error {
+	if err := s.requireFilePerm(stream.Context(), canWrite, "upload"); err != nil {
+		return err
+	}
 	ctx := stream.Context()
 	serverUUID := s.extractServerUUID(ctx)
 	username := s.extractUsername(ctx)
@@ -1115,6 +1197,9 @@ func (s *beamServer) recordBeamDailyUsage(ctx context.Context, username string, 
 }
 
 func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {
+	if err := s.requireFilePerm(stream.Context(), canRead, "download"); err != nil {
+		return err
+	}
 	serverUUID := s.extractServerUUID(stream.Context())
 	basePath, err := s.validateBeamPathRead(req.BasePath, serverUUID)
 	if err != nil {

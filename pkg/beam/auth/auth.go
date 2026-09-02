@@ -16,6 +16,8 @@
 package auth
 
 import (
+	"dylaris-pkg/fileperms"
+
 	"errors"
 	"time"
 
@@ -34,6 +36,23 @@ type BeamClaims struct {
 	// so a node that holds no fleet secret can still trust it. Empty on a ticket
 	// minted for a node whose secret Core could not load. See node_proof.go.
 	NodeProof string `json:"node_proof,omitempty"`
+	// Perms is what this account may do to the server's files, resolved by Core
+	// from the same capability catalog the HTTP file API enforces.
+	//
+	// It rides in the TICKET rather than being looked up on the node, because
+	// the two surfaces learn who the caller is differently: SFTP has a username
+	// and reads the per-(node, user) key the SFTP sync publishes, while beam has
+	// only this ticket - and an administrator, who may hold no SFTP access row
+	// at all, appears in no published list. Both values come out of one
+	// resolution in Core, so the delivery differing does not make the answer
+	// differ.
+	//
+	// A POINTER, and the nil case is load-bearing: a ticket minted by a Core
+	// that predates this field carries no permissions, and the node must be able
+	// to tell that apart from a ticket that grants none. It refuses the
+	// operation either way, but only one of the two is worth telling an operator
+	// to update Core about.
+	Perms *fileperms.Perms `json:"perms,omitempty"`
 	jwt.RegisteredClaims
 }
 

@@ -22,6 +22,7 @@ import (
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
 	beamauth "dylaris-pkg/beam/auth"
+	"dylaris-pkg/fileperms"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -199,19 +200,33 @@ const beamAccessCap = "sftp.access"
 //
 // Fail-closed on a missing resolver: this is the only gate between a panel
 // member and unrestricted write access to a server's files.
-func (h *BeamHandler) canBeam(r *http.Request, serverID int) bool {
+// It also returns WHAT they may do to the files, which travels in the ticket.
+// The node has no other way to know: it sees a signed ticket and nothing else,
+// so a beam session used to be all-or-nothing and "all" is what it was. The
+// comment on the access check below already said as much - "the node has no
+// capability in the ticket to check" - about the field this now fills in.
+func (h *BeamHandler) canBeam(r *http.Request, serverID int) (bool, fileperms.Perms) {
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	if isAdmin {
-		return true
+		return true, fileperms.Full()
 	}
 	if h.state == nil || h.state.Authz == nil {
-		return false
+		return false, fileperms.Perms{}
 	}
 	username, _ := r.Context().Value("username").(string)
 	userID, _ := r.Context().Value("userID").(string)
 	res, err := h.state.Authz.Resolve(
 		authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
-	return err == nil && res.HasCap(beamAccessCap)
+	if err != nil || !res.HasCap(beamAccessCap) {
+		return false, fileperms.Perms{}
+	}
+	// The same three capability ids handlers/file.go passes to getServerUUID,
+	// and the same three services/sftp_sync.go publishes to the node for SFTP.
+	return true, fileperms.Perms{
+		Read:   res.HasCap("files.read"),
+		Write:  res.HasCap("files.write"),
+		Delete: res.HasCap("files.delete"),
+	}
 }
 
 type BeamServerInfo struct {
@@ -250,7 +265,7 @@ func (h *BeamHandler) GetBeamServers(w http.ResponseWriter, r *http.Request) {
 		// see the server at all", which is a wider set than beamAccessCap -
 		// listing the rest offered a member a server whose ticket request is
 		// refused, and handed out that server's node discovery token on the way.
-		if !h.canBeam(r, s.ID) {
+		if ok, _ := h.canBeam(r, s.ID); !ok {
 			continue
 		}
 		// Resolve node info — Node.Token is used as the discovery nodeID
@@ -355,7 +370,8 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// si.server_id = $1, so an ACCOUNT-wide grant (server_id IS NULL), which
 	// the resolver honours on every server of that owner, produced no row and
 	// was refused.
-	if !h.canBeam(r, server.ID) {
+	allowed, filePerms := h.canBeam(r, server.ID)
+	if !allowed {
 		sendJSONError(w, "Access denied", http.StatusForbidden)
 		return
 	}
@@ -428,6 +444,10 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		NodeID:     nodeDiscoveryID,
 		Username:   username,
 		IsAdmin:    isAdmin,
+		// What this ticket may DO, not only which server it may reach. Without
+		// it the node had nothing to check and allowed every file operation to
+		// anyone holding a valid ticket.
+		Perms: &filePerms,
 	}
 	// The same per-node secret that keys the LAN certificate also stamps a
 	// per-node proof into the ticket, so a node holding no fleet secret can

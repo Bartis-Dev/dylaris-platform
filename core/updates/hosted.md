@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.3
+
+### Features
+- Nothing.
+
+### Breaking
+- People you invited to your servers now get the same file permissions over SFTP
+  and in the desktop client that they already had in the panel. Somebody whose
+  role allows editing but not deleting can no longer delete files through those
+  two. Check your invites if you relied on the old behaviour. `node`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.01.14
 
 ### Features

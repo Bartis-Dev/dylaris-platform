@@ -6,6 +6,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
+	"dylaris-pkg/fileperms"
 	"encoding/json"
 	"log"
 	"strings"
@@ -70,12 +71,12 @@ const sftpAccessCap = "sftp.access"
 // Fails CLOSED. A resolver error drops that pair from this tick rather than
 // publishing it, and the keys carry a 5-minute TTL, so a database fault takes
 // SFTP away for a few minutes instead of handing out access it could not check.
-func (s *SFTPSyncService) mayUseSFTP(a store.SFTPAccess, isAdmin bool) bool {
+func (s *SFTPSyncService) mayUseSFTP(a store.SFTPAccess, isAdmin bool) (bool, fileperms.Perms) {
 	if a.IsOwner {
-		return true
+		return true, fileperms.Full()
 	}
 	if s.authz == nil {
-		return false
+		return false, fileperms.Perms{}
 	}
 	res, err := s.authz.Resolve(authz.Identity{
 		UserID:   a.UserID,
@@ -84,14 +85,46 @@ func (s *SFTPSyncService) mayUseSFTP(a store.SFTPAccess, isAdmin bool) bool {
 	}, a.ServerID)
 	if err != nil {
 		log.Printf("SFTPSync: could not resolve %s on server %d, withholding SFTP: %v", a.Username, a.ServerID, err)
-		return false
+		return false, fileperms.Perms{}
 	}
-	return res.HasCap(sftpAccessCap)
+	if !res.HasCap(sftpAccessCap) {
+		return false, fileperms.Perms{}
+	}
+	// The transport is one decision and what may be done through it is another.
+	// This used to return here, and the node then allowed every operation - so
+	// the built-in Builder role, defined as write-but-not-delete, could remove
+	// server.jar over SFTP while HTTP refused the same delete. The resolution is
+	// already in hand; the three verbs come out of it.
+	//
+	// The capability ids are the same strings handlers/file.go passes to
+	// getServerUUID for the matching HTTP endpoint - files.read to list or
+	// download, files.write to save, create, rename, copy or upload,
+	// files.delete to delete. That correspondence is the whole point: a second
+	// surface has to ask the same question the first one asks.
+	//
+	// sftp.access with no file verb at all still gets a session, deliberately.
+	// That capability authorizes the TRANSPORT, and TestMayUseSFTP pins it as
+	// the thing that decides whether a session exists; making the verbs decide
+	// that too would quietly redefine it and take away a login an operator
+	// granted on purpose. The session simply cannot do anything, which is what
+	// the permissions say.
+	return true, fileperms.Perms{
+		Read:   res.HasCap("files.read"),
+		Write:  res.HasCap("files.write"),
+		Delete: res.HasCap("files.delete"),
+	}
 }
 
+// sftpServerEntry is one server as the node's SFTP server sees it. Perms is
+// EMBEDDED rather than nested so the published JSON stays flat
+// ({"uuid":..,"name":..,"r":true,..}); an older node that does not know the
+// fields ignores them, and a newer node reading an entry published by an older
+// Core sees all three false and refuses every operation, which is the safe
+// direction and self-heals on the next 60s tick.
 type sftpServerEntry struct {
 	UUID string `json:"uuid"`
 	Name string `json:"name"`
+	fileperms.Perms
 }
 
 // sftpNodeServersKey is the per-node, per-user server list the node's SFTP
@@ -226,10 +259,12 @@ func (s *SFTPSyncService) sync() {
 		// doorbell and not on the door.
 		byUser := make(map[string][]sftpServerEntry)
 		for _, a := range accesses {
-			if !s.mayUseSFTP(a, adminByUser[a.Username]) {
+			ok, perms := s.mayUseSFTP(a, adminByUser[a.Username])
+			if !ok {
 				continue
 			}
-			byUser[a.Username] = append(byUser[a.Username], sftpServerEntry{UUID: a.ServerUUID, Name: a.ServerName})
+			byUser[a.Username] = append(byUser[a.Username],
+				sftpServerEntry{UUID: a.ServerUUID, Name: a.ServerName, Perms: perms})
 		}
 
 		// The same set decides which daily upload counters this node's Redis

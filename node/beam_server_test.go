@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	beamauth "dylaris-pkg/beam/auth"
+	"dylaris-pkg/fileperms"
 	pb "dylaris-proto/beam"
 
 	"google.golang.org/grpc"
@@ -58,6 +59,11 @@ func newTestBeamServer(t *testing.T) (*beamServer, string, context.Context) {
 	addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40000}
 	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
 	bs.serverUUIDByPeer.Store(addr.String(), serverUUID)
+	// A real session gets its permissions from the ticket. These tests are about
+	// what the file operations DO, so they bind an account that may do
+	// everything; the ones about who may do what bind narrower ones.
+	full := fileperms.Full()
+	bs.permsByPeer.Store(addr.String(), &full)
 	return bs, serverUUID, ctx
 }
 

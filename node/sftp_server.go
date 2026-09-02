@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"dylaris-pkg/beam/quota"
+	"dylaris-pkg/fileperms"
 
 	"github.com/pkg/sftp"
 	"github.com/redis/go-redis/v9"
@@ -37,6 +38,18 @@ type SFTPServer struct {
 type sftpServerRef struct {
 	UUID string `json:"uuid"`
 	Name string `json:"name"`
+	// What this account may do to this server's files, published per (node,
+	// user) by Core's SFTP sync from the same resolution the HTTP file API
+	// enforces. Flat keys, and ABSENT means false: an entry written by a Core
+	// that predates them refuses every operation rather than allowing every
+	// one, and the next 60s tick replaces it.
+	//
+	// Until these existed the node asked one question - is this account allowed
+	// an SFTP session at all - and then permitted everything through it. The
+	// built-in Builder role is defined as write-but-not-delete, so an account
+	// invited as a Builder was refused a delete over HTTP and could remove
+	// server.jar here.
+	fileperms.Perms
 }
 
 func NewSFTPServer(rdb *redis.Client, storageMgr *StorageManager, nodeID string) *SFTPServer {
@@ -304,7 +317,7 @@ func loadOrGenHostKeyAt(keyPath, legacyPath string) (ssh.Signer, error) {
 type virtualFS struct {
 	servers    []sftpServerRef
 	storageMgr *StorageManager
-	nameToUUID map[string]string
+	nameToRef  map[string]sftpServerRef
 	// rdb + username let Filewrite meter writes against the upload limits and
 	// attribute them to the user's shared daily-quota bucket. The SFTP login
 	// username is the account username (sftp_sync.go keys sftp:auth by it), the
@@ -314,11 +327,11 @@ type virtualFS struct {
 }
 
 func newVirtualFS(servers []sftpServerRef, sm *StorageManager, rdb *redis.Client, username string) *virtualFS {
-	m := make(map[string]string, len(servers))
+	m := make(map[string]sftpServerRef, len(servers))
 	for _, s := range servers {
-		m[s.Name] = s.UUID
+		m[s.Name] = s
 	}
-	return &virtualFS{servers: servers, storageMgr: sm, nameToUUID: m, rdb: rdb, username: username}
+	return &virtualFS{servers: servers, storageMgr: sm, nameToRef: m, rdb: rdb, username: username}
 }
 
 // resolve converts a virtual path to a real OS path, and returns that path
@@ -330,22 +343,36 @@ func newVirtualFS(servers []sftpServerRef, sm *StorageManager, rdb *redis.Client
 // filepath.Base leaves "<archive>.tar.gz", an ordinary-looking filename, and
 // every guard here passed exactly that. Listing already hid the directory, so
 // an SFTP client could truncate, delete or move backups it could not see.
-func (v *virtualFS) resolve(path string) (string, string, error) {
+// resolve maps a virtual SFTP path to a real one, and returns the caller's
+// permissions on the server it lands in.
+//
+// The permissions come back HERE, rather than being looked up by each handler,
+// so that every path that reaches a file also holds the answer to "may they".
+// A handler that forgets to ask is then visible as an unused value rather than
+// as nothing at all - which is what the previous shape was: resolve returned a
+// path, and Remove, Rmdir, Rename and Mkdir did their work with no permission
+// in sight.
+//
+// The virtual root has no server and therefore no permissions; it lists the
+// server names the sync published, which is what the account is entitled to see
+// by definition.
+func (v *virtualFS) resolve(path string) (string, string, sftpServerRef, error) {
 	path = filepath.ToSlash(filepath.Clean("/" + path))
 	if path == "/" {
-		return "", "", nil // root — virtual
+		return "", "", sftpServerRef{}, nil // root — virtual
 	}
 
 	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)
 	serverName := parts[0]
-	uuid, ok := v.nameToUUID[serverName]
+	ref, ok := v.nameToRef[serverName]
 	if !ok {
-		return "", "", os.ErrNotExist
+		return "", "", sftpServerRef{}, os.ErrNotExist
 	}
+	uuid := ref.UUID
 
 	base := v.storageMgr.GetServerDir(uuid)
 	if len(parts) == 1 {
-		return base, ".", nil
+		return base, ".", ref, nil
 	}
 	rel := filepath.FromSlash(parts[1])
 	full := filepath.Join(base, rel)
@@ -354,9 +381,9 @@ func (v *virtualFS) resolve(path string) (string, string, error) {
 	// above strips traversal from the STRING, and os.Open/os.OpenFile then
 	// follow a planted link straight out of the server directory.
 	if !linkStaysWithin(base, full) {
-		return "", "", os.ErrPermission
+		return "", "", sftpServerRef{}, os.ErrPermission
 	}
-	return full, rel, nil
+	return full, rel, ref, nil
 }
 
 // protectedRel reports whether a resolved SFTP path names a platform-managed
@@ -370,8 +397,11 @@ func protectedRel(rel string) bool {
 // --- sftp.ReadWriteAt (FileGet + FilePut) ---
 
 func (v *virtualFS) Fileread(r *sftp.Request) (io.ReaderAt, error) {
-	realPath, rel, err := v.resolve(r.Filepath)
+	realPath, rel, ref, err := v.resolve(r.Filepath)
 	if err != nil || realPath == "" {
+		return nil, os.ErrPermission
+	}
+	if !ref.Read {
 		return nil, os.ErrPermission
 	}
 	if protectedRel(rel) {
@@ -381,8 +411,11 @@ func (v *virtualFS) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 }
 
 func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
-	realPath, rel, err := v.resolve(r.Filepath)
+	realPath, rel, ref, err := v.resolve(r.Filepath)
 	if err != nil || realPath == "" {
+		return nil, os.ErrPermission
+	}
+	if !ref.Write {
 		return nil, os.ErrPermission
 	}
 	if protectedRel(rel) {
@@ -414,7 +447,7 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 func (v *virtualFS) serverUUIDForPath(path string) string {
 	path = filepath.ToSlash(filepath.Clean("/" + path))
 	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)
-	return v.nameToUUID[parts[0]]
+	return v.nameToRef[parts[0]].UUID
 }
 
 // sftpWriteCeiling returns the largest end offset a write to this server dir may
@@ -482,8 +515,13 @@ func (m *meteredSFTPWriter) Close() error {
 func (v *virtualFS) Filecmd(r *sftp.Request) error {
 	switch r.Method {
 	case "Mkdir":
-		realPath, rel, err := v.resolve(r.Filepath)
+		realPath, rel, ref, err := v.resolve(r.Filepath)
 		if err != nil || realPath == "" {
+			return os.ErrPermission
+		}
+		// Creating a directory is a write, the same verb the HTTP API's create
+		// endpoint asks for.
+		if !ref.Write {
 			return os.ErrPermission
 		}
 		if protectedRel(rel) {
@@ -497,8 +535,14 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 	// refuses a non-empty one, which is exactly the RMDIR contract. The guards
 	// are the same either way, so the two share a branch rather than drift.
 	case "Remove", "Rmdir":
-		realPath, rel, err := v.resolve(r.Filepath)
+		realPath, rel, ref, err := v.resolve(r.Filepath)
 		if err != nil || realPath == "" {
+			return os.ErrPermission
+		}
+		// files.delete, exactly as the HTTP delete endpoint asks. This is the
+		// one the built-in Builder role does NOT hold, and until this check
+		// existed a Builder was refused a delete over HTTP and allowed it here.
+		if !ref.Delete {
 			return os.ErrPermission
 		}
 		if protectedRel(rel) {
@@ -506,8 +550,15 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		}
 		return os.Remove(realPath)
 	case "Rename":
-		src, srcRel, err := v.resolve(r.Filepath)
+		src, srcRel, srcRef, err := v.resolve(r.Filepath)
 		if err != nil || src == "" {
+			return os.ErrPermission
+		}
+		// files.write, matching the HTTP rename endpoint. Checked on BOTH ends
+		// below, because the two paths can name different servers: this virtual
+		// filesystem presents every server the account may reach as a
+		// directory, so a rename across them is expressible.
+		if !srcRef.Write {
 			return os.ErrPermission
 		}
 		if protectedRel(srcRel) {
@@ -515,8 +566,11 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		}
 		// The destination was never checked, so a rename ONTO a protected name
 		// overwrote it - the one hole the gRPC copy handler had always closed.
-		dst, dstRel, err := v.resolve(r.Target)
+		dst, dstRel, dstRef, err := v.resolve(r.Target)
 		if err != nil || dst == "" {
+			return os.ErrPermission
+		}
+		if !dstRef.Write {
 			return os.ErrPermission
 		}
 		if protectedRel(dstRel) {
@@ -547,9 +601,17 @@ func (l listerAt) ListAt(ls []os.FileInfo, offset int64) (int, error) {
 func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	switch r.Method {
 	case "List":
-		realPath, rel, err := v.resolve(r.Filepath)
+		realPath, rel, ref, err := v.resolve(r.Filepath)
 		if err != nil {
 			return nil, err
+		}
+		// files.read, matching the HTTP listing endpoint. The virtual ROOT is
+		// exempt: it lists the server names the sync published for this account,
+		// which is by definition what they are entitled to see, and refusing it
+		// would make a session that may write but not read look empty rather
+		// than restricted.
+		if realPath != "" && !ref.Read {
+			return nil, os.ErrPermission
 		}
 		// The virtual root is resolved BEFORE the protected check, and must be:
 		// resolve returns rel "" for it, filepath.Clean("") is ".", and
@@ -596,12 +658,18 @@ func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		return listerAt(infos), nil
 
 	case "Stat", "Lstat":
-		realPath, rel, err := v.resolve(r.Filepath)
+		realPath, rel, ref, err := v.resolve(r.Filepath)
 		if err != nil {
 			return nil, err
 		}
 		if realPath == "" {
 			return listerAt([]os.FileInfo{&virtualDirInfo{name: "/"}}), nil
+		}
+		// Not ErrPermission, for the same reason the protected check below is
+		// not: a stat that answers differently for "exists" and "may not see"
+		// is how a directory nobody may list is mapped anyway.
+		if !ref.Read {
+			return nil, os.ErrNotExist
 		}
 		// Not ErrPermission: the listing filter already hides these entries, so
 		// confirming one exists would be the only way to learn it is there.

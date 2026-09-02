@@ -1,6 +1,8 @@
 package main
 
 import (
+	"dylaris-pkg/fileperms"
+
 	"errors"
 	"io"
 	"os"
@@ -44,7 +46,7 @@ func TestSFTPDoesNotFollowALinkOutOfTheServerDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fs := newVirtualFS([]sftpServerRef{{UUID: uuid, Name: "myserver"}}, sm, nil, "tester")
+	fs := newVirtualFS([]sftpServerRef{{UUID: uuid, Name: "myserver", Perms: fileperms.Full()}}, sm, nil, "tester")
 
 	if _, err := fs.Fileread(&sftp.Request{Method: "Get", Filepath: "myserver/escape.txt"}); err == nil {
 		t.Error("downloading a link that leaves the server directory was accepted")
@@ -91,7 +93,7 @@ func TestSFTPRefusesADanglingLink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fs := newVirtualFS([]sftpServerRef{{UUID: uuid, Name: "myserver"}}, sm, nil, "tester")
+	fs := newVirtualFS([]sftpServerRef{{UUID: uuid, Name: "myserver", Perms: fileperms.Full()}}, sm, nil, "tester")
 	if _, err := fs.Filewrite(&sftp.Request{Method: "Put", Filepath: "myserver/trap.txt"}); err == nil {
 		t.Error("writing through a dangling link was accepted")
 	}

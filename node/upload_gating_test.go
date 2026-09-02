@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-pkg/beam/quota"
+	"dylaris-pkg/fileperms"
 	pb "dylaris-proto/beam"
 
 	"github.com/alicebob/miniredis/v2"
@@ -56,6 +57,8 @@ func TestSaveFileContent_EnforcesUploadLimits(t *testing.T) {
 	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
 	bs.serverUUIDByPeer.Store(addr.String(), uuid)
 	bs.usernameByPeer.Store(addr.String(), "u")
+	full := fileperms.Full()
+	bs.permsByPeer.Store(addr.String(), &full)
 	if err := os.MkdirAll(filepath.Join(sm.GetServerDir(uuid), "survival"), 0755); err != nil {
 		t.Fatal(err)
 	}

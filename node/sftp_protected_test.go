@@ -1,6 +1,8 @@
 package main
 
 import (
+	"dylaris-pkg/fileperms"
+
 	"io"
 	"os"
 	"path/filepath"
@@ -34,7 +36,7 @@ func newProtectedFS(t *testing.T) (*virtualFS, string) {
 		t.Fatal(err)
 	}
 
-	return newVirtualFS([]sftpServerRef{{UUID: uuid, Name: "myserver"}}, sm, nil, "tester"), archive
+	return newVirtualFS([]sftpServerRef{{UUID: uuid, Name: "myserver", Perms: fileperms.Full()}}, sm, nil, "tester"), archive
 }
 
 // The guards took filepath.Base, which turns ".dylaris-backups/x.tar.gz" into
