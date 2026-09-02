@@ -86,7 +86,9 @@ function ComponentRow({ component }: { component: UpdateComponent }) {
     return (
         <div className="flex items-start gap-4 px-4 py-2.5 border-b border-(--base-03)/60 last:border-b-0">
             <div className="w-28 shrink-0">
-                <div className="text-sm text-(--base-09)">{serviceLabel(component.service)}</div>
+                <div className="text-sm text-(--base-09)">
+                    {component.label || serviceLabel(component.service)}
+                </div>
                 <div
                     className={`text-[10px] font-mono ${
                         !component.latest
@@ -390,7 +392,7 @@ export default function UpdatesBell() {
                                         component leaves this one green.
                                     </p>
                                     <div className="mt-2 mx-4 rounded-md border border-(--base-03) bg-(--base-02)">
-                                        {components.map(c => <ComponentRow key={c.service} component={c} />)}
+                                        {components.map(c => <ComponentRow key={c.key} component={c} />)}
                                     </div>
                                 </>
                             )}

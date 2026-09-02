@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { getInfrastructureOverview, getNodes, GatewayEdge, GatewayLink } from '@/lib/api';
 import { flattenServiceErrors, type FlatServiceError } from '@/lib/serviceErrors';
-import type { InfrastructureData, NodeInfo } from './InfraCards';
+import type { CustomerSummary, InfrastructureData, NodeInfo } from './InfraCards';
 
 /**
  * ONE fetch for the whole infrastructure screen.
@@ -27,6 +27,8 @@ export interface InfraState {
     routeCount: number;
     onlineEdges: number;
     errors: FlatServiceError[];
+    /** What customers run. Null until the overview reports it. */
+    customers: CustomerSummary | null;
     /** The feature flag: the gateway is configured. */
     gatewayEnabled: boolean;
     /** The flag AND something actually deployed behind it. */
@@ -74,6 +76,7 @@ export function InfraProvider({ gatewayEnabled, children }: { gatewayEnabled: bo
                     links: res.links || [],
                     routeCount: res.routeCount ?? 0,
                     onlineEdges: res.onlineEdges ?? 0,
+                    customers: res.customers ?? null,
                     // Core has always sent this and the view used to drop it,
                     // which took six components' diagnostics off every screen.
                     errors: flattenServiceErrors(res.errors),
@@ -103,6 +106,7 @@ export function InfraProvider({ gatewayEnabled, children }: { gatewayEnabled: bo
         links,
         routeCount: data?.routeCount ?? 0,
         onlineEdges: data?.onlineEdges ?? 0,
+        customers: data?.customers ?? null,
         errors: data?.errors ?? [],
         gatewayEnabled,
         // Enabled AND something behind it. A tab that renders an empty gateway

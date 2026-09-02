@@ -40,6 +40,13 @@ export interface UpdateInstance {
 // component, which is why a release touching only the node does not mark Core
 // as behind.
 export interface UpdateComponent {
+    // The ROW's identity, which is not always the service: the operator's
+    // cluster and their external machines are two rows and one component,
+    // because a release names `node` and both of them install it.
+    key: string;
+    // What the row is called. Empty falls back to the panel's own name for the
+    // service, which is what every non-node row does.
+    label?: string;
     service: string;
     latest?: string;
     outdated: boolean;

@@ -73,13 +73,12 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Aggregate stats
-	onlineLinks := 0
-	for _, l := range links {
-		if l.Online {
-			onlineLinks++
-		}
-	}
+	// Aggregate stats. Links are split by who RUNS them: a customer's BYON or
+	// route-only link going down is not an outage of this platform, so the
+	// operator's own count must not include it. The customer figures are
+	// reported beside it, as a count and nothing more - see customerSummary.
+	split := services.LoadLinkOwnership(h.state.Store).SplitLinks(links)
+	onlineLinks := split.OursOnline
 
 	onlineEdges := 0
 	for _, e := range edges {
@@ -92,15 +91,77 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	errors := services.GetAllServiceErrorsFromRedis(h.state.Redis, 20)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":     true,
-		"edges":       edges,
-		"links":       links,
+		"success": true,
+		"edges":   edges,
+		// Ours only. The customer links are counted in `customers` and are
+		// deliberately not listed: a link is identified by its TOKEN, which is
+		// a credential, and there is nothing an operator can do with somebody
+		// else's anyway.
+		"links":       split.Ours,
 		"nodes":       nodes,
 		"routeCount":  routeCount,
 		"onlineLinks": onlineLinks,
 		"onlineEdges": onlineEdges,
+		"customers":   h.customerSummary(ctx, split),
 		"errors":      errors,
 	})
+}
+
+// customerCounts is a total and how many of them are up. Nothing else - no
+// status, no severity, no list.
+//
+// That shape is the whole point. These machines belong to tenants, run in places
+// nobody here can reach, and are switched off for ordinary reasons. Attaching a
+// severity to "3 of 4 up" would put an amber badge on this platform for somebody
+// else's laptop being closed, and an operator who cannot act on a warning learns
+// to stop reading warnings.
+//
+// Online is a POINTER because absent and zero are different answers: warp
+// liveness comes from a gauge the leaders only publish after the gateway is
+// updated, and reporting a confident 0/12 for a fleet nobody measured would be
+// worse than saying nothing.
+type customerCounts struct {
+	Total  int  `json:"total"`
+	Online *int `json:"online"`
+}
+
+type customerSummaryBlock struct {
+	Nodes customerCounts `json:"nodes"`
+	Links customerCounts `json:"links"`
+	Warps customerCounts `json:"warps"`
+}
+
+// customerSummary counts what tenants run: BYON nodes, their links, and their
+// warp overlay peers.
+func (h *InfrastructureHandler) customerSummary(ctx context.Context, split services.LinkSplit) customerSummaryBlock {
+	var out customerSummaryBlock
+
+	all, err := h.state.Store.ListNodes()
+	if err == nil {
+		_, customer := services.SplitNodes(all)
+		online := 0
+		for i := range customer {
+			if customer[i].Status == "online" {
+				online++
+			}
+		}
+		out.Nodes = customerCounts{Total: len(customer), Online: &online}
+	}
+
+	linksOnline := split.CustomerOnline
+	out.Links = customerCounts{Total: len(split.Customer), Online: &linksOnline}
+
+	if peers, perr := h.state.Store.ListAllWarpPeers(); perr == nil {
+		out.Warps = customerCounts{Total: len(peers)}
+		// A peer is a tenant machine on the overlay, and only the warp leader
+		// can say whether its tunnel is actually up. It publishes that as an
+		// aggregate; until every leader is on a build that does, the honest
+		// answer is a total with no online count rather than a zero.
+		if up, known := services.WarpPeersActive(ctx, h.state.Redis); known {
+			out.Warps.Online = &up
+		}
+	}
+	return out
 }
 
 // GetRoutingMigrationStatus GET /api/infrastructure/routing-migration -

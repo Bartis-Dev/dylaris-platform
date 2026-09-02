@@ -53,5 +53,5 @@ export const NODE_KIND_LABEL: Record<NodeKind, string> = {
 export const NODE_KIND_DESCRIPTION: Record<NodeKind, string> = {
     platform: 'The machines this platform runs on.',
     external: 'Your own machines outside the swarm. They route only through the gateway, so they need it enabled to be reachable.',
-    byon: 'Machines customers brought themselves. You do not own these, and a customer has root on their own hardware.',
+    byon: 'Machines customers brought themselves (BYON). You do not own these, a customer has root on their own hardware, and one of them being offline is not an incident here - they are counted, never warned about.',
 };

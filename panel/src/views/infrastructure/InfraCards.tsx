@@ -112,6 +112,30 @@ export interface InfrastructureData {
   onlineLinks: number;
   onlineEdges: number;
   errors: FlatServiceError[];
+  customers?: CustomerSummary;
+}
+
+/**
+ * What tenants run: BYON nodes, their links, and their warp overlay peers.
+ *
+ * A total and how many are up. Nothing else, and that is the whole design: these
+ * machines belong to customers, sit in places nobody here can reach, and get
+ * switched off for ordinary reasons. Attaching a severity to "3 of 4 up" would
+ * put a warning on this platform for somebody else's laptop being closed.
+ *
+ * `online` is optional because absent and zero are different answers. Warp
+ * liveness comes from a gauge the leaders only publish once the gateway is
+ * updated; a confident 0/12 for a fleet nobody measured reads as a total outage.
+ */
+export interface CustomerCounts {
+  total: number;
+  online?: number | null;
+}
+
+export interface CustomerSummary {
+  nodes: CustomerCounts;
+  links: CustomerCounts;
+  warps: CustomerCounts;
 }
 
 type Tab = 'nodes' | 'edges' | 'routes' | 'bandwidth' | 'errors';

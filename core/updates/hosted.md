@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.18
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing you need to do. Your machines are now tracked separately from ours, so
+  taking your own node or router offline no longer registers as a fault on our
+  side - and nothing about how yours are monitored or reachable has changed.
+
 ## 2026.09.02.17
 
 ### Features

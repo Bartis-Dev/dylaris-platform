@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.18
+
+### Features
+- Infrastructure now always shows all three kinds of machine as their own tab -
+  Nodes, External nodes and BYON - instead of hiding a tab until you have one of
+  that kind. `core` `panel`
+- BYON and route-only estates are counted on the BYON tab: how many nodes, links
+  and warp peers your customers run, and how many are up. Counted only, never
+  warned about. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- What's New listed your customers' BYON nodes among your own, so "is anything
+  of mine behind" was answered with hardware you cannot update. It now shows
+  your cluster and, separately, your external nodes. `core` `panel`
+- Settings, Status counted customer nodes and customer links, so a tenant
+  switching their own machine off turned the platform amber. It reports the
+  cluster and your external nodes only. `core` `panel`
+
 ## 2026.09.02.17
 
 ### Features

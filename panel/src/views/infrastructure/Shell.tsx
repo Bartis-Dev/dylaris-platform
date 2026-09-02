@@ -42,11 +42,17 @@ export default function InfrastructureShell({ children }: { children: React.Reac
     // still one typed address away. Hiding a button is presentation; the page
     // refusing is the guard.
     const tabs: InfraTab[] = [
+        // The three kinds of machine, always all three. They used to appear only
+        // when non-empty, which made "no external nodes" and "this platform has
+        // no such thing" the same screen - and the tab an operator needs first
+        // is the one for the kind they have not registered yet.
         { slug: 'nodes', label: 'Nodes', count: platform.length, visible: true },
-        // Shown whenever the operator has any, so an empty tab never implies
-        // the feature is missing.
-        { slug: 'external', label: 'External', count: external.length, visible: external.length > 0 },
-        { slug: 'byon', label: 'Customer nodes', count: byon.length, visible: byon.length > 0 },
+        { slug: 'external', label: 'External nodes', count: external.length, visible: true },
+        // BYON, not "Customer nodes": it is the word used everywhere else in
+        // this product - the setting, the plan, the release notes - and one
+        // screen calling it something friendlier only costs the reader the
+        // connection to all of them.
+        { slug: 'byon', label: 'BYON', count: byon.length, visible: true },
         { slug: 'edges', label: 'Edges', count: infra.edges.length, visible: infra.gatewayDeployed },
         { slug: 'routes', label: 'Routes', count: infra.routeCount, visible: infra.gatewayDeployed },
         { slug: 'bandwidth', label: 'Bandwidth', visible: infra.gatewayEnabled },

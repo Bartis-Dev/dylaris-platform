@@ -81,3 +81,39 @@ describe('infrastructure tab routes', () => {
         expect(layout).toContain('InfraProvider');
     });
 });
+
+describe('the three kinds of machine', () => {
+    it('all three tabs are always drawn, not only when non-empty', () => {
+        // They used to appear only when the operator had one, which made "no
+        // external nodes" and "this platform has no such thing" the same
+        // screen - and the tab somebody needs FIRST is the one for the kind
+        // they have not registered yet.
+        for (const slug of ['nodes', 'external', 'byon']) {
+            const re = new RegExp(`slug: '${slug}'[^}]*visible: true`);
+            expect(re.test(SHELL), `the ${slug} tab is conditionally visible`).toBe(true);
+        }
+    });
+
+    it('the customer tab is called BYON', () => {
+        // The word the setting, the plan and the release notes all use. One
+        // screen calling it something friendlier costs the reader the
+        // connection to all of them.
+        expect(SHELL).toContain("label: 'BYON'");
+        expect(SHELL).not.toContain("label: 'Customer nodes'");
+    });
+
+    it('the customer estate is summarised on the BYON tab and nowhere else', () => {
+        // Counted, never judged: these machines belong to tenants and are
+        // switched off for ordinary reasons, so a fraction short of whole must
+        // not raise a warning anywhere.
+        const panel = readFileSync(join(__dirname, 'NodesPanel.tsx'), 'utf8');
+        expect(panel).toContain('CustomerEstate');
+        expect(panel).toMatch(/kind === 'byon' && <CustomerEstate/);
+
+        const estate = readFileSync(join(__dirname, 'CustomerEstate.tsx'), 'utf8');
+        for (const tone of ['--warning', '--error']) {
+            expect(estate, `the estate card uses ${tone}, so it can warn about a customer's machine`)
+                .not.toContain(tone);
+        }
+    });
+});

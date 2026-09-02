@@ -372,19 +372,34 @@ func (h *HealthHandler) redisACLComponent(ctx context.Context, redisUp bool) hea
 	return comp
 }
 
+// nodesComponent covers OUR nodes only: the cluster and the external machines
+// the operator registered. A customer's BYON node is excluded, and that is the
+// point of this page rather than an omission - it reports whether THIS platform
+// is healthy, and a tenant who unplugs their own hardware has not made it
+// unhealthy. Counting theirs turned the status amber for something no operator
+// here can act on, which is how a status page stops being read.
+//
+// Their machines are not invisible: Infrastructure tracks them with totals and
+// an online count, without a severity attached.
 func (h *HealthHandler) nodesComponent() healthComponent {
 	comp := healthComponent{Key: "nodes", Name: "Nodes"}
-	nodes, err := h.state.Store.ListNodes()
+	all, err := h.state.Store.ListNodes()
 	if err != nil {
 		comp.Status = "down"
 		comp.Detail = "Could not list nodes"
 		comp.Reason = err.Error()
 		return comp
 	}
+	nodes, customer := services.SplitNodes(all)
 	if len(nodes) == 0 {
 		comp.Status = "degraded"
 		comp.Detail = "No nodes registered"
 		comp.Reason = "no compute nodes are registered; servers cannot be placed until a node joins"
+		if len(customer) > 0 {
+			// Worth saying, because the operator can SEE nodes in the panel and
+			// would otherwise read this as simply wrong.
+			comp.Reason += fmt.Sprintf(" (%d customer node(s) are not counted here)", len(customer))
+		}
 		return comp
 	}
 
@@ -464,7 +479,12 @@ func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 	defer cancel()
 	edges := services.GetEdgesFromRedis(cctx, h.state.Redis)
-	links := services.GetLinksFromRedis(cctx, h.state.Redis)
+	// Links the OPERATOR runs. A customer's BYON or route-only link is theirs to
+	// keep up, and it used to turn this component amber - "some gateway
+	// components are offline" for a box in somebody's flat.
+	split := services.LoadLinkOwnership(h.state.Store).SplitLinks(
+		services.GetLinksFromRedis(cctx, h.state.Redis))
+	links := split.Ours
 	routes := services.CountRoutesFromRedis(cctx, h.state.Redis)
 
 	onlineEdges := 0
@@ -473,12 +493,7 @@ func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 			onlineEdges++
 		}
 	}
-	onlineLinks := 0
-	for _, l := range links {
-		if l.Online {
-			onlineLinks++
-		}
-	}
+	onlineLinks := split.OursOnline
 
 	comp.Items = []healthItem{
 		{Name: "Edges", Status: countStatus(onlineEdges, len(edges)), Detail: fmt.Sprintf("%d/%d online", onlineEdges, len(edges))},

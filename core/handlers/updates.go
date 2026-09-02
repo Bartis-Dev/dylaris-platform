@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/updates"
 
@@ -87,6 +88,17 @@ type instance struct {
 // newest release that NAMES this component, which is the whole reason one
 // version per repo does not mark everything outdated at once.
 type componentBlock struct {
+	// Key identifies the ROW and Service identifies the released component.
+	// They are usually the same, and are not for nodes: the operator's cluster
+	// and their external machines are two rows and one service, because a
+	// release names `node` and both of them install it. Without a separate key
+	// the panel would draw two rows with the same React key and the requirement
+	// scan below would report one mandatory update twice.
+	Key string `json:"key"`
+	// Label is what the row is CALLED. Empty means the panel falls back to its
+	// own name for the service, which is what every non-node row does.
+	Label string `json:"label,omitempty"`
+
 	Service  string `json:"service"`
 	Latest   string `json:"latest,omitempty"`
 	Outdated bool   `json:"outdated"`
@@ -152,8 +164,15 @@ func (h *UpdatesHandler) GetUpdates(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// One requirement per SERVICE, not per row. The node rows are two views of
+	// one component, so a mandatory node update would otherwise be announced
+	// twice with identical text.
+	required := map[string]bool{}
 	for _, c := range h.components(r, releases, userID, isAdmin) {
 		resp.Components = append(resp.Components, c)
+		if required[c.Service] {
+			continue
+		}
 		for _, inst := range c.Instances {
 			v, err := release.ParseVersion(inst.Version)
 			if err != nil {
@@ -163,6 +182,7 @@ func (h *UpdatesHandler) GetUpdates(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				continue
 			}
+			required[c.Service] = true
 			resp.Required = append(resp.Required, requiredBlock{
 				Service:    c.Service,
 				MinVersion: min.String(),
@@ -199,12 +219,20 @@ func (h *UpdatesHandler) components(r *http.Request, releases []release.Release,
 		byService["core"] = h.cores(r.Context(), releases)
 	}
 
+	// Node rows are keyed by KIND, so the operator's cluster and their external
+	// machines are counted apart. A reader with no external nodes gets no
+	// external row at all - see the loop below.
+	byKey := map[string][]instance{}
 	for _, n := range h.nodes(r.Context(), userID, isAdmin) {
 		label := n.DisplayName
 		if label == "" {
 			label = n.Name
 		}
-		byService["node"] = append(byService["node"], versioned(label, n.version, releases, "node"))
+		key := "node"
+		if n.kind == models.NodeKindExternal {
+			key = nodeExternalKey
+		}
+		byKey[key] = append(byKey[key], versioned(label, n.version, releases, "node"))
 	}
 
 	// Order by the shared service list so the panel renders the same order every
@@ -213,10 +241,25 @@ func (h *UpdatesHandler) components(r *http.Request, releases []release.Release,
 	for _, svc := range release.Services {
 		insts, seen := byService[svc]
 		named := newestNaming(releases, svc)
+		if svc == "node" {
+			// The cluster row always appears when a release names the node,
+			// even with nothing reporting - that is the case the per-component
+			// split exists for. The external row appears only when the operator
+			// HAS external machines: an always-present empty row would read as
+			// a component that is missing rather than one that does not apply.
+			out = append(out, nodeBlock("node", "", named, byKey["node"], true))
+			if ext := byKey[nodeExternalKey]; len(ext) > 0 {
+				out = append(out, nodeBlock(nodeExternalKey, "External nodes", named, ext, true))
+			}
+			continue
+		}
 		if !seen && named == "" {
 			continue
 		}
-		block := componentBlock{Service: svc, Latest: named, Countable: svc != "panel", Instances: insts}
+		block := componentBlock{
+			Key: svc, Service: svc, Latest: named,
+			Countable: svc != "panel", Instances: insts,
+		}
 		if block.Instances == nil {
 			block.Instances = []instance{}
 		}
@@ -228,6 +271,29 @@ func (h *UpdatesHandler) components(r *http.Request, releases []release.Release,
 		out = append(out, block)
 	}
 	return out
+}
+
+// nodeExternalKey is the row id for machines the operator registered but does
+// not run in the cluster. Not a service: a release names `node` for both.
+const nodeExternalKey = "node-external"
+
+// nodeBlock builds one node row. Both rows report against the `node` service,
+// so "what should it be on" is one answer given twice rather than two answers
+// that could drift.
+func nodeBlock(key, label, latest string, insts []instance, countable bool) componentBlock {
+	b := componentBlock{
+		Key: key, Label: label, Service: "node", Latest: latest,
+		Countable: countable, Instances: insts,
+	}
+	if b.Instances == nil {
+		b.Instances = []instance{}
+	}
+	for _, i := range insts {
+		if i.Outdated {
+			b.Outdated = true
+		}
+	}
+	return b
 }
 
 // cores lists every Core instance, not just the one answering this request.
@@ -299,12 +365,20 @@ type nodeVersion struct {
 	Name        string
 	DisplayName string
 	version     string
+	kind        models.NodeKind
 }
 
 // nodes returns the nodes this reader may see, each with the version its
-// heartbeat last reported. A non-admin sees only nodes they own: a BYON
-// customer's update view is about their own hardware, and the fleet is not
-// theirs to enumerate.
+// heartbeat last reported and the kind it is.
+//
+// A non-admin sees only nodes they own: a BYON customer's update view is about
+// their own hardware, and the fleet is not theirs to enumerate.
+//
+// An admin sees the machines they are RESPONSIBLE FOR - the cluster and the
+// external ones - and not their customers' BYON nodes. A customer's node being
+// behind is that customer's update to install, announced to them through their
+// own feed; putting it here made the operator's "is anything of mine outdated"
+// answer depend on hardware they cannot touch.
 func (h *UpdatesHandler) nodes(ctx context.Context, userID string, isAdmin bool) []nodeVersion {
 	if h.state.Store == nil {
 		return nil
@@ -317,10 +391,15 @@ func (h *UpdatesHandler) nodes(ctx context.Context, userID string, isAdmin bool)
 
 	out := []nodeVersion{}
 	for _, n := range all {
-		if !isAdmin && (n.OwnerID == nil || *n.OwnerID != userID) {
+		kind := n.Kind()
+		if isAdmin {
+			if kind == models.NodeKindBYON {
+				continue
+			}
+		} else if n.OwnerID == nil || *n.OwnerID != userID {
 			continue
 		}
-		nv := nodeVersion{Name: n.Name, DisplayName: n.DisplayName}
+		nv := nodeVersion{Name: n.Name, DisplayName: n.DisplayName, kind: kind}
 		if hb := beats[n.Token]; hb != nil {
 			nv.version = hb.ReleaseVersion
 		}
