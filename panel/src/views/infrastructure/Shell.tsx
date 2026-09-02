@@ -1,0 +1,134 @@
+"use client";
+
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { Server, Network, Activity, RefreshCw, Globe, Users } from 'lucide-react';
+import { SkeletonStatGrid, SkeletonCard, SkeletonText } from '@/components/Skeleton';
+import { attentionCount } from '@/lib/serviceErrors';
+import { isKind } from '@/lib/nodeKind';
+import { StatCard } from './InfraCards';
+import { useInfra } from './context';
+
+/**
+ * The header, the summary row and the tab bar.
+ *
+ * The tabs are LINKS, not state. They used to be `useState<Tab>('nodes')`,
+ * which meant no tab had a URL and every reload landed on Nodes - you could not
+ * send anyone a screen, and refreshing while looking at an error lost your place.
+ */
+
+export interface InfraTab {
+    slug: string;
+    label: string;
+    count?: number;
+    /** Rendered only when true. See the note on guards below. */
+    visible: boolean;
+}
+
+const BASE = '/infrastructure';
+
+export default function InfrastructureShell({ children }: { children: React.ReactNode }) {
+    const infra = useInfra();
+    const pathname = usePathname();
+
+    const platform = isKind(infra.nodes, 'platform');
+    const external = isKind(infra.nodes, 'external');
+    const byon = isKind(infra.nodes, 'byon');
+    const onlineNodes = infra.nodes.filter(n => n.status === 'online').length;
+    const totalPlayers = infra.edges.reduce((sum, e) => sum + (e.stats?.active_mc_streams ?? 0), 0);
+
+    // Which tabs EXIST. This decides what is drawn, and deliberately not what is
+    // reachable: each page guards itself, because with real URLs a hidden tab is
+    // still one typed address away. Hiding a button is presentation; the page
+    // refusing is the guard.
+    const tabs: InfraTab[] = [
+        { slug: 'nodes', label: 'Nodes', count: platform.length, visible: true },
+        // Shown whenever the operator has any, so an empty tab never implies
+        // the feature is missing.
+        { slug: 'external', label: 'External', count: external.length, visible: external.length > 0 },
+        { slug: 'byon', label: 'Customer nodes', count: byon.length, visible: byon.length > 0 },
+        { slug: 'edges', label: 'Edges', count: infra.edges.length, visible: infra.gatewayDeployed },
+        { slug: 'routes', label: 'Routes', count: infra.routeCount, visible: infra.gatewayDeployed },
+        { slug: 'bandwidth', label: 'Bandwidth', visible: infra.gatewayEnabled },
+        // Only ERROR/WARN drive the count: the same streams carry INFO, and a
+        // badge that is never zero is a badge nobody reads.
+        { slug: 'errors', label: 'Errors', count: attentionCount(infra.errors), visible: infra.errors.length > 0 },
+    ];
+
+    if (infra.loading) {
+        return (
+            <div className="h-full flex flex-col gap-4 overflow-y-auto">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                            <Server size={18} className="text-(--accent-light)" />
+                        </div>
+                        <h1 className="h-page">Infrastructure</h1>
+                    </div>
+                </div>
+                <SkeletonStatGrid tiles={2} />
+                <SkeletonText width="w-40" className="h-4" />
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} height="h-56" />)}
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="h-full flex flex-col gap-4 overflow-y-auto">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
+                        <Server size={18} className="text-(--accent-light)" />
+                    </div>
+                    <h1 className="h-page">Infrastructure</h1>
+                </div>
+                <button
+                    onClick={() => infra.refresh(true)}
+                    disabled={infra.refreshing}
+                    className="btn btn-secondary btn-sm"
+                >
+                    <RefreshCw size={14} className={infra.refreshing ? 'animate-spin' : ''} />
+                    Refresh
+                </button>
+            </div>
+
+            <div className={`grid gap-3 ${infra.gatewayDeployed ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-2'}`}>
+                <StatCard label="Nodes" value={infra.nodes.length} icon={<Network size={16} />} />
+                <StatCard label="Online" value={onlineNodes} sub={`/ ${infra.nodes.length}`} icon={<Activity size={16} />} />
+                {infra.gatewayDeployed && <StatCard label="Edges" value={infra.edges.length} icon={<Server size={16} />} />}
+                {infra.gatewayDeployed && <StatCard label="Routes" value={infra.routeCount} icon={<Globe size={16} />} />}
+                {infra.gatewayDeployed && <StatCard label="Players Connected" value={totalPlayers} icon={<Users size={16} />} />}
+            </div>
+
+            <nav aria-label="Infrastructure sections" className="flex items-center gap-0.5 bg-(--base-02) border border-(--base-03) rounded-lg p-1 w-fit">
+                {tabs.filter(t => t.visible).map(t => {
+                    const href = `${BASE}/${t.slug}`;
+                    const active = pathname === href;
+                    return (
+                        <Link
+                            key={t.slug}
+                            href={href}
+                            aria-current={active ? 'page' : undefined}
+                            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                active ? 'bg-(--accent) text-white shadow-sm' : 'text-(--base-07) hover:text-(--base-09)'
+                            }`}
+                        >
+                            {t.label}
+                            {typeof t.count === 'number' && (
+                                <span className={`text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded-full ${
+                                    active ? 'bg-white/20 text-white' : 'bg-(--base-03) text-(--base-06)'
+                                }`}>
+                                    {t.count}
+                                </span>
+                            )}
+                        </Link>
+                    );
+                })}
+            </nav>
+
+            {children}
+        </div>
+    );
+}

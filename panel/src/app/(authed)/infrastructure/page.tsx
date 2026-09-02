@@ -1,34 +1,16 @@
-"use client";
+import { redirect } from 'next/navigation';
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import InfrastructureView from '@/views/InfrastructureView';
-import { useAppData } from '@/lib/AppDataContext';
-
-export default function InfrastructurePage() {
-    const router = useRouter();
-    const { gatewayEnabled, user, ready } = useAppData();
-
-    useEffect(() => {
-        if (!ready) return;
-        if (!user?.isAdmin) router.replace('/servers');
-    }, [ready, user?.isAdmin, router]);
-
-    if (!ready) return null;
-    if (!user?.isAdmin) {
-        return (
-            <main className="flex-1 flex items-center justify-center text-(--error) font-semibold text-xl font-display">
-                Access denied. Administrator rights required.
-            </main>
-        );
-    }
-
-    return (
-        <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">
-            <InfrastructureView
-                gatewayEnabled={gatewayEnabled}
-                onNavigateToAdminDisk={(nodeId) => router.push(`/admin/disk?node=${nodeId}`)}
-            />
-        </main>
-    );
+// /infrastructure is the address the navigation still points at - the nav rows
+// are seeded in the database, so the link cannot be changed from here. It sends
+// you to /infrastructure/nodes so there is exactly ONE canonical URL per tab and
+// no second address showing the same screen.
+//
+// Under `output: export` this compiles to a redirect marker the client router
+// acts on after hydration. That is fine here: every authed page in this panel
+// ships a shell and hydrates - none of them prerenders content, because the
+// layout renders nothing until the session is known - so the redirect costs one
+// client-side navigation, not a blank page that would otherwise have shown
+// something.
+export default function InfrastructureIndex() {
+    redirect('/infrastructure/nodes');
 }

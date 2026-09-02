@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Core has always put the service error streams (edge, link, hub, beam, node,
@@ -18,21 +18,35 @@ import { join } from 'node:path';
 // Asserted against the source rather than by rendering, matching
 // lib/api/discardedResult.test.ts: the defect is a field silently going
 // unused, which a render test passes straight over.
+//
+// The three claims now live in three files - the fetch, the tab bar and the
+// page - so each one names its own site. Pointing all three at one file was
+// what made this test survive the split while checking nothing.
 
-const SRC = readFileSync(join(__dirname, 'InfrastructureView.tsx'), 'utf8');
+const read = (p: string) => readFileSync(join(__dirname, p), 'utf8');
+const CONTEXT = read('infrastructure/context.tsx');
+const SHELL = read('infrastructure/Shell.tsx');
+const ERRORS_PAGE = read('../app/(authed)/infrastructure/errors/page.tsx');
 
-describe('InfrastructureView keeps the service error streams', () => {
+describe('the infrastructure screen keeps the service error streams', () => {
     it('stores res.errors instead of dropping it', () => {
-        expect(SRC).toMatch(/errors:\s*flattenServiceErrors\(res\.errors\)/);
+        expect(CONTEXT).toMatch(/errors:\s*flattenServiceErrors\(res\.errors\)/);
     });
 
     it('renders them', () => {
-        expect(SRC).toContain('<ServiceErrorList');
+        expect(ERRORS_PAGE).toContain('<ServiceErrorList');
     });
 
     it('offers a way to reach them', () => {
         // A payload kept in state and never reachable is the same defect one
         // layer along.
-        expect(SRC).toMatch(/label:\s*'Errors'/);
+        expect(SHELL).toMatch(/slug:\s*'errors'/);
+    });
+
+    it('has a route behind that tab', () => {
+        // A tab bar entry whose href resolves to nothing throws no error - it
+        // renders as a link and 404s on click. The tab and the page are now two
+        // separate files, so their agreement has to be asserted.
+        expect(existsSync(join(__dirname, '../app/(authed)/infrastructure/errors/page.tsx'))).toBe(true);
     });
 });

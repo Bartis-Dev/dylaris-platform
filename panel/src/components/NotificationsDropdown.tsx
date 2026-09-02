@@ -70,7 +70,7 @@ async function checkGatewayBandwidth(ctx: CheckContext): Promise<Notification | 
                 : `${n} gateway components over their bandwidth budget`,
             message:
                 'Sustained above 80% for the alert window. Open Infrastructure > Bandwidth to see which hosts and components.',
-            href: '/infrastructure',
+            href: '/infrastructure/nodes',
             cta: 'Open Infrastructure',
         };
     } catch {

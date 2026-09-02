@@ -1,16 +1,19 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+// The cards and small presentational pieces of the infrastructure screen.
+// Split out of InfrastructureView when the page became one route per tab: the
+// shell owns data and navigation, this file owns how a node, an edge or an
+// error looks. Nothing here fetches.
+
+import React, { useState, useEffect } from 'react';
 import {
-  Server, Globe, Network, RefreshCw, Trash2, AlertTriangle, X,
-  Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine, Shield, Activity,
-  Users, Link2, HardDrive, Layers, ArrowUpCircle, AlertCircle, Info
+  Server, Globe, Network, Trash2, AlertTriangle, Users,
+  Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine, Shield,
+  Link2, HardDrive, Layers, ArrowUpCircle, AlertCircle, Info
 } from 'lucide-react';
-import { getInfrastructureOverview, getNodes, getNodeServers, forceDeleteNode, setNodeStoragePlacement, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
-import RoutesPanel from './infrastructure/RoutesPanel';
-import BandwidthPanel from './infrastructure/BandwidthPanel';
-import { SkeletonStatGrid, SkeletonCard, SkeletonText } from '@/components/Skeleton';
+import { getNodeServers, setNodeStoragePlacement, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
 import StoragePlacement from '@/components/StoragePlacement';
+import { SkeletonCard } from '@/components/Skeleton';
 import type { StoragePlacement as StoragePlacementConfig } from '@/lib/api';
 import { spliceImageMismatch } from '@/lib/spliceDrift';
 import {
@@ -21,15 +24,9 @@ import {
 import { timeAgo } from '@/lib/time';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeLabel } from '@/lib/nodeLabel';
-import {
-  flattenServiceErrors,
-  attentionCount,
-  isAttention,
-  type FlatServiceError,
-  type ServiceErrorEntry,
-} from '@/lib/serviceErrors';
+import { isAttention, type FlatServiceError, type ServiceErrorEntry } from '@/lib/serviceErrors';
 
-interface StorageInfo {
+export interface StorageInfo {
   path: string;
   total_bytes: number;
   free_bytes: number;
@@ -38,7 +35,7 @@ interface StorageInfo {
   server_uuids?: string[];
 }
 
-interface DiskPathStatus {
+export interface DiskPathStatus {
   path: string;
   totalGb: number;
   freeGb: number;
@@ -71,9 +68,14 @@ async function fetchNodeStorage(nodeId: number): Promise<{ storage: StorageInfo[
   } catch { return fallback; }
 }
 
-interface NodeInfo {
+export interface NodeInfo {
   id: number;
   name: string;
+  // Sent by Core already (models.Node is serialised straight into the overview);
+  // the panel simply never declared them, which is why one list held every kind
+  // of machine. Classified through lib/nodeKind, never inline.
+  ownerId?: string;
+  tags?: string;
   // Admin-editable human label, defaulted to the hostname the node reported at
   // enroll. `name`/`token` are the Core-minted identity, not a label.
   displayName?: string;
@@ -95,14 +97,14 @@ interface NodeInfo {
   sharedStorage?: SharedStorageConflict[];
 }
 
-interface ServerInfo {
+export interface ServerInfo {
   id: number;
   uuid: string;
   name: string;
   status: string;
 }
 
-interface InfrastructureData {
+export interface InfrastructureData {
   edges: GatewayEdge[];
   links: GatewayLink[];
   nodes: NodeInfo[];
@@ -114,7 +116,7 @@ interface InfrastructureData {
 
 type Tab = 'nodes' | 'edges' | 'routes' | 'bandwidth' | 'errors';
 
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -122,11 +124,11 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
-function formatSpeed(bps: number): string {
+export function formatSpeed(bps: number): string {
   return `${formatBytes(bps)}/s`;
 }
 
-function ProgressBar({ value, max, color = 'accent' }: { value: number; max: number; color?: 'accent' | 'primary' | 'success' }) {
+export function ProgressBar({ value, max, color = 'accent' }: { value: number; max: number; color?: 'accent' | 'primary' | 'success' }) {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   const colorClass = color === 'success' ? 'bg-(--success-light)' : color === 'primary' ? 'bg-(--primary)' : 'bg-(--accent)';
   return (
@@ -136,7 +138,7 @@ function ProgressBar({ value, max, color = 'accent' }: { value: number; max: num
   );
 }
 
-function StatCard({ label, value, sub, icon }: { label: string; value: string | number; sub?: string; icon: React.ReactNode }) {
+export function StatCard({ label, value, sub, icon }: { label: string; value: string | number; sub?: string; icon: React.ReactNode }) {
   return (
     <div className="card p-4 flex flex-col gap-1.5">
       <span className="mono-label">{label}</span>
@@ -149,7 +151,7 @@ function StatCard({ label, value, sub, icon }: { label: string; value: string | 
   );
 }
 
-function NodeCard({
+export function NodeCard({
   node,
   onDelete,
   gatewayEnabled,
@@ -384,7 +386,7 @@ function NodeCard({
  * have nothing left to give, because every server is entitled to grow into its
  * disk limit.
  */
-function StorageCapacityNote({ cap }: { cap: DiskPathStatus }) {
+export function StorageCapacityNote({ cap }: { cap: DiskPathStatus }) {
   if (cap.status === 'unknown') return null;
 
   const tone: Record<string, string> = {
@@ -436,7 +438,7 @@ function StorageCapacityNote({ cap }: { cap: DiskPathStatus }) {
   );
 }
 
-function EdgeCard({ edge }: { edge: GatewayEdge }) {
+export function EdgeCard({ edge }: { edge: GatewayEdge }) {
   const isOnline = edge.status === 'online';
   const stats = edge.stats;
   const rxBytes = (stats as any)?.rx_bytes as number | undefined;
@@ -569,7 +571,7 @@ function EdgeCard({ edge }: { edge: GatewayEdge }) {
 // splice version(s) vs the latest available one, flagging a pending bump. The
 // splice sidecar is version-pinned per regional stack (SPLICE_IMAGE), so a region
 // can lag the latest edge image until the owner deliberately moves the pin.
-function SpliceVersionSummary({ edges }: { edges: GatewayEdge[] }) {
+export function SpliceVersionSummary({ edges }: { edges: GatewayEdge[] }) {
   const online = edges.filter(e => e.status === 'online');
 
   const byRegion = new Map<string, { region: string; running: Set<string>; latest: string; behind: number }>();
@@ -628,7 +630,7 @@ function SpliceVersionSummary({ edges }: { edges: GatewayEdge[] }) {
 // past. The producing service is shown because it is often the ONLY hint about
 // where to look - a link reporting `failed to connect to 127.0.0.1:25550` is a
 // problem on the customer's machine, and the edge above it is perfectly healthy.
-function ServiceErrorList({ entries }: { entries: FlatServiceError[] }) {
+export function ServiceErrorList({ entries }: { entries: FlatServiceError[] }) {
   if (entries.length === 0) {
     return (
       <div className="card p-8 text-center text-(--base-06) text-sm">
@@ -661,333 +663,9 @@ function ServiceErrorList({ entries }: { entries: FlatServiceError[] }) {
   );
 }
 
-function LevelIcon({ level }: { level: ServiceErrorEntry['level'] }) {
+export function LevelIcon({ level }: { level: ServiceErrorEntry['level'] }) {
   const l = level?.toUpperCase();
   if (l === 'ERROR') return <AlertCircle size={15} className="shrink-0 mt-0.5 text-(--error)" aria-label="Error" />;
   if (l === 'WARN') return <AlertTriangle size={15} className="shrink-0 mt-0.5 text-(--warning-light)" aria-label="Warning" />;
   return <Info size={15} className="shrink-0 mt-0.5 text-(--base-06)" aria-label="Info" />;
-}
-
-interface InfrastructureViewProps {
-  gatewayEnabled?: boolean;
-  onNavigateToAdminDisk?: (nodeId: number) => void;
-}
-
-export default function InfrastructureView({
-  gatewayEnabled = false,
-  onNavigateToAdminDisk = () => {},
-}: InfrastructureViewProps = {}) {
-  const [data, setData] = useState<InfrastructureData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [tab, setTab] = useState<Tab>('nodes');
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const [deleteModal, setDeleteModal] = useState<{ node: NodeInfo; servers: ServerInfo[] } | null>(null);
-  const [confirmName, setConfirmName] = useState('');
-  const [deleting, setDeleting] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-
-  async function fetchData(isManual = false) {
-    if (isManual) setRefreshing(true);
-    try {
-      const res = await getInfrastructureOverview();
-      if (res && res.success !== false) {
-        let nodes = res.nodes || [];
-        if (nodes.length === 0) {
-          try {
-            const nodesRes = await getNodes();
-            if (Array.isArray(nodesRes)) nodes = nodesRes;
-            else if (nodesRes?.nodes) nodes = nodesRes.nodes;
-          } catch { /* ignore */ }
-        }
-        setData({
-          edges: res.edges || [],
-          links: res.links || [],
-          nodes,
-          routeCount: res.routeCount ?? 0,
-          onlineLinks: res.onlineLinks ?? 0,
-          onlineEdges: res.onlineEdges ?? 0,
-          // Core has always sent this and the view always threw it away, so
-          // every service's diagnostics reached no screen at all. See
-          // lib/serviceErrors for why that is worse than it sounds.
-          errors: flattenServiceErrors(res.errors),
-        });
-      }
-    } catch { /* keep previous data */ } finally {
-      setLoading(false);
-      if (isManual) setRefreshing(false);
-    }
-  }
-
-  useEffect(() => {
-    fetchData();
-    intervalRef.current = setInterval(() => fetchData(), 10000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []);
-
-  useEffect(() => {
-    if (toast) {
-      const t = setTimeout(() => setToast(null), 3000);
-      return () => clearTimeout(t);
-    }
-  }, [toast]);
-
-  async function openDeleteModal(node: NodeInfo) {
-    try {
-      const res = await getNodeServers(node.id);
-      setDeleteModal({ node, servers: res?.servers || [] });
-      setConfirmName('');
-    } catch { setToast('Failed to load node servers'); }
-  }
-
-  async function handleForceDelete() {
-    if (!deleteModal) return;
-    setDeleting(true);
-    try {
-      const res = await forceDeleteNode(deleteModal.node.id);
-      if (res?.success) {
-        setToast(`Node "${deleteModal.node.name}" deleted`);
-        setDeleteModal(null);
-        fetchData(true);
-      } else { setToast('Delete failed'); }
-    } catch { setToast('Delete failed'); } finally { setDeleting(false); }
-  }
-
-  const edges = data?.edges ?? [];
-  const links = data?.links ?? [];
-  const nodes = data?.nodes ?? [];
-  const routeCount = data?.routeCount ?? 0;
-  const onlineEdges = data?.onlineEdges ?? 0;
-  const onlineNodes = nodes.filter(n => n.status === 'online').length;
-  const totalPlayers = edges.reduce((sum, e) => sum + (e.stats?.active_mc_streams ?? 0), 0);
-  const serviceErrors = data?.errors ?? [];
-  const errorsNeedingAttention = attentionCount(serviceErrors);
-
-  // Edges/Routes tabs only render when the feature is enabled AND something
-  // is actually deployed — keeps the UI honest about empty backends.
-  const gatewayDeployed = gatewayEnabled && (edges.length > 0 || links.length > 0);
-  const onlineEdgesList = edges.filter(e => e.status === 'online');
-
-  // If a gateway-only tab is active but gateway is no longer available, fall back to nodes
-  useEffect(() => {
-    if ((tab === 'edges' || tab === 'routes') && !gatewayDeployed) setTab('nodes');
-  }, [tab, gatewayDeployed]);
-
-  // The errors tab only exists while something has reported. The streams are
-  // capped and age out, so it can vanish under a reader who is looking at it -
-  // leaving no tab selected and an empty panel with no way back.
-  useEffect(() => {
-    if (tab === 'errors' && serviceErrors.length === 0) setTab('nodes');
-  }, [tab, serviceErrors.length]);
-
-  if (loading) {
-    return (
-      <div className="h-full flex flex-col gap-4 overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-              <Server size={18} className="text-(--accent-light)" />
-            </div>
-            <h1 className="h-page">Infrastructure</h1>
-          </div>
-        </div>
-        <SkeletonStatGrid tiles={2} />
-        <SkeletonText width="w-40" className="h-4" />
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <SkeletonCard key={i} height="h-56" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const TABS: { id: Tab; label: string; count?: number }[] = [
-    { id: 'nodes', label: 'Nodes', count: nodes.length },
-    ...(gatewayDeployed ? [
-      { id: 'edges' as Tab, label: 'Edges', count: edges.length },
-      { id: 'routes' as Tab, label: 'Routes', count: routeCount },
-    ] : []),
-    ...(gatewayEnabled ? [{ id: 'bandwidth' as Tab, label: 'Bandwidth' }] : []),
-    // Only ERROR/WARN drive the count: the same streams carry INFO, and a badge
-    // that is never zero is a badge nobody reads.
-    ...(serviceErrors.length > 0
-      ? [{ id: 'errors' as Tab, label: 'Errors', count: errorsNeedingAttention }]
-      : []),
-  ];
-
-  return (
-    <div className="h-full flex flex-col gap-4 overflow-y-auto">
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-            <Server size={18} className="text-(--accent-light)" />
-          </div>
-          <h1 className="h-page">Infrastructure</h1>
-        </div>
-        <button
-          onClick={() => fetchData(true)}
-          disabled={refreshing}
-          className="btn btn-secondary btn-sm"
-        >
-          <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-          Refresh
-        </button>
-      </div>
-
-      {/* Summary Row */}
-      <div className={`grid gap-3 ${gatewayDeployed ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-2'}`}>
-        <StatCard label="Nodes" value={nodes.length} icon={<Network size={16} />} />
-        <StatCard label="Online" value={onlineNodes} sub={`/ ${nodes.length}`} icon={<Activity size={16} />} />
-        {gatewayDeployed && <StatCard label="Edges" value={edges.length} icon={<Server size={16} />} />}
-        {gatewayDeployed && <StatCard label="Routes" value={routeCount} icon={<Globe size={16} />} />}
-        {gatewayDeployed && <StatCard label="Players Connected" value={totalPlayers} icon={<Users size={16} />} />}
-      </div>
-
-      {/* Tabs */}
-      <div className="flex items-center gap-0.5 bg-(--base-02) border border-(--base-03) rounded-lg p-1 w-fit">
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-              tab === t.id ? 'bg-(--accent) text-white shadow-sm' : 'text-(--base-07) hover:text-(--base-09)'
-            }`}
-          >
-            {t.label}
-            {typeof t.count === 'number' && (
-              <span className={`text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded-full ${
-                tab === t.id ? 'bg-white/20 text-white' : 'bg-(--base-03) text-(--base-06)'
-              }`}>
-                {t.count}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab: Nodes */}
-      {tab === 'nodes' && (
-        nodes.length === 0 ? (
-          <div className="card p-8 text-center text-(--base-06) text-sm">No nodes registered</div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {nodes.map(node => (
-              <NodeCard
-                key={node.id}
-                node={node}
-                onDelete={openDeleteModal}
-                gatewayEnabled={gatewayEnabled}
-                onNavigateToAdminDisk={onNavigateToAdminDisk}
-              />
-            ))}
-          </div>
-        )
-      )}
-
-      {/* Tab: Edges */}
-      {tab === 'edges' && (
-        edges.length === 0 ? (
-          <div className="card p-8 text-center text-(--base-06) text-sm">
-            No edges registered — edges auto-discover via Redis
-          </div>
-        ) : (
-          <>
-            <SpliceVersionSummary edges={edges} />
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {edges.map(edge => (
-                <EdgeCard key={edge.edge_id} edge={edge} />
-              ))}
-            </div>
-          </>
-        )
-      )}
-
-      {/* Tab: Routes (migrated from the retired standalone Gateway view) */}
-      {tab === 'routes' && gatewayDeployed && (
-        <RoutesPanel onlineEdges={onlineEdgesList} />
-      )}
-
-      {/* Tab: Bandwidth */}
-      {tab === 'bandwidth' && <BandwidthPanel />}
-
-      {/* Tab: Errors */}
-      {tab === 'errors' && <ServiceErrorList entries={serviceErrors} />}
-
-      {/* Force-Delete Modal */}
-      {deleteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card w-full max-w-md p-6 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <AlertTriangle size={18} className="text-(--error)" />
-                <h2 className="h-section">Force Delete Node</h2>
-              </div>
-              <button onClick={() => setDeleteModal(null)} className="p-1 text-(--base-06) hover:text-(--base-09)">
-                <X size={16} />
-              </button>
-            </div>
-            <div className="rounded-md bg-(--error)/10 border border-(--error)/30 p-3">
-              <p className="text-sm text-(--error)">
-                This will permanently delete node <strong>&quot;{deleteModal.node.name}&quot;</strong>
-                {deleteModal.servers.length > 0 && (
-                  <> and all <strong>{deleteModal.servers.length}</strong> server{deleteModal.servers.length !== 1 ? 's' : ''} on it</>
-                )}. This cannot be undone.
-              </p>
-            </div>
-            {deleteModal.servers.length > 0 && (
-              <div>
-                <p className="mono-label mb-2">Servers on this node</p>
-                <div className="rounded-md border border-(--base-03) divide-y divide-(--base-03) max-h-40 overflow-y-auto">
-                  {deleteModal.servers.map(srv => (
-                    <div key={srv.id} className="px-3 py-2 flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-(--base-09)">{srv.name}</p>
-                        <p className="text-[10px] font-mono text-(--base-05)">{srv.uuid}</p>
-                      </div>
-                      <span className="text-[10px] font-mono uppercase text-(--base-06)">{srv.status}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div>
-              <label className="mono-label block mb-1.5">
-                Type &quot;{deleteModal.node.name}&quot; to confirm
-              </label>
-              <input
-                type="text"
-                value={confirmName}
-                onChange={e => setConfirmName(e.target.value)}
-                placeholder={deleteModal.node.name}
-                className="w-full px-3 py-2 rounded-md bg-(--base-02) border border-(--base-04) text-(--base-09) text-sm focus:border-(--error) focus:shadow-[0_0_0_3px_rgba(220,38,38,0.15)] outline-none transition-all"
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setDeleteModal(null)} className="px-4 py-2 rounded-md text-sm text-(--base-07) hover:text-(--base-09) transition-colors">
-                Cancel
-              </button>
-              <button
-                onClick={handleForceDelete}
-                disabled={confirmName !== deleteModal.node.name || deleting}
-                className="px-4 py-2 rounded-md text-sm font-semibold bg-(--error) text-white hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {deleting ? 'Deleting...' : 'Force Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-md bg-(--base-02) border border-(--base-04) text-sm text-(--base-09) shadow-lg">
-          {toast}
-        </div>
-      )}
-    </div>
-  );
 }

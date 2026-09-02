@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.15
+
+### Features
+- Infrastructure is now one address per tab. Every tab has its own URL, so a
+  reload keeps you where you were and a screen can be sent to somebody. `panel`
+- Machines are separated into Nodes, External and Customer nodes instead of one
+  mixed list. The External and Customer tabs appear only when you have machines
+  of that kind. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A tab whose backend is missing now says so and offers the way back, instead of
+  rendering an empty panel. Edges, Routes and Bandwidth are reachable by URL now,
+  so each one checks for itself rather than relying on its button being hidden.
+  `panel`
+
 ## 2026.09.02.14
 
 ### Features
