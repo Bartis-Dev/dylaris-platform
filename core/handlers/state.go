@@ -24,7 +24,6 @@ type AppState struct {
 	// because a statistics store is never a reason for anything else to fail.
 	Metrics *metrics.Manager
 
-
 	Store            store.Store
 	Redis            *redis.Client
 	Queue            *services.QueueService
