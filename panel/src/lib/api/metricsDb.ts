@@ -27,7 +27,18 @@ export interface MetricsDBActive {
     resolution?: 'minute' | 'hour';
 }
 
-export interface MetricsDBSettings extends MetricsDBTarget {
+/**
+ * One save: whether to record, and where.
+ *
+ * They travel together because they ARE one decision - recording starts the
+ * moment `enabled` is true and the first bucket lands at the resolution the
+ * target implies, with no way to backfill or convert afterwards.
+ */
+export interface MetricsDBRequest extends MetricsDBTarget {
+    enabled: boolean;
+}
+
+export interface MetricsDBSettings extends MetricsDBRequest {
     /**
      * A password is stored. Distinct from an empty field, which here means
      * there genuinely is none - a metrics database on a private network can
@@ -54,7 +65,8 @@ export interface MetricsDBTestResult {
     version?: string;
 }
 
-export const emptyMetricsDBTarget: MetricsDBTarget = {
+export const emptyMetricsDBTarget: MetricsDBRequest = {
+    enabled: false,
     mode: 'core',
     host: '',
     port: '5432',
@@ -74,7 +86,7 @@ export async function getMetricsDB(): Promise<{ success: boolean; settings?: Met
 }
 
 export async function saveMetricsDB(
-    target: MetricsDBTarget,
+    target: MetricsDBRequest,
 ): Promise<{ success: boolean; settings?: MetricsDBSettings; warning?: string; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/admin/settings/metrics-db`, {

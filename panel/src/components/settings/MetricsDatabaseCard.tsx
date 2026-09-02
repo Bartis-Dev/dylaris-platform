@@ -7,27 +7,30 @@ import {
     getMetricsDB, saveMetricsDB, testMetricsDB,
     metricsDBIncomplete, metricsDBModeSummary,
     emptyMetricsDBTarget,
-    type MetricsDBSettings, type MetricsDBTarget, type MetricsDBMode, type MetricsDBTestResult,
+    type MetricsDBSettings, type MetricsDBRequest, type MetricsDBMode, type MetricsDBTestResult,
 } from '@/lib/api/metricsDb';
 import SettingsCard from '@/components/settings/SettingsCard';
 import Segmented from '@/components/ui/Segmented';
+import { SwitchRow } from '@/components/ui/Switch';
 import Select from '@/components/ui/Select';
 import HelpTip from '@/components/ui/HelpTip';
 
 /**
- * Where the long-term statistics are written.
+ * Long-term statistics: whether to record, and where.
  *
- * Its own card rather than a block inside the feature switches, because it is a
- * different endpoint with its own validation and its own reachability test, and
- * a second save model inside one card is the exact confusion this page was
- * untangled to remove.
+ * One card and ONE save, because those are one decision. Recording begins the
+ * instant the switch goes on, the first bucket lands at whatever resolution the
+ * stored target implies, and nothing can be backfilled or converted afterwards -
+ * so a switch that could be flipped on another screen was a way to spend the
+ * only chance to choose without noticing.
  *
- * The choice is one-way in practice: there is no backfill and no conversion
- * between resolutions, so what is picked here is what the history looks like
- * for as long as it is kept. That is why the form states the consequence of
- * each mode next to the mode, rather than only after a test.
+ * It is also why the card is not part of the feature-switch bundle above: that
+ * card saves seven booleans through one endpoint, this one has a target to
+ * validate and a database to reach first. Two save models inside one card is
+ * the exact confusion this page was untangled to remove; two cards for one
+ * decision was the same mistake wearing the other hat.
  */
-export default function MetricsDatabaseCard({ enabled }: { enabled: boolean }) {
+export default function MetricsDatabaseCard() {
     const [test, setTest] = useState<MetricsDBTestResult | null>(null);
     const [testing, setTesting] = useState(false);
 
@@ -49,14 +52,15 @@ export default function MetricsDatabaseCard({ enabled }: { enabled: boolean }) {
     });
 
     const value = form.value;
-    const target: MetricsDBTarget = value ?? emptyMetricsDBTarget;
+    const target: MetricsDBRequest = value ?? emptyMetricsDBTarget;
+    const enabled = !!value?.enabled;
     const locked = !!value?.managedByEnv;
     const incomplete = metricsDBIncomplete(target);
 
     // A field edit invalidates the last test result. Leaving a green banner
     // above a host that has since been retyped is a claim about a connection
     // nobody made.
-    const set = (partial: Partial<MetricsDBTarget>) => {
+    const set = (partial: Partial<MetricsDBRequest>) => {
         setTest(null);
         form.patch(partial);
     };
@@ -84,9 +88,9 @@ export default function MetricsDatabaseCard({ enabled }: { enabled: boolean }) {
 
     return (
         <SettingsCard
-            title="Statistics database"
+            title="Long-term statistics"
             icon={Database}
-            description="Where the long-term record is written, and at what resolution."
+            description="Whether this platform keeps a record of what it handled, and where that record is written."
             help={
                 <>
                     <p className="mb-2">
@@ -137,11 +141,22 @@ export default function MetricsDatabaseCard({ enabled }: { enabled: boolean }) {
                 </div>
             )}
 
+            <SwitchRow
+                label="Record long-term statistics"
+                description="Keeps what this platform handles - players, traffic, CPU and RAM, uptime per component - in buckets that survive, so months of operation can be shown later. Off by default. Everything stays in this installation; nothing is sent anywhere."
+                checked={enabled}
+                disabled={locked || form.loading || form.loadFailed}
+                onChange={v => set({ enabled: v })}
+            />
+
             {!enabled && (
-                <p className="text-xs text-(--base-06) leading-relaxed">
-                    Long-term statistics are switched off, so nothing is being recorded yet. This
-                    setting still applies the moment you turn them on - and history starts there,
-                    with nothing before it.
+                <p className="flex items-start gap-1.5 text-xs text-(--base-06) leading-relaxed">
+                    <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
+                    <span>
+                        Nothing is being recorded. History starts when you switch this on and there
+                        is no way to fill in what came before, so choose the database below in the
+                        same save rather than turning it on first.
+                    </span>
                 </p>
             )}
 

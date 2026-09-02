@@ -45,7 +45,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, metrics: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -349,24 +349,6 @@ export default function FeaturesTab() {
                 {/* Auto-move and BYON are gateway-only. Both toggles are hard
                     disabled while routing is on IP:Port, since enabling either
                     then would 409 on the backend. */}
-                <SettingsGroup title="Statistics">
-                    <SwitchRow
-                        label="Long-term statistics"
-                        description="Records what this platform handles - players, traffic, CPU and RAM, uptime per component - into hour or minute buckets that survive, so months of operation can be shown later. Off by default. Everything stays in this installation; nothing is sent anywhere."
-                        checked={platformFlags.metrics}
-                        onChange={v => editPlatformFlag('metrics', v)}
-                    />
-                    {/* Where it writes is its own card below, with its own save
-                        and its own connection test. Pointed at from here because
-                        the two are one decision: the resolution cannot be
-                        changed afterwards and nothing is backfilled, so the
-                        database wants choosing BEFORE this switch goes on. */}
-                    <p className="text-xs text-(--base-06) leading-relaxed">
-                        Choose where it writes under <strong>Statistics database</strong> below,
-                        before switching this on: recording starts at that moment and nothing
-                        earlier can be filled in.
-                    </p>
-                </SettingsGroup>
 
                 <SettingsGroup title="Gateway-dependent">
                     <SwitchRow
@@ -498,10 +480,11 @@ export default function FeaturesTab() {
                 </SettingsGroup>
             </SettingsCard>
 
-            {/* Where the long-term record is written. Its own card because it
-                is a different endpoint with its own validation and its own
-                connection test - the switch above only decides WHETHER. */}
-            <MetricsDatabaseCard enabled={platformFlags.metrics} />
+            {/* Long-term statistics: the switch AND the database it records
+                into, in one card under one save. They were two, and separating
+                them let recording start before anyone had chosen a target -
+                which cannot be corrected later, because nothing is backfilled. */}
+            <MetricsDatabaseCard />
 
             {/* WS5 custom-tab reverse proxy */}
             <SettingsCard title="Custom-tab reverse proxy" icon={Globe} form={proxyTabForm}>

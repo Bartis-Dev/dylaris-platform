@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -84,6 +85,14 @@ func (m *Manager) DSN() string {
 // An unchanged dsn is a no-op, so a settings save that touched something else
 // does not interrupt recording for a few seconds and lose the buckets in flight.
 func (m *Manager) Apply(dsn string) error {
+	// Nil-tolerant like every other method here, and it reports rather than
+	// pretends: a caller that gets no error is entitled to believe the target
+	// is in use. The settings handler turns this into "saved, not yet
+	// recording" instead of a panic on a screen nobody expects to be fatal.
+	if m == nil {
+		return errors.New("no metrics manager is running")
+	}
+
 	m.mu.RLock()
 	same := m.cur != nil && m.dsn == dsn
 	m.mu.RUnlock()

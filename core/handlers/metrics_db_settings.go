@@ -24,9 +24,19 @@ func NewMetricsDBHandler(state *AppState) *MetricsDBHandler {
 	return &MetricsDBHandler{state: state}
 }
 
+// metricsDBRequest is one screen's worth of decision: whether to record, and
+// where. They arrive together because they ARE together - see the note on Set.
+type metricsDBRequest struct {
+	services.MetricsDBTarget
+	Enabled bool `json:"enabled"`
+}
+
 // metricsDBResponse is what the form renders from. The password is never in it.
 type metricsDBResponse struct {
 	services.MetricsDBTarget
+	// Enabled is the long-term statistics switch (`feature_metrics_enabled`),
+	// owned by this endpoint rather than the feature bundle.
+	Enabled bool `json:"enabled"`
 	// PasswordSet lets the form show that one is stored without carrying it.
 	// Without this the field looks empty and identical to "there is none",
 	// which are opposite configurations here.
@@ -66,6 +76,7 @@ func (h *MetricsDBHandler) Get(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"settings": metricsDBResponse{
 			MetricsDBTarget: stored,
+			Enabled:         h.state.FeatureFlags.Get(r.Context(), services.MetricsEnabledSetting, false),
 			PasswordSet:     pwSet,
 			ManagedByEnv:    h.state.MetricsDBURLFromEnv != "",
 			Active:          h.activeState(),
@@ -93,10 +104,13 @@ func (h *MetricsDBHandler) activeState() metricsDBActive {
 // Test POST /api/admin/settings/metrics-db/test - probe without saving.
 // PANEL settings.write (it reaches out to a host the caller names).
 func (h *MetricsDBHandler) Test(w http.ResponseWriter, r *http.Request) {
-	target, ok := h.decodeAndMerge(w, r)
+	req, ok := h.decodeAndMerge(w, r)
 	if !ok {
 		return
 	}
+	// The switch is irrelevant here: a test answers "would this work", which is
+	// the same question whether or not recording is currently on.
+	target := req.MetricsDBTarget
 
 	// The Core database needs no probe: Core is talking to it right now, so
 	// "can it be reached" is answered by this request existing. What is worth
@@ -187,10 +201,11 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target, ok := h.decodeAndMerge(w, r)
+	req, ok := h.decodeAndMerge(w, r)
 	if !ok {
 		return
 	}
+	target := req.MetricsDBTarget
 	if err := target.Validate(); err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -217,6 +232,17 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The target is written BEFORE the switch, and that order is the point.
+	// Recording begins the instant the flag is true, and the first bucket it
+	// writes is at whatever resolution the stored target implies - so a switch
+	// that landed first would open a window recording into the OLD target, and
+	// the history would start at a resolution nobody chose.
+	if err := h.setRecording(r, req.Enabled); err != nil {
+		sendJSONError(w, "The database was saved but the switch was not: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
+
 	// Apply it live. A failure here is reported but does NOT unsave: the stored
 	// target is what the next boot uses, and telling the operator "saved, not
 	// yet in use" beats a form that refuses a correct setting because of a
@@ -229,8 +255,13 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	stored := target
 	stored.Password = ""
 	resp := map[string]interface{}{
-		"success":  true,
-		"settings": metricsDBResponse{MetricsDBTarget: stored, PasswordSet: target.Password != "", Active: h.activeState()},
+		"success": true,
+		"settings": metricsDBResponse{
+			MetricsDBTarget: stored,
+			Enabled:         req.Enabled,
+			PasswordSet:     target.Password != "",
+			Active:          h.activeState(),
+		},
 	}
 	if applyErr != "" {
 		resp["warning"] = "Saved, but switching to it now failed (" + applyErr +
@@ -248,16 +279,35 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 // forward unconditionally would let a changed host silently receive the old
 // database's credential - the same reasoning as the Core storage form, where it
 // is written out at length.
-func (h *MetricsDBHandler) decodeAndMerge(w http.ResponseWriter, r *http.Request) (services.MetricsDBTarget, bool) {
-	var req services.MetricsDBTarget
+// setRecording writes the long-term statistics switch.
+//
+// Deliberately the same three steps the feature bundle performs - persist,
+// invalidate the cached flag, publish features.changed - because the panel gates
+// the Statistics screen on that event and nothing here would tell it otherwise.
+// The KEY is unchanged (`feature_metrics_enabled`); only the endpoint that owns
+// writing it moved.
+func (h *MetricsDBHandler) setRecording(r *http.Request, on bool) error {
+	if err := h.state.Store.SetSetting(services.MetricsEnabledSetting, boolStr(on)); err != nil {
+		return err
+	}
+	h.state.FeatureFlags.Invalidate(services.MetricsEnabledSetting)
+	h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
+		"feature": "metrics",
+		"enabled": on,
+	})
+	return nil
+}
+
+func (h *MetricsDBHandler) decodeAndMerge(w http.ResponseWriter, r *http.Request) (metricsDBRequest, bool) {
+	var req metricsDBRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
-		return services.MetricsDBTarget{}, false
+		return metricsDBRequest{}, false
 	}
-	req = req.Normalize()
+	req.MetricsDBTarget = req.MetricsDBTarget.Normalize()
 	if req.Password == "" {
 		existing := services.LoadMetricsDBTarget(h.state.Store)
-		if sameMetricsEndpoint(req, existing) {
+		if sameMetricsEndpoint(req.MetricsDBTarget, existing) {
 			req.Password = existing.Password
 		}
 	}

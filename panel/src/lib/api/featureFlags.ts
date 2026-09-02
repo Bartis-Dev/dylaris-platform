@@ -42,11 +42,10 @@ export interface FeatureFlagsAdminPayload {
     applyAuthoringToManual?: boolean;
     autoMove: boolean;
     byon: boolean;
-    // The long-term statistics record. Off by default: it starts writing
-    // history meant to survive for years, which is a decision with a date on
-    // it. Nothing leaves the installation either way - the platform sends
-    // nothing anywhere and this does not change that.
-    metrics: boolean;
+    // NO metrics flag. Long-term statistics are switched on by
+    // /admin/settings/metrics-db, together with the database they record into:
+    // the resolution is fixed the moment recording starts and nothing can be
+    // backfilled, so the two have to be saved by one request. See metricsDb.ts.
     // Whether NON-ADMINS may hold an API key at all. Default off: a key is a
     // second credential class that outlives a session and is not covered by the
     // account's 2FA, so a fresh install does not start handing them out.

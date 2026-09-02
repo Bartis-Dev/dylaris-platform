@@ -100,3 +100,30 @@ describe('the card that renders it', () => {
         expect(card).toContain('--warning-border');
     });
 });
+
+describe('one setting, one writer', () => {
+    const read = (rel: string) => readFileSync(join(__dirname, '..', '..', rel), 'utf8');
+
+    // The recording switch used to live in the feature-flag bundle while the
+    // database lived here. Two endpoints writing feature_metrics_enabled means
+    // whichever saved last wins, and the feature card would have reverted a
+    // change made on this one from its own stale copy. It is now written in
+    // exactly one place, together with the target it needs.
+    it('the feature-flag bundle no longer carries the metrics switch', () => {
+        const flags = read('lib/api/featureFlags.ts');
+        expect(flags).not.toMatch(/^\s*metrics:\s*boolean;/m);
+    });
+
+    it('the features tab renders no statistics switch of its own', () => {
+        const tab = read('components/settings/FeaturesTab.tsx');
+        expect(tab).not.toContain("editPlatformFlag('metrics'");
+        expect(tab).not.toContain('platformFlags.metrics');
+    });
+
+    // And it is here, in the same form as the target, so one save commits both.
+    it('the statistics card owns the switch', () => {
+        const card = read('components/settings/MetricsDatabaseCard.tsx');
+        expect(card).toContain("set({ enabled: v })");
+        expect(card).toContain('SwitchRow');
+    });
+});

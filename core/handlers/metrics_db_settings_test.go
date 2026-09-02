@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -27,7 +28,13 @@ func (s *metricsDBStore) TimescaleEnabled(context.Context) (bool, error) {
 }
 
 func metricsDBHandlerFor(st *metricsDBStore, env string) *MetricsDBHandler {
-	return NewMetricsDBHandler(&AppState{Store: st, MetricsDBURLFromEnv: env})
+	// FeatureFlags reads the same store: this endpoint owns the recording
+	// switch now, so the two cannot be given different views of it.
+	return NewMetricsDBHandler(&AppState{
+		Store:               st,
+		FeatureFlags:        services.NewFeatureFlags(st),
+		MetricsDBURLFromEnv: env,
+	})
 }
 
 func storedSeparate() map[string]string {
@@ -229,5 +236,106 @@ func TestTheActiveBlockCopesWithNothingRecording(t *testing.T) {
 	got := h.activeState()
 	if got.Recording || got.Resolution != "" {
 		t.Fatalf("activeState with no manager = %+v; want the empty state", got)
+	}
+}
+
+// The switch and the database are saved together, by one request, because they
+// are one decision: recording starts at the moment the flag goes true and the
+// first bucket lands at whatever resolution the stored target implies. Two
+// endpoints meant a window where those disagreed.
+func TestOneSaveWritesBothTheSwitchAndTheTarget(t *testing.T) {
+	st := &metricsDBStore{vals: map[string]string{}}
+	h := metricsDBHandlerFor(st, "")
+
+	w := httptest.NewRecorder()
+	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(`{"enabled":true,"mode":"core"}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if st.vals[services.MetricsEnabledSetting] != "true" {
+		t.Fatalf("the recording switch was not written: %q", st.vals[services.MetricsEnabledSetting])
+	}
+	if st.vals[services.MetricsDBModeSetting] != services.MetricsDBModeCore {
+		t.Fatalf("the target was not written: %q", st.vals[services.MetricsDBModeSetting])
+	}
+
+	// And back off again, so the switch is genuinely written rather than only
+	// ever set - a handler that wrote "true" unconditionally would pass above.
+	w = httptest.NewRecorder()
+	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(`{"enabled":false,"mode":"core"}`)))
+	if st.vals[services.MetricsEnabledSetting] != "false" {
+		t.Fatalf("switching recording off did not write: %q", st.vals[services.MetricsEnabledSetting])
+	}
+}
+
+// The GET has to carry the switch, or the merged card cannot render its own
+// state and would show recording as off on every load.
+func TestTheGetReportsWhetherRecordingIsOn(t *testing.T) {
+	st := &metricsDBStore{vals: map[string]string{services.MetricsEnabledSetting: "true"}}
+	w := httptest.NewRecorder()
+	metricsDBHandlerFor(st, "").Get(w, httptest.NewRequest("GET", "/x", nil))
+
+	var resp struct {
+		Settings struct {
+			Enabled bool `json:"enabled"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Settings.Enabled {
+		t.Fatal("recording is on in the store but the GET says off")
+	}
+}
+
+// A refused target must not switch recording on. Otherwise the one request
+// half-succeeds into the worst state available: recording is on, and it is
+// recording into whatever the PREVIOUS target was, at a resolution nobody chose
+// on a screen that says something else.
+func TestARefusedTargetLeavesTheSwitchAlone(t *testing.T) {
+	st := &metricsDBStore{vals: map[string]string{services.MetricsEnabledSetting: "false"}}
+	h := metricsDBHandlerFor(st, "")
+
+	w := httptest.NewRecorder()
+	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(
+		`{"enabled":true,"mode":"separate","host":"127.0.0.1","port":"1","dbName":"d","user":"u"}`)))
+
+	if w.Code == http.StatusOK {
+		t.Fatalf("an unreachable target was accepted: %s", w.Body.String())
+	}
+	if st.vals[services.MetricsEnabledSetting] != "false" {
+		t.Fatalf("the switch moved to %q despite the target being refused",
+			st.vals[services.MetricsEnabledSetting])
+	}
+	if st.vals[services.MetricsDBHostSetting] != "" {
+		t.Fatalf("the refused target was stored anyway: %q", st.vals[services.MetricsDBHostSetting])
+	}
+}
+
+// One setting, one writer.
+//
+// The recording switch lived in the feature bundle while its database lived
+// here, so two endpoints wrote `feature_metrics_enabled` and the last save won:
+// the feature card would have reverted a change made on the statistics card
+// from its own stale copy of the bundle.
+//
+// Checked at the source rather than by driving Set, and the site is named
+// exactly - the writes table in that file is the only way the bundle could
+// touch this setting, so its absence there IS the invariant. Driving the
+// handler would have proven the same thing through the modpack module sync,
+// which is a different subsystem and would need a fake of its own here.
+func TestTheFeatureBundleNoLongerWritesTheMetricsSwitch(t *testing.T) {
+	src, err := os.ReadFile("feature_settings.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), "MetricsEnabledSetting") {
+		t.Fatal("the feature bundle references the statistics switch again; " +
+			"two writers of one setting means the last save wins and the other card reverts it")
+	}
+	// And the payload field is gone, so an old body cannot smuggle a false in
+	// through Go's zero value for an absent bool.
+	if strings.Contains(string(src), "Metrics bool") {
+		t.Fatal("featureSettingsPayload still has a Metrics field")
 	}
 }

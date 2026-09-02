@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.21
+
+### Features
+- The long-term statistics switch and the database it records into are now one
+  card under Settings, Features, saved by one action. They were two, and the
+  switch could be turned on before anyone had chosen a target - which cannot be
+  corrected later, because nothing is backfilled. `core` `panel`
+
+### Breaking
+- `/api/admin/settings/features` no longer carries `metrics`. The recording
+  switch moved to `/api/admin/settings/metrics-db`, which writes it together
+  with the target. The stored setting is unchanged, so nothing needs migrating -
+  only a script that toggled statistics through the feature bundle. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Turning recording on with a database that cannot be reached no longer half
+  applies. The target is checked and stored first, so a refused one leaves the
+  switch exactly where it was. `core`
+
 ## 2026.09.02.20
 
 ### Features
