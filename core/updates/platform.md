@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The Content tab scrolls in three panes now - categories, results and the mod
+  details each scroll on their own instead of moving the whole window. The
+  players list does the same. `core` `panel`
+- A server's custom tabs rendered their page in a frame 150 pixels tall
+  regardless of the window. The frame now fills the tab. `core` `panel`
+
 ## 2026.09.02.4
 
 ### Features

@@ -454,8 +454,14 @@ export default function ServerContentPage() {
     const unknownLoader = !advanced && defaultLoader && PROJECT_TYPE_FOR_LOADER[defaultLoader] === undefined;
     const imported = isImportedServer(server);
 
+    // h-full, not flex-1: ServerShell wraps every server page in a scrolling
+    // `flex-1 overflow-y-auto p-6` box, which is a BLOCK, so flex-1 here sized
+    // nothing and the page was as tall as its content. The whole window
+    // scrolled, the three columns below never reached their own overflow, and
+    // the p-6 sat inside the shell's p-6. Taking the shell's height instead is
+    // what files/page.tsx already does.
     return (
-        <main className="flex-1 flex flex-col p-6 gap-4 overflow-hidden">
+        <main className="h-full flex flex-col gap-4 overflow-hidden">
             <header className="flex items-center gap-3 shrink-0">
                 <Package size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">Content</h1>
@@ -645,7 +651,11 @@ export default function ServerContentPage() {
                         {/* Loader + MC-version filters, greyed until Advanced is on. */}
                         <div className={advanced ? '' : 'opacity-50 pointer-events-none select-none'}>
                             <label className="input-label mb-0">Loaders</label>
-                            <div className="mt-1.5 space-y-1 max-h-40 overflow-y-auto">
+                            {/* No max-height and no scroller of its own: the whole
+                                sidebar scrolls now, and a scroll area nested inside a
+                                scroll area is the one that eats the wheel event the
+                                reader meant for the other. */}
+                            <div className="mt-1.5 space-y-1">
                                 {LOADER_OPTIONS.map(l => {
                                     const on = filterLoaders.includes(l);
                                     return (

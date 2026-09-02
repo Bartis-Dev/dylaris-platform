@@ -99,9 +99,14 @@ export default function ServerCustomTabPage() {
         return () => { cancelled = true; clearInterval(interval); };
     }, [isEmbeddedProxy, tab?.proxyOrigin]);
 
+    // Every root below is h-full rather than flex-1, and all four have to be.
+    // ServerShell renders a page inside a scrolling BLOCK, so flex-1 gives this
+    // main no height and the iframe's own h-full then resolves to auto. Measured
+    // against the real class chain: 150px tall inside a 764px box, which is the
+    // whole custom tab. With h-full the same iframe is 716px.
     if (tab === undefined) {
         return (
-            <main className="flex-1 overflow-hidden bg-(--base-01) p-4">
+            <main className="h-full overflow-hidden bg-(--base-01) p-4">
                 <Skeleton className="w-full h-full rounded" />
             </main>
         );
@@ -143,7 +148,7 @@ export default function ServerCustomTabPage() {
 
         if (proxyAuth === 'pending') {
             return (
-                <main className="flex-1 overflow-hidden bg-(--base-01) p-4">
+                <main className="h-full overflow-hidden bg-(--base-01) p-4">
                     <Skeleton className="w-full h-full rounded" />
                 </main>
             );
@@ -163,7 +168,7 @@ export default function ServerCustomTabPage() {
         // path-scoped to exactly this proxy prefix, so the src below never
         // needs (and never gets) a token of its own.
         return (
-            <main className="flex-1 overflow-hidden bg-(--base-01)">
+            <main className="h-full overflow-hidden bg-(--base-01)">
                 <iframe
                     src={tabContentSrc(tab.proxyOrigin) || undefined}
                     title={tab.name}
@@ -198,7 +203,7 @@ export default function ServerCustomTabPage() {
     }
 
     return (
-        <main className="flex-1 overflow-hidden bg-(--base-01)">
+        <main className="h-full overflow-hidden bg-(--base-01)">
             {/* sandbox kept permissive so JS-heavy minimap viewers function;
                 referrer-policy keeps URLs from leaking the panel surface */}
             <iframe

@@ -240,7 +240,11 @@ export default function ServerPlayersPage() {
     if (!server) return null;
 
     return (
-        <main className="flex-1 flex flex-col p-6 gap-4 overflow-hidden">
+        // h-full, not flex-1: ServerShell's children box is a scrolling BLOCK, so
+        // flex-1 sizes nothing here and the player list below never reached its own
+        // overflow - the whole window scrolled instead. The p-6 goes with it; the
+        // shell already applies one.
+        <main className="h-full flex flex-col gap-4 overflow-hidden">
             <header className="flex items-center gap-3 shrink-0">
                 <Users size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">Players</h1>

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The Content tab now scrolls in three separate panes, so the category list and
+  the search results stay put while you scroll the other one. The players list
+  behaves the same way.
+- Custom tabs showed their page in a small frame instead of filling the tab.
+
 ## 2026.09.02.4
 
 ### Features

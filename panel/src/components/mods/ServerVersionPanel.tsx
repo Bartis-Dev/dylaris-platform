@@ -87,7 +87,10 @@ export default function ServerVersionPanel({
     }
 
     return (
-        <div className="flex flex-col gap-4 overflow-y-auto">
+        // flex-1 min-h-0 so this fills the height its parent section has and
+        // scrolls inside it. Without them it is as tall as its content, and the
+        // page's overflow-hidden clips the end of it out of reach.
+        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto">
             {unmanaged.length > 0 && (
                 <UnlinkedContentWarning
                     count={unmanaged.length}
