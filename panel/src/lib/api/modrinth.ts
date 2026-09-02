@@ -171,15 +171,19 @@ export interface InstalledMod {
     installedBy?: string;
 }
 
+// RAISES on a failed request, unlike getServerModpackContents below, which
+// fails open on purpose - and the difference between them is the point. The
+// modpack snapshot decorates rows; this list is what the tab uses to decide
+// whether a mod is already there. Flattened to [], the Installed section reads
+// "No mods installed", every browse row loses its installed badge, and the
+// obvious next move is to install something that is already on the server.
 export async function listInstalledMods(serverId: number): Promise<InstalledMod[]> {
-    try {
-        const res = await fetch(`${API_URL}/servers/${serverId}/mods`, { headers: getAuthHeader() });
-        const data = await handleResponse(res);
-        return (data as any).mods || [];
-    } catch (err) {
-        handleError(err);
-        return [];
+    const res = await fetch(`${API_URL}/servers/${serverId}/mods`, { headers: getAuthHeader() });
+    const data = await handleResponse(res);
+    if (!(data as any)?.success) {
+        throw new Error((data as any)?.message || 'Could not load the installed mods.');
     }
+    return (data as any).mods || [];
 }
 
 export interface InstallModPayload {

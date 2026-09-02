@@ -43,11 +43,27 @@ export async function saveLinkUpdateSettings(s: LinkUpdateSettings): Promise<Lin
     } catch (err) { handleError(err); return null; }
 }
 
+// RAISES on a failed request. The `|| {}` this replaces never once fired: a
+// failure envelope is an object, so it was returned AS the state map, every
+// node lookup missed, and the panel printed "No node is reporting its Link
+// status yet. Nodes report on their heartbeat, and an older node image does not
+// report at all."
+//
+// That sentence is the reason this is worth changing rather than an empty list
+// would be. It is specific, plausible and wrong, and it sends an operator to
+// look at node images when the answer is that we could not ask.
 export async function getLinkUpdateStates(): Promise<Record<string, NodeLinkState>> {
-    try {
-        const res = await fetch(`${API_URL}/nodes/link-updates`, { headers: getAuthHeader() });
-        return ((await handleResponse(res)) as Record<string, NodeLinkState>) || {};
-    } catch (err) { handleError(err); return {}; }
+    const res = await fetch(`${API_URL}/nodes/link-updates`, { headers: getAuthHeader() });
+    const data = await handleResponse(res);
+    if (data && (data as any).success === false) {
+        throw new Error((data as any).message || 'Could not read the Link status of your nodes.');
+    }
+    // handleResponse spreads the body over its own { success, status }, so on a
+    // bare map those two arrive as entries. No node token can collide with them,
+    // which is why this was never visible - but the function claims to return
+    // node states, so it should not hand back two that are not.
+    const { success: _s, status: _st, ...states } = (data ?? {}) as Record<string, unknown>;
+    return states as Record<string, NodeLinkState>;
 }
 
 // Omit nodeId to update every node that has an update pending. Naming a node

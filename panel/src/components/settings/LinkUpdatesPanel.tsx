@@ -24,11 +24,25 @@ export default function LinkUpdatesPanel({ showToast }: Props) {
     const [states, setStates] = useState<Record<string, NodeLinkState>>({});
     const [nodes, setNodes] = useState<Node[]>([]);
     const [busy, setBusy] = useState<string | null>(null);
+    const [statusError, setStatusError] = useState<string | null>(null);
 
     const loadStates = useCallback(async () => {
-        const [s, n] = await Promise.all([getLinkUpdateStates(), getNodes()]);
-        setStates(s);
-        setNodes(Array.isArray(n) ? n : []);
+        try {
+            const [s, n] = await Promise.all([getLinkUpdateStates(), getNodes()]);
+            // getNodes is shared by most of the panel and resolves with an error
+            // envelope rather than an array. Judging that here keeps the check
+            // where the consequence is, without changing what every other caller
+            // of getNodes receives.
+            if (!Array.isArray(n)) throw new Error('Could not load your nodes.');
+            setStates(s);
+            setNodes(n);
+            setStatusError(null);
+        } catch (e) {
+            // The previous answer is KEPT. This runs every 15 seconds, and
+            // blanking the list on one bad poll would flap the panel between
+            // "here are your nodes" and "no node is reporting".
+            setStatusError(e instanceof Error ? e.message : 'Could not read the Link status of your nodes.');
+        }
     }, []);
 
     const form = useSettingsForm<LinkUpdateSettings>({
@@ -133,11 +147,18 @@ export default function LinkUpdatesPanel({ showToast }: Props) {
                     ) : undefined
                 }
             >
-                {managed.length === 0 && unmanaged.length === 0 ? (
-                    <p className="text-xs text-(--base-06)">
-                        No node is reporting its Link status yet. Nodes report on their heartbeat, and an
-                        older node image does not report at all.
+                {statusError ? (
+                    <p className="text-xs text-(--warning-light)">
+                        {statusError} The list below, if any, is the last answer we got.
                     </p>
+                ) : null}
+                {managed.length === 0 && unmanaged.length === 0 ? (
+                    statusError ? null : (
+                        <p className="text-xs text-(--base-06)">
+                            No node is reporting its Link status yet. Nodes report on their heartbeat, and an
+                            older node image does not report at all.
+                        </p>
+                    )
                 ) : (
                     <ul className="divide-y divide-(--base-03)">
                         {managed.map(n => {

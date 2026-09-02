@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The Link status panel said "No node is reporting its Link status yet" when it
+  had failed to read the status at all. It now tells the two apart and keeps
+  the last answer it got. `core` `panel`
+- A server's Content tab said "No mods installed" when the installed list could
+  not be loaded, which also cleared the installed badge from every browse
+  result. `core` `panel`
+
 ## 2026.09.02.6
 
 ### Features

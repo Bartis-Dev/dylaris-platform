@@ -23,6 +23,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { declareServerLoaderMetadata } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
+import { useBusy } from '@/lib/useBusy';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
 // sidebar (with the loader + MC-version filters below it, gated behind an
@@ -196,10 +197,20 @@ export default function ServerContentPage() {
 
     // ----- Installed mods -----
 
+    const [installedError, setInstalledError] = useState<string | null>(null);
+    const [retryingInstalled, retryInstalled] = useBusy();
+
     const refreshInstalled = useCallback(async () => {
         if (!serverId) return;
-        const list = await listInstalledMods(serverId);
-        setInstalled(list);
+        try {
+            setInstalled(await listInstalledMods(serverId));
+            setInstalledError(null);
+        } catch (e) {
+            // The list is not decoration here: it is what the browse rows read
+            // to decide whether a mod is already on the server. An empty one
+            // says "install it" about everything.
+            setInstalledError(e instanceof Error ? e.message : 'Could not load the installed mods.');
+        }
     }, [serverId]);
 
     useEffect(() => { refreshInstalled(); }, [refreshInstalled]);
@@ -868,7 +879,22 @@ export default function ServerContentPage() {
 
             {section === 'installed' && (
                 <div className="flex-1 overflow-y-auto">
-                    {installed.length === 0 ? (
+                    {installedError ? (
+                        <div className="text-center py-12 text-sm text-(--warning-light)">
+                            <AlertTriangle size={20} className="mx-auto mb-2" />
+                            {installedError}
+                            <div>
+                                <button
+                                    type="button"
+                                    onClick={() => retryInstalled(refreshInstalled)}
+                                    disabled={retryingInstalled}
+                                    className="btn btn-secondary btn-sm mt-3"
+                                >
+                                    {retryingInstalled ? 'Trying…' : 'Try again'}
+                                </button>
+                            </div>
+                        </div>
+                    ) : installed.length === 0 ? (
                         <div className="text-center py-12 text-sm text-(--base-06)">No mods installed.</div>
                     ) : (
                         <div className="space-y-2">

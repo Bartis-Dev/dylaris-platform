@@ -61,7 +61,15 @@ export default function ServerConfigProfilingPage() {
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const mods = await listInstalledMods(serverId);
+            let mods;
+            try {
+                mods = await listInstalledMods(serverId);
+            } catch {
+                // Left at null, which this page already means as "unknown": the
+                // "Spark is not installed" banner is gated on === false, so a
+                // failed lookup no longer asserts something it did not learn.
+                return;
+            }
             if (cancelled) return;
             setSparkInstalled(mods.some(m =>
                 m.modrinthProjectSlug === 'spark' ||

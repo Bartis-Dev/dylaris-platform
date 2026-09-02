@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The Content tab of a server said "No mods installed" when it had failed to
+  load the list, and every mod in the search results looked uninstalled with
+  it. It now says the list could not be loaded and offers to try again.
+
 ## 2026.09.02.6
 
 ### Features
