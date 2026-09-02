@@ -128,13 +128,19 @@ func TestCollectorCountsTheThreeNodeKindsApart(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// platform.nodes is OUR fleet - cluster plus external - and not every
+	// machine on the books. It used to be all five, until it became the total
+	// that platform.nodes_online is a fraction of: a customer's box being off
+	// would otherwise show as this platform running at 4/5. The two customer
+	// machines are counted in their own pair below.
 	want := map[string]float64{
-		"platform.nodes":          5,
-		"platform.nodes_online":   4,
-		"platform.nodes_platform": 2,
-		"platform.nodes_external": 1,
-		"platform.nodes_byon":     2,
-		"platform.users":          7,
+		"platform.nodes":             3,
+		"platform.nodes_online":      2,
+		"platform.nodes_platform":    2,
+		"platform.nodes_external":    1,
+		"platform.nodes_byon":        2,
+		"platform.nodes_byon_online": 2,
+		"platform.users":             7,
 	}
 	for metric, v := range want {
 		if got := capt.one(t, metric).Bucket; got.Sum != v || got.Count != 1 {
@@ -203,5 +209,100 @@ func TestUpIsRecordedAsANumberSoUptimeIsAnAverage(t *testing.T) {
 	}
 	if row.Bucket.Min != 0 || row.Bucket.Max != 1 {
 		t.Fatalf("min/max lost the range: %+v", row.Bucket)
+	}
+}
+
+// The record is what somebody is eventually shown, and availability is the
+// number they read hardest. A BYON machine is a customer's box; switching it
+// off at night is not downtime of this platform, and averaging it into node.up
+// would understate the uptime this fleet actually delivered - with somebody
+// else's decisions.
+func TestCustomerMachinesStayOutOfTheAvailabilitySeries(t *testing.T) {
+	st := &metricsFakeStore{nodes: []models.Node{
+		{Token: "p1", Status: "online"},
+		{Token: "e1", Status: "online", Tags: "external"},
+		// Two customer machines, both down. Neither may touch node.up.
+		{Token: "b1", Status: "offline", OwnerID: owner("u-1")},
+		{Token: "b2", Status: "offline", OwnerID: owner("u-2")},
+	}}
+	c, capt := newCollectorForTest(t, st, true, true)
+
+	c.sampleOnce(context.Background())
+	if err := c.recorder.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, r := range capt.byMetric("node.up") {
+		if r.Key.Subject == "b1" || r.Key.Subject == "b2" {
+			t.Errorf("customer node %q was recorded in node.up", r.Key.Subject)
+		}
+		if r.Bucket.Sum != 1 {
+			t.Errorf("%s recorded as down; only our nodes belong here", r.Key.Subject)
+		}
+	}
+	if got := len(capt.byMetric("node.up")); got != 2 {
+		t.Fatalf("node.up covers %d machines, want 2 (cluster + external)", got)
+	}
+}
+
+// They are counted, though. How much hardware customers brought is a real
+// number about the business - it just cannot be allowed to contaminate an
+// availability figure, which is why it is a gauge of its own rather than a
+// per-machine `up` series the summary averages.
+func TestCustomerMachinesAreStillCounted(t *testing.T) {
+	st := &metricsFakeStore{nodes: []models.Node{
+		{Token: "p1", Status: "online"},
+		{Token: "b1", Status: "online", OwnerID: owner("u-1")},
+		{Token: "b2", Status: "offline", OwnerID: owner("u-2")},
+	}}
+	c, capt := newCollectorForTest(t, st, true, true)
+
+	c.sampleOnce(context.Background())
+	if err := c.recorder.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	for metric, want := range map[string]float64{
+		"platform.nodes":             1, // ours only: one cluster node
+		"platform.nodes_online":      1,
+		"platform.nodes_byon":        2,
+		"platform.nodes_byon_online": 1,
+	} {
+		if got := capt.one(t, metric).Bucket.Sum; got != want {
+			t.Errorf("%s = %v, want %v", metric, got, want)
+		}
+	}
+}
+
+// platform.nodes is what platform.nodes_online is a fraction OF, so the two
+// have to describe the same set. Counting every machine in one and only ours in
+// the other would make the ratio quietly wrong rather than obviously broken.
+func TestTheFleetTotalAndItsOnlineCountDescribeTheSameSet(t *testing.T) {
+	st := &metricsFakeStore{nodes: []models.Node{
+		{Token: "p1", Status: "online"},
+		{Token: "p2", Status: "online"},
+		{Token: "e1", Status: "online", Tags: "external"},
+		{Token: "b1", Status: "online", OwnerID: owner("u-1")},
+	}}
+	c, capt := newCollectorForTest(t, st, true, true)
+
+	c.sampleOnce(context.Background())
+	if err := c.recorder.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	total := capt.one(t, "platform.nodes").Bucket.Sum
+	online := capt.one(t, "platform.nodes_online").Bucket.Sum
+	platform := capt.one(t, "platform.nodes_platform").Bucket.Sum
+	external := capt.one(t, "platform.nodes_external").Bucket.Sum
+
+	if total != platform+external {
+		t.Errorf("nodes (%v) != platform (%v) + external (%v)", total, platform, external)
+	}
+	if online > total {
+		t.Errorf("online (%v) exceeds the total (%v); the two count different sets", online, total)
+	}
+	if total != 3 {
+		t.Errorf("total = %v, want 3 - the customer node must not be in it", total)
 	}
 }

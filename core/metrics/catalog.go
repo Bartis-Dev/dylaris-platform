@@ -62,13 +62,16 @@ var Catalog = []Series{
 	{Metric: "platform.core_replicas", Label: "Core replicas serving", Group: "Platform", Kind: KindGauge, Unit: UnitCount},
 
 	// Machines
-	{Metric: "platform.nodes", Label: "Nodes", Group: "Machines", Kind: KindGauge, Unit: UnitCount},
+	{Metric: "platform.nodes", Label: "Nodes", Group: "Machines", Kind: KindGauge, Unit: UnitCount,
+		Help: "Your own fleet: cluster plus external. Customer machines are counted separately."},
 	{Metric: "platform.nodes_online", Label: "Nodes online", Group: "Machines", Kind: KindGauge, Unit: UnitCount},
-	{Metric: "platform.nodes_platform", Label: "Platform nodes", Group: "Machines", Kind: KindGauge, Unit: UnitCount},
+	{Metric: "platform.nodes_platform", Label: "Cluster nodes", Group: "Machines", Kind: KindGauge, Unit: UnitCount},
 	{Metric: "platform.nodes_external", Label: "External nodes", Group: "Machines", Kind: KindGauge, Unit: UnitCount},
-	{Metric: "platform.nodes_byon", Label: "Customer nodes", Group: "Machines", Kind: KindGauge, Unit: UnitCount},
+	{Metric: "platform.nodes_byon", Label: "BYON nodes", Group: "Machines", Kind: KindGauge, Unit: UnitCount,
+		Help: "Hardware customers brought. Counted, and deliberately kept out of every availability figure."},
+	{Metric: "platform.nodes_byon_online", Label: "BYON nodes online", Group: "Machines", Kind: KindGauge, Unit: UnitCount},
 	{Metric: "node.up", Label: "Node availability", Group: "Machines", Kind: KindGauge, Unit: UnitPercent, PerSubject: true,
-		Help: "1 while a node is online, 0 while it is not. Averaged over a window this IS the uptime fraction."},
+		Help: "1 while one of YOUR nodes is online, 0 while it is not. Averaged over a window this IS the uptime fraction. Customer machines are excluded, so a tenant powering their box down cannot understate it."},
 	{Metric: "node.cpu_pct", Label: "Node CPU", Group: "Machines", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
 	{Metric: "node.ram_pct", Label: "Node RAM", Group: "Machines", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
 	{Metric: "node.ram_used_bytes", Label: "Node RAM used", Group: "Machines", Kind: KindGauge, Unit: UnitBytes, PerSubject: true},
@@ -126,8 +129,11 @@ var Catalog = []Series{
 	{Metric: "link.tunnels_lost", Label: "Tunnels lost", Group: "Link", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
 	{Metric: "link.dial_failures", Label: "Link dial failures", Group: "Link", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
 	{Metric: "link.handshake_failures", Label: "Link handshake failures", Group: "Link", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
-	{Metric: "platform.links", Label: "Links", Group: "Link", Kind: KindGauge, Unit: UnitCount},
+	{Metric: "platform.links", Label: "Links", Group: "Link", Kind: KindGauge, Unit: UnitCount,
+		Help: "Links you run. A customer's BYON or route-only link is counted separately."},
 	{Metric: "platform.links_online", Label: "Links online", Group: "Link", Kind: KindGauge, Unit: UnitCount},
+	{Metric: "platform.links_customer", Label: "Customer links", Group: "Link", Kind: KindGauge, Unit: UnitCount},
+	{Metric: "platform.links_customer_online", Label: "Customer links online", Group: "Link", Kind: KindGauge, Unit: UnitCount},
 	{Metric: "platform.routes", Label: "Routes", Group: "Link", Kind: KindGauge, Unit: UnitCount},
 
 	// Beam

@@ -49,12 +49,23 @@ type LinkOwnership struct {
 // Best-effort by design: a failure yields a set that classifies nothing as a
 // customer's, which is the conservative direction (see `loaded`).
 func LoadLinkOwnership(st store.Store) LinkOwnership {
-	o := LinkOwnership{customer: map[string]struct{}{}}
 	if st == nil {
-		return o
+		return LinkOwnership{customer: map[string]struct{}{}}
 	}
 	nodes, err := st.ListNodes()
 	if err != nil {
+		return LinkOwnership{customer: map[string]struct{}{}}
+	}
+	return LinkOwnershipFrom(st, nodes)
+}
+
+// LinkOwnershipFrom is LoadLinkOwnership for a caller that already has the
+// nodes. The metrics collector lists them every sample anyway, and reading the
+// table twice on the same tick to answer one question would be a second query
+// per 30 seconds for no new information.
+func LinkOwnershipFrom(st store.Store, nodes []models.Node) LinkOwnership {
+	o := LinkOwnership{customer: map[string]struct{}{}}
+	if st == nil {
 		return o
 	}
 	for i := range nodes {

@@ -42,6 +42,10 @@ type MetricsCollector struct {
 	lastCPUSeconds float64
 	lastCPUAt      time.Time
 
+	// lastNodes is the node list from this tick, so the link classifier does
+	// not have to read the table a second time.
+	lastNodes []models.Node
+
 	// lastUptime is the previous UptimeSec of each gateway component. A value
 	// that went DOWN means that component restarted between two samples, which
 	// is the only way this record can see a restart at all - and it is what
@@ -242,29 +246,55 @@ func (c *MetricsCollector) samplePlatform(ctx context.Context, now time.Time) {
 	if err != nil {
 		return
 	}
+	// Kept for sampleGateway, which runs later in the same tick and needs to
+	// know which links are customers'. Reading the table again there would be a
+	// second query per 30 seconds for an answer already in hand.
+	c.lastNodes = nodes
 
-	var online, platform, external, byon int
+	// Ours and theirs, counted apart and never averaged together.
+	//
+	// This is the record somebody is eventually shown, and availability is the
+	// number they will read hardest. A BYON machine is a customer's laptop or
+	// their spare box; switching it off at night is not downtime of this
+	// platform, and folding it into `node.up` would understate the uptime this
+	// fleet actually delivered - with somebody else's decisions.
+	//
+	// Their machines are still recorded, as a count and an online count. That
+	// is a real number about the business (how much hardware customers brought)
+	// and it cannot contaminate an availability figure, because it is a gauge
+	// of its own rather than a per-machine `up` series the summary averages.
+	var online, platform, external int
+	var byon, byonOnline int
 	for i := range nodes {
 		n := &nodes[i]
-		if n.Status == "online" {
+		up := n.Status == "online"
+		if n.Kind() == models.NodeKindBYON {
+			byon++
+			if up {
+				byonOnline++
+			}
+			continue
+		}
+		if up {
 			online++
 		}
-		switch n.Kind() {
-		case models.NodeKindBYON:
-			byon++
-		case models.NodeKindExternal:
+		if n.Kind() == models.NodeKindExternal {
 			external++
-		default:
+		} else {
 			platform++
 		}
 		c.sampleNode(ctx, n, now)
 	}
 
-	c.obs("platform.nodes", "", "", float64(len(nodes)), now)
+	// platform.nodes is OUR fleet: platform + external. It is what
+	// platform.nodes_online is a fraction of, so the two have to describe the
+	// same set or the ratio is meaningless.
+	c.obs("platform.nodes", "", "", float64(platform+external), now)
 	c.obs("platform.nodes_online", "", "", float64(online), now)
 	c.obs("platform.nodes_platform", "", "", float64(platform), now)
 	c.obs("platform.nodes_external", "", "", float64(external), now)
 	c.obs("platform.nodes_byon", "", "", float64(byon), now)
+	c.obs("platform.nodes_byon_online", "", "", float64(byonOnline), now)
 
 	if users, err := c.store.CountUsers(); err == nil {
 		c.obs("platform.users", "", "", float64(users), now)
@@ -310,6 +340,15 @@ func (c *MetricsCollector) sampleNode(_ context.Context, n *models.Node, now tim
 		c.obs("node.ram_pct", n.Token, n.Region, used/float64(n.RAMTotal)*100, now)
 	}
 	c.obs("node.servers", n.Token, n.Region, float64(n.ServerCount), now)
+}
+
+// linkOwnership is the classifier for this tick, built from the nodes
+// samplePlatform already listed. Empty when nothing has been sampled yet, which
+// classifies every link as ours - the same conservative direction the handlers
+// take, because over-reporting our own fleet can only raise an alarm somebody
+// dismisses while the opposite hides a real outage of ours.
+func (c *MetricsCollector) linkOwnership() LinkOwnership {
+	return LinkOwnershipFrom(c.store, c.lastNodes)
 }
 
 func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
@@ -358,16 +397,15 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 		}
 	}
 
+	// Same split for links, and for the same reason: a route-only customer
+	// rebooting their router is not an outage of ours.
 	links := GetLinksFromRedis(ctx, c.redis)
 	if len(links) > 0 {
-		var up int
-		for _, l := range links {
-			if l.Online {
-				up++
-			}
-		}
-		c.obs("platform.links", "", "", float64(len(links)), now)
-		c.obs("platform.links_online", "", "", float64(up), now)
+		split := c.linkOwnership().SplitLinks(links)
+		c.obs("platform.links", "", "", float64(len(split.Ours)), now)
+		c.obs("platform.links_online", "", "", float64(split.OursOnline), now)
+		c.obs("platform.links_customer", "", "", float64(len(split.Customer)), now)
+		c.obs("platform.links_customer_online", "", "", float64(split.CustomerOnline), now)
 	}
 
 	if routes := CountRoutesFromRedis(ctx, c.redis); routes >= 0 {

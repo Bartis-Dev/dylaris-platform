@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.19
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The statistics counted customer machines in your own availability. `node.up`
+  and the node and link totals now cover your cluster and external nodes only,
+  so a tenant powering their box down at night cannot understate the uptime this
+  platform delivered. `core` `panel`
+- Customer nodes and links are recorded as their own counts instead - the
+  hardware customers brought is worth measuring, it just cannot sit inside a
+  figure about you. `core` `panel`
+
 ## 2026.09.02.18
 
 ### Features
