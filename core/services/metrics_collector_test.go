@@ -70,7 +70,7 @@ func newCollectorForTest(t *testing.T, st store.Store, on bool, isLeader bool) (
 	if on {
 		set[MetricsEnabledSetting] = "true"
 	}
-	c := NewMetricsCollector(st, nil, nil, rec, NewFeatureFlags(set))
+	c := NewMetricsCollector(st, nil, nil, fixedRecorder{rec}, NewFeatureFlags(set))
 	c.SetLeader(fakeLeader{leader: isLeader})
 	return c, capt
 }
@@ -84,7 +84,7 @@ func TestCollectorRecordsNothingWhenNotLeader(t *testing.T) {
 	c, capt := newCollectorForTest(t, st, true, false)
 
 	c.sampleOnce(context.Background())
-	if err := c.recorder.Flush(context.Background()); err != nil {
+	if err := c.recorders.Recorder().Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(capt.rows) != 0 {
@@ -99,7 +99,7 @@ func TestCollectorRecordsNothingWhenTheFeatureIsOff(t *testing.T) {
 	c, capt := newCollectorForTest(t, st, false, true)
 
 	c.sampleOnce(context.Background())
-	if err := c.recorder.Flush(context.Background()); err != nil {
+	if err := c.recorders.Recorder().Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(capt.rows) != 0 {
@@ -124,7 +124,7 @@ func TestCollectorCountsTheThreeNodeKindsApart(t *testing.T) {
 	c, capt := newCollectorForTest(t, st, true, true)
 
 	c.sampleOnce(context.Background())
-	if err := c.recorder.Flush(context.Background()); err != nil {
+	if err := c.recorders.Recorder().Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +161,7 @@ func TestAnOfflineNodeRecordsDownAndNotItsStaleReadings(t *testing.T) {
 	c, capt := newCollectorForTest(t, st, true, true)
 
 	c.sampleOnce(context.Background())
-	if err := c.recorder.Flush(context.Background()); err != nil {
+	if err := c.recorders.Recorder().Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -197,7 +197,7 @@ func TestUpIsRecordedAsANumberSoUptimeIsAnAverage(t *testing.T) {
 	st.nodes[0].Status = "offline"
 	c.sampleOnce(context.Background())
 	c.sampleOnce(context.Background())
-	if err := c.recorder.Flush(context.Background()); err != nil {
+	if err := c.recorders.Recorder().Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	row := capt.one(t, "node.up")
@@ -228,7 +228,7 @@ func TestCustomerMachinesStayOutOfTheAvailabilitySeries(t *testing.T) {
 	c, capt := newCollectorForTest(t, st, true, true)
 
 	c.sampleOnce(context.Background())
-	if err := c.recorder.Flush(context.Background()); err != nil {
+	if err := c.recorders.Recorder().Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -258,7 +258,7 @@ func TestCustomerMachinesAreStillCounted(t *testing.T) {
 	c, capt := newCollectorForTest(t, st, true, true)
 
 	c.sampleOnce(context.Background())
-	if err := c.recorder.Flush(context.Background()); err != nil {
+	if err := c.recorders.Recorder().Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -287,7 +287,7 @@ func TestTheFleetTotalAndItsOnlineCountDescribeTheSameSet(t *testing.T) {
 	c, capt := newCollectorForTest(t, st, true, true)
 
 	c.sampleOnce(context.Background())
-	if err := c.recorder.Flush(context.Background()); err != nil {
+	if err := c.recorders.Recorder().Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 

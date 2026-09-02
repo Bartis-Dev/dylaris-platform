@@ -17,11 +17,17 @@ import (
 )
 
 type AppState struct {
-	// Metrics is the long-term statistics recorder, or nil when it is off or
-	// its database could not be reached. Nil is a supported state: every
-	// handler that reads it must cope, because a statistics store is never a
-	// reason for anything else to fail.
-	Metrics *metrics.Handle
+	// Metrics owns the long-term statistics recorder and can swap its database
+	// while Core runs, which is what lets the target be a panel setting rather
+	// than a restart. Ask it for a Handle rather than holding one; nil, and a
+	// nil Handle from it, are both supported states - every reader must cope,
+	// because a statistics store is never a reason for anything else to fail.
+	Metrics *metrics.Manager
+
+	// MetricsDBURLFromEnv is METRICS_DB_URL as this process received it. Held
+	// so the settings screen can say WHY it is read-only rather than appearing
+	// broken: the environment wins over the stored target.
+	MetricsDBURLFromEnv string
 
 	Store            store.Store
 	Redis            *redis.Client

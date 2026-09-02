@@ -23,12 +23,17 @@ import (
 // day this ships rather than after the rest of the work, and the clock is the
 // point: a month of history cannot be collected retroactively.
 type MetricsCollector struct {
-	store    store.Store
-	redis    *redis.Client
-	db       *sql.DB
-	recorder *metrics.Recorder
-	flags    *FeatureFlags
-	leader   leader.Election
+	store store.Store
+	redis *redis.Client
+	db    *sql.DB
+	// recorders hands out the recorder currently in use. Asked on every sample
+	// rather than resolved once, because the metrics database is swappable at
+	// runtime: a collector holding a recorder would keep writing to the
+	// database an admin just replaced, and would keep it open for the life of
+	// the process.
+	recorders recorderSource
+	flags     *FeatureFlags
+	leader    leader.Election
 
 	// gwStats is the live gateway telemetry, read through the consumer that
 	// already holds it rather than through a second consumer group per stream.
@@ -78,9 +83,23 @@ const (
 // software supports it.
 const MetricsEnabledSetting = "feature_metrics_enabled"
 
-func NewMetricsCollector(s store.Store, r *redis.Client, db *sql.DB, rec *metrics.Recorder, flags *FeatureFlags) *MetricsCollector {
+// recorderSource is the collector's view of the metrics manager. An interface
+// so a test can hand over one fixed recorder (see fixedRecorder) without
+// building a manager and a database behind it.
+type recorderSource interface {
+	Recorder() *metrics.Recorder
+}
+
+// fixedRecorder adapts a single recorder to that interface.
+type fixedRecorder struct{ r *metrics.Recorder }
+
+func (f fixedRecorder) Recorder() *metrics.Recorder { return f.r }
+
+// NewMetricsCollector takes the SOURCE of the recorder, not a recorder. Pass a
+// *metrics.Manager in production; fixedRecorder wraps a single one.
+func NewMetricsCollector(s store.Store, r *redis.Client, db *sql.DB, rec recorderSource, flags *FeatureFlags) *MetricsCollector {
 	return &MetricsCollector{
-		store: s, redis: r, db: db, recorder: rec, flags: flags,
+		store: s, redis: r, db: db, recorders: rec, flags: flags,
 		pgCounters:    newCounterSource(),
 		redisCounters: newCounterSource(),
 		lastUptime:    map[string]int64{},
@@ -95,14 +114,19 @@ func (c *MetricsCollector) SetGatewayStats(src gatewayStatsSource) { c.gwStats =
 // SetLeader wires the leader-election gate. Call once at boot.
 func (c *MetricsCollector) SetLeader(l leader.Election) { c.leader = l }
 
+// Start runs the sampling loops.
+//
+// It does NOT start a flush loop: the manager owns that, because the flusher
+// belongs to the database connection and has to end when that connection is
+// retired. And it starts even with nothing open - the target can be configured
+// in the panel later, and Observe on a nil recorder is a no-op until then.
 func (c *MetricsCollector) Start(ctx context.Context) {
-	if c.recorder == nil {
+	if c.recorders == nil {
 		return
 	}
 	log.Println("Metrics collector started")
 	go c.loop(ctx)
 	go c.slowLoop(ctx)
-	go c.recorder.Run(ctx, metrics.FlushInterval)
 }
 
 func (c *MetricsCollector) loop(ctx context.Context) {
@@ -235,7 +259,7 @@ func (c *MetricsCollector) recordRestart(gs protocol.GatewayStats, now time.Time
 // obs is the shorthand this file uses; the recorder tolerates a nil receiver so
 // no call site needs its own guard.
 func (c *MetricsCollector) obs(metric, subject, region string, v float64, at time.Time) {
-	c.recorder.Observe(metrics.Key{Metric: metric, Subject: subject, Region: region}, v, at)
+	c.recorders.Recorder().Observe(metrics.Key{Metric: metric, Subject: subject, Region: region}, v, at)
 }
 
 func (c *MetricsCollector) samplePlatform(ctx context.Context, now time.Time) {

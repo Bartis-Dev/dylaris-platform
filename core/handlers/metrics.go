@@ -32,31 +32,36 @@ func NewMetricsHandler(state *AppState) *MetricsHandler { return &MetricsHandler
 // being off is the DEFAULT and not a fault. A panel that could not tell them
 // apart would send an operator looking for a broken database when nobody had
 // switched recording on.
-func (h *MetricsHandler) ready(w http.ResponseWriter, r *http.Request) bool {
-	if h.state.Metrics == nil || h.state.Metrics.Read == nil {
+// It RETURNS the handle rather than letting each caller fetch its own. The
+// target is swappable at runtime now, so a second read could land after a swap
+// and hand a closed pool to a query this function had already approved.
+func (h *MetricsHandler) ready(w http.ResponseWriter, r *http.Request) (*metrics.Handle, bool) {
+	handle := h.state.Metrics.Handle()
+	if handle == nil || handle.Read == nil {
 		sendMetricsJSON(w, map[string]any{
 			"success": true, "available": false, "reason": "unavailable",
 			"message": "The metrics database is not reachable, so nothing is being recorded.",
 		})
-		return false
+		return nil, false
 	}
 	if !h.state.FeatureFlags.Get(r.Context(), services.MetricsEnabledSetting, false) {
 		sendMetricsJSON(w, map[string]any{
 			"success": true, "available": false, "reason": "disabled",
 			"message": "Long-term statistics are switched off. Turn them on in Settings, Features to start recording.",
 		})
-		return false
+		return nil, false
 	}
-	return true
+	return handle, true
 }
 
 // Catalog GET /api/admin/metrics/catalog
 // The series this build records, plus how far back the record goes.
 func (h *MetricsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
-	if !h.ready(w, r) {
+	handle, ok := h.ready(w, r)
+	if !ok {
 		return
 	}
-	cov, err := metrics.ReadCoverage(r.Context(), h.state.Metrics.Read, h.state.Metrics.Resolution)
+	cov, err := metrics.ReadCoverage(r.Context(), handle.Read, handle.Resolution)
 	if err != nil {
 		sendJSONError(w, "Could not read the record: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -73,7 +78,8 @@ func (h *MetricsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 //
 //	?metric=platform.players&from=…&to=…&step=300&subject=…&region=…&split=1
 func (h *MetricsHandler) Series(w http.ResponseWriter, r *http.Request) {
-	if !h.ready(w, r) {
+	handle, ok := h.ready(w, r)
+	if !ok {
 		return
 	}
 	q := r.URL.Query()
@@ -102,7 +108,7 @@ func (h *MetricsHandler) Series(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]metrics.SeriesResult, 0, len(names))
 	for _, name := range names {
-		res, err := metrics.Query(r.Context(), h.state.Metrics.Read, metrics.SeriesQuery{
+		res, err := metrics.Query(r.Context(), handle.Read, metrics.SeriesQuery{
 			Metric:        name,
 			From:          from,
 			To:            to,
@@ -126,7 +132,8 @@ func (h *MetricsHandler) Series(w http.ResponseWriter, r *http.Request) {
 // Summary GET /api/admin/metrics/summary?from=&to=
 // The headline numbers, reduced over the window.
 func (h *MetricsHandler) Summary(w http.ResponseWriter, r *http.Request) {
-	if !h.ready(w, r) {
+	handle, ok := h.ready(w, r)
+	if !ok {
 		return
 	}
 	from, to, err := windowFrom(r.URL.Query())
@@ -134,12 +141,12 @@ func (h *MetricsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	rows, err := metrics.Summary(r.Context(), h.state.Metrics.Read, from, to)
+	rows, err := metrics.Summary(r.Context(), handle.Read, from, to)
 	if err != nil {
 		sendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cov, _ := metrics.ReadCoverage(r.Context(), h.state.Metrics.Read, h.state.Metrics.Resolution)
+	cov, _ := metrics.ReadCoverage(r.Context(), handle.Read, handle.Resolution)
 	sendMetricsJSON(w, map[string]any{
 		"success": true, "available": true, "headlines": rows, "coverage": cov,
 		"from": from.UTC(), "to": to.UTC(),
@@ -152,7 +159,8 @@ func (h *MetricsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 // them - into a spreadsheet, a due-diligence pack, a mail. It is the same query
 // the charts run, so an export can never disagree with what was on screen.
 func (h *MetricsHandler) Export(w http.ResponseWriter, r *http.Request) {
-	if !h.ready(w, r) {
+	handle, ok := h.ready(w, r)
+	if !ok {
 		return
 	}
 	q := r.URL.Query()
@@ -176,7 +184,7 @@ func (h *MetricsHandler) Export(w http.ResponseWriter, r *http.Request) {
 
 	var all []metrics.SeriesResult
 	for _, name := range names {
-		res, err := metrics.Query(r.Context(), h.state.Metrics.Read, metrics.SeriesQuery{
+		res, err := metrics.Query(r.Context(), handle.Read, metrics.SeriesQuery{
 			Metric: name, From: from, To: to, Step: step,
 			Subject: q.Get("subject"), Region: q.Get("region"),
 			SplitSubjects: q.Get("split") == "1",

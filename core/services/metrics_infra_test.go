@@ -74,7 +74,7 @@ func newInfraCollector(t *testing.T) (*MetricsCollector, *captureStore) {
 	t.Helper()
 	capt := &captureStore{}
 	rec := metrics.NewRecorder(capt, time.Hour)
-	c := NewMetricsCollector(nil, nil, nil, rec, NewFeatureFlags(settingsMap{MetricsEnabledSetting: "true"}))
+	c := NewMetricsCollector(nil, nil, nil, fixedRecorder{rec}, NewFeatureFlags(settingsMap{MetricsEnabledSetting: "true"}))
 	c.SetLeader(fakeLeader{leader: true})
 	return c, capt
 }
@@ -88,7 +88,7 @@ func TestGatewayCountersBecomeSeriesNamedByTheirComponent(t *testing.T) {
 	}})
 
 	c.sampleGatewayComponents(time.Now())
-	if err := c.recorder.Flush(t.Context()); err != nil {
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -132,7 +132,7 @@ func TestAMalformedMetricNameIsDropped(t *testing.T) {
 		},
 	}})
 	c.sampleGatewayComponents(time.Now())
-	if err := c.recorder.Flush(t.Context()); err != nil {
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if len(capt.rows) != 1 || capt.rows[0].Key.Metric != "splice.handover_ok" {
@@ -152,7 +152,7 @@ func TestOneRecordCannotPublishUnboundedSeries(t *testing.T) {
 	c, capt := newInfraCollector(t)
 	c.SetGatewayStats(gwSnapshot{{Component: "edge", ID: "e1", Counters: counters}})
 	c.sampleGatewayComponents(time.Now())
-	if err := c.recorder.Flush(t.Context()); err != nil {
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if len(capt.rows) > protocol.MaxCustomMetrics {
@@ -174,7 +174,7 @@ func TestARestartIsSeenAsUptimeGoingBackwards(t *testing.T) {
 	c.recordRestart(protocol.GatewayStats{Component: "edge", ID: "e1", UptimeSec: 500}, at)
 	c.recordRestart(protocol.GatewayStats{Component: "edge", ID: "e1", UptimeSec: 530}, at)
 	c.recordRestart(protocol.GatewayStats{Component: "edge", ID: "e1", UptimeSec: 4}, at)
-	if err := c.recorder.Flush(t.Context()); err != nil {
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -196,7 +196,7 @@ func TestAComponentTooOldToReportUptimeRecordsNoRestart(t *testing.T) {
 	c.recordRestart(protocol.GatewayStats{Component: "warp", ID: "w1", UptimeSec: 900}, at)
 	c.recordRestart(protocol.GatewayStats{Component: "warp", ID: "w1", UptimeSec: 0}, at)
 	c.recordRestart(protocol.GatewayStats{Component: "warp", ID: "w1", UptimeSec: 0}, at)
-	if err := c.recorder.Flush(t.Context()); err != nil {
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := capt.byMetric("warp.restarts"); len(got) != 0 {
@@ -225,10 +225,10 @@ func TestUserTrafficIsRecordedAsShapeNotPerUser(t *testing.T) {
 		{UserID: "b", EdgeBytes: 200, RelayBytes: 100},
 		{UserID: "c", EdgeBytes: 0, RelayBytes: 0},
 	}}
-	c := NewMetricsCollector(st, nil, nil, rec, NewFeatureFlags(settingsMap{}))
+	c := NewMetricsCollector(st, nil, nil, fixedRecorder{rec}, NewFeatureFlags(settingsMap{}))
 
 	c.sampleUserTraffic(time.Now())
-	if err := c.recorder.Flush(t.Context()); err != nil {
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -261,9 +261,9 @@ func TestTheQuietestTenantDoesNotVanishFromTheMinimum(t *testing.T) {
 		{UserID: "a", EdgeBytes: 500},
 		{UserID: "b", EdgeBytes: 900},
 	}}
-	c := NewMetricsCollector(st, nil, nil, rec, NewFeatureFlags(settingsMap{}))
+	c := NewMetricsCollector(st, nil, nil, fixedRecorder{rec}, NewFeatureFlags(settingsMap{}))
 	c.sampleUserTraffic(time.Now())
-	if err := c.recorder.Flush(t.Context()); err != nil {
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := capt.one(t, "platform.user_traffic_min_bytes").Bucket.Sum; got != 500 {

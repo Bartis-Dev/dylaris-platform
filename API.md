@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **496 routes** in 50 sections: 224 GET, 146 POST, 37 PUT, 36 PATCH, 54 DELETE.
+- **499 routes** in 50 sections: 225 GET, 147 POST, 38 PUT, 36 PATCH, 54 DELETE.
 - **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **340** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **343** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **8** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (112)
+- [/api/admin](#apiadmin) (115)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -237,6 +237,9 @@ can still show what exists.
 | PUT | `/api/admin/settings/features` | session | `settings.write` | - | `FeatureSettingsHandler.Set` | write the bundle. |
 | GET | `/api/admin/settings/link-updates` | session | `settings.read` | - | `SettingsHandler.GetLinkUpdateSettings` | returns the current Link update policy and check interval. |
 | PUT | `/api/admin/settings/link-updates` | session | `settings.write` | - | `SettingsHandler.UpdateLinkUpdateSettings` | persists the policy + interval and mirrors both into Redis, which is where nodes read them (node/main.go, loadModesFromRedis). |
+| GET | `/api/admin/settings/metrics-db` | session | `settings.read` | - | `MetricsDBHandler.Get` | PANEL settings.read. |
+| PUT | `/api/admin/settings/metrics-db` | session | `settings.write` | - | `MetricsDBHandler.Set` | PANEL settings.write. |
+| POST | `/api/admin/settings/metrics-db/test` | session | `settings.write` | - | `MetricsDBHandler.Test` | probe without saving. |
 | GET | `/api/admin/settings/mod-cache` | session | `settings.read` | - | `ModCacheSettingsHandler.Get` | - |
 | PUT | `/api/admin/settings/mod-cache` | session | `settings.write` | - | `ModCacheSettingsHandler.Set` | - |
 | GET | `/api/admin/settings/modpacks` | session | `settings.read` | - | `ModpackSettingsHandler.Get` | PANEL settings.read (RequireCap at the route). |

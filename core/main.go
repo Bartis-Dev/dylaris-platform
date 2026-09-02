@@ -383,19 +383,29 @@ func main() {
 	//
 	// An unreachable metrics database is logged and skipped, never fatal. It is
 	// a statistics store; it must not be a reason Core does not come up.
-	if mh, mErr := metrics.Open(bgCtx, db, cfg.MetricsDBURL, config.UsesTimescale(cfg.DBType)); mErr != nil {
+	//
+	// The TARGET comes from the environment if it is set there, otherwise from
+	// the panel (Settings, Features). One function decides, so boot and a later
+	// save can never disagree about which database is being written.
+	metricsManager := metrics.NewManager(bgCtx, db, config.UsesTimescale(cfg.DBType))
+	appState.Metrics = metricsManager
+	appState.MetricsDBURLFromEnv = cfg.MetricsDBURL
+	defer metricsManager.Close()
+
+	if mErr := metricsManager.Apply(services.EffectiveMetricsDSN(cfg.MetricsDBURL, services.LoadMetricsDBTarget(pgStore))); mErr != nil {
 		log.Printf("metrics: disabled (%v)", mErr)
-	} else {
-		metricsCollector := services.NewMetricsCollector(pgStore, redisClient, db, mh.Recorder, appState.FeatureFlags)
-		metricsCollector.SetLeader(coreLeader)
-		// The gateway telemetry this Core already consumes. Reading it through
-		// the existing consumer keeps one set of Redis consumer groups per
-		// stream instead of two per Core.
-		metricsCollector.SetGatewayStats(gwBandwidth)
-		metricsCollector.Start(bgCtx)
-		appState.Metrics = mh
-		defer func() { _ = mh.Close() }()
 	}
+	// Started regardless of whether that target opened. The collector records
+	// through the manager rather than holding a recorder, so an admin who fixes
+	// the database in the panel gets recording without a restart - which is the
+	// whole reason the manager exists.
+	metricsCollector := services.NewMetricsCollector(pgStore, redisClient, db, metricsManager, appState.FeatureFlags)
+	metricsCollector.SetLeader(coreLeader)
+	// The gateway telemetry this Core already consumes. Reading it through
+	// the existing consumer keeps one set of Redis consumer groups per
+	// stream instead of two per Core.
+	metricsCollector.SetGatewayStats(gwBandwidth)
+	metricsCollector.Start(bgCtx)
 
 	// Billing lifecycle — leader-gated. Progresses past_due tenants whose grace
 	// window has elapsed into suspended (hard cutoff deferred to SuspendGrace

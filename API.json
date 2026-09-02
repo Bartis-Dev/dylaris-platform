@@ -402,6 +402,36 @@
     },
     {
       "method": "GET",
+      "path": "/api/admin/settings/metrics-db",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "PANEL settings.read.",
+      "handler": "MetricsDBHandler.Get",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/settings/metrics-db",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "PANEL settings.write.",
+      "handler": "MetricsDBHandler.Set",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/settings/metrics-db/test",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "probe without saving.",
+      "handler": "MetricsDBHandler.Test",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/admin/settings/mod-cache",
       "auth": "session",
       "authorization": "settings.read",
@@ -4964,15 +4994,15 @@
     }
   ],
   "counts": {
-    "total": 497,
+    "total": 500,
     "byAuth": {
       "none": 35,
-      "session": 449,
+      "session": 452,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 112,
+      "admin": 115,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,

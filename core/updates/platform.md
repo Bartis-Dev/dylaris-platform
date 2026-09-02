@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.20
+
+### Features
+- Long-term statistics now choose their database in the panel, under Settings,
+  Features. Either the Core database at hour resolution, or a separate
+  TimescaleDB at minute resolution, with a connection test that reports what
+  that target would actually give you before you commit to it. `core` `panel`
+- Changing that target takes effect immediately. The recorder is swapped in
+  place, finishing the pending flush on the way out, so no restart is needed and
+  the minutes since the last write are not lost. `core` `panel`
+- `METRICS_DB_URL` still wins where it is set: the form shows the stored target
+  read-only and says which variable decides it, rather than silently accepting
+  edits that would never be used. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- No switch under Settings, Features could be saved. The card never registered
+  as changed, so its save bar never appeared and nothing on it persisted -
+  tickets, modpacks, BYON, auto-move, long-term statistics and user API keys
+  alike. `core` `panel`
+
 ## 2026.09.02.19
 
 ### Features

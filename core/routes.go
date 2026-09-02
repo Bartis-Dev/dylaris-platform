@@ -319,6 +319,8 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/permissions-mode":               "settings.write",
 	"/api/admin/settings/features":                       "settings.read",
 	"/api/admin/settings/tab-proxy":                      "settings.read",
+	"/api/admin/settings/metrics-db":                     "settings.read",
+	"/api/admin/settings/metrics-db/test":                "settings.write",
 	"/api/admin/health":                                  "settings.read",
 	"/api/admin/db/migration":                            "settings.read",
 	"/api/admin/db/migration/test-connection":            "settings.write",
@@ -1358,6 +1360,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	trafficLimitHandler := handlers.NewTrafficLimitHandler(appState)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
 	metricsHandler := handlers.NewMetricsHandler(appState)
+	metricsDBHandler := handlers.NewMetricsDBHandler(appState)
 
 	// Admin endpoints (PANEL topology.* - global gateway oversight; Phase 4 Task 18)
 	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetLinks))).Methods("GET")
@@ -1421,6 +1424,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/metrics/series", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(metricsHandler.Series))).Methods("GET")
 	api.HandleFunc("/admin/metrics/summary", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(metricsHandler.Summary))).Methods("GET")
 	api.HandleFunc("/admin/metrics/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(metricsHandler.Export))).Methods("GET")
+	// Where the long-term statistics are written. `test` is settings.WRITE even
+	// though it stores nothing: it opens a connection to a host the caller
+	// names, which is not something a read-only role should be able to make
+	// this server do.
+	api.HandleFunc("/admin/settings/metrics-db", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(metricsDBHandler.Get))).Methods("GET")
+	api.HandleFunc("/admin/settings/metrics-db", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(metricsDBHandler.Set))).Methods("PUT")
+	api.HandleFunc("/admin/settings/metrics-db/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(metricsDBHandler.Test))).Methods("POST")
 	api.HandleFunc("/infrastructure/routing-migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetRoutingMigrationStatus))).Methods("GET")
 
 	// XDP / eBPF DDoS Protection (deployment-wide config managed by Panel,

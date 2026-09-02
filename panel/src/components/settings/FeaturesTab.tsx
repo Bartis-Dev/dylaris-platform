@@ -12,6 +12,7 @@ import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
+import MetricsDatabaseCard from '@/components/settings/MetricsDatabaseCard';
 import { SwitchRow } from '@/components/ui/Switch';
 import Checkbox from '@/components/ui/Checkbox';
 import { useAppData } from '@/lib/AppDataContext';
@@ -105,7 +106,19 @@ export default function FeaturesTab() {
             setLoading(false);
         });
         getSystemFeaturesAdmin().then(res => {
-            if (res.success && res.features) setPlatformFlags(res.features);
+            if (res.success && res.features) {
+                setPlatformFlags(res.features);
+                // Seeding this is what makes the card savable at all: `dirty`
+                // is measured against it, so a snapshot left null keeps the
+                // save bar disarmed and savePlatform's own `if (!prev)` returns
+                // early. Nothing errors - the switches just never persist.
+                platformSnapshot.current = res.features;
+            } else {
+                // Same reasoning as the loader above: leaving the card inert is
+                // right (these values are unconfirmed and must not be written
+                // back), but in silence it reads as a broken page.
+                showToast(res.message || 'Failed to load feature switches - shown values are unconfirmed', false);
+            }
         });
         getCoreStorage().then(res => {
             if (!res.success) {
@@ -343,6 +356,16 @@ export default function FeaturesTab() {
                         checked={platformFlags.metrics}
                         onChange={v => editPlatformFlag('metrics', v)}
                     />
+                    {/* Where it writes is its own card below, with its own save
+                        and its own connection test. Pointed at from here because
+                        the two are one decision: the resolution cannot be
+                        changed afterwards and nothing is backfilled, so the
+                        database wants choosing BEFORE this switch goes on. */}
+                    <p className="text-xs text-(--base-06) leading-relaxed">
+                        Choose where it writes under <strong>Statistics database</strong> below,
+                        before switching this on: recording starts at that moment and nothing
+                        earlier can be filled in.
+                    </p>
                 </SettingsGroup>
 
                 <SettingsGroup title="Gateway-dependent">
@@ -474,6 +497,11 @@ export default function FeaturesTab() {
                 )}
                 </SettingsGroup>
             </SettingsCard>
+
+            {/* Where the long-term record is written. Its own card because it
+                is a different endpoint with its own validation and its own
+                connection test - the switch above only decides WHETHER. */}
+            <MetricsDatabaseCard enabled={platformFlags.metrics} />
 
             {/* WS5 custom-tab reverse proxy */}
             <SettingsCard title="Custom-tab reverse proxy" icon={Globe} form={proxyTabForm}>
