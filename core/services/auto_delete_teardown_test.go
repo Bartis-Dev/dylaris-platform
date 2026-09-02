@@ -28,6 +28,11 @@ type autoDeleteFakeStore struct {
 	anonIDs     []string
 }
 
+// Asked by the teardown before it destroys anything. No servers and no nodes:
+// this test is about the link kit and the addresses.
+func (f *autoDeleteFakeStore) CountServersByOwner(string) (int, error)        { return 0, nil }
+func (f *autoDeleteFakeStore) ListNodesByOwner(string) ([]models.Node, error) { return nil, nil }
+
 func (f *autoDeleteFakeStore) ListUsersDueForDeletion(time.Time) ([]string, error) {
 	return f.due, nil
 }

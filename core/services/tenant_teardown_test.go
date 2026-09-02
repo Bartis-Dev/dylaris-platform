@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"dylaris-core/models"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 )
@@ -18,6 +19,21 @@ type teardownFakeStore struct {
 	keysErr     error
 	rows        []store.CoreLinkRoute
 	revokeCalls []string
+
+	ownedServers  int
+	nodes         []models.Node
+	deletedNodes  []int
+	deleteNodeErr error
+}
+
+func (f *teardownFakeStore) CountServersByOwner(string) (int, error)        { return f.ownedServers, nil }
+func (f *teardownFakeStore) ListNodesByOwner(string) ([]models.Node, error) { return f.nodes, nil }
+func (f *teardownFakeStore) DeleteNode(id int) error {
+	if f.deleteNodeErr != nil {
+		return f.deleteNodeErr
+	}
+	f.deletedNodes = append(f.deletedNodes, id)
+	return nil
 }
 
 func (f *teardownFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
@@ -110,5 +126,100 @@ func TestTeardownRefusesWhenAnAddressCannotBeRemoved(t *testing.T) {
 	err := TeardownTenantInfrastructure(context.Background(), fs, gw, rdb, redisacl.NewProvisioner(rdb), "owner-1")
 	if err == nil {
 		t.Fatal("expected an error when an address cannot be removed")
+	}
+}
+
+// A BYON node is a machine on the customer's premises. When the account went,
+// nodes.owner_id was ON DELETE SET NULL - so the machine did not merely
+// survive, it BECAME a platform node: still holding its cached .node_secret,
+// still authenticating with its scoped Redis users, and eligible to receive
+// other people's servers. The platform kept trusting hardware belonging to
+// someone who is no longer a customer.
+func TestTeardownRemovesTheNodesTheTenantBrought(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+
+	fs := &teardownFakeStore{nodes: []models.Node{
+		{ID: 7, Name: "kitchen-box", Token: "node-token-7"},
+		{ID: 9, Name: "attic-box", Token: "node-token-9"},
+	}}
+	// Seed the keys those nodes own, so their removal is observable.
+	for _, tok := range []string{"node-token-7", "node-token-9"} {
+		for _, k := range NodeRedisKeys(tok) {
+			if err := rdb.Set(ctx, k, "x", 0).Err(); err != nil {
+				t.Fatalf("seed %s: %v", k, err)
+			}
+		}
+	}
+	// A third node's key, to prove the removal is scoped by token.
+	other := NodeRedisKeys("someone-else")[0]
+	rdb.Set(ctx, other, "x", 0)
+
+	if err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), "owner-1"); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+
+	if len(fs.deletedNodes) != 2 {
+		t.Fatalf("deleted %v, want both nodes removed", fs.deletedNodes)
+	}
+	for _, tok := range []string{"node-token-7", "node-token-9"} {
+		for _, k := range NodeRedisKeys(tok) {
+			if n, _ := rdb.Exists(ctx, k).Result(); n != 0 {
+				t.Errorf("key %q outlived the account", k)
+			}
+		}
+	}
+	if n, _ := rdb.Exists(ctx, other).Result(); n != 1 {
+		t.Error("a key belonging to a different node was removed; the teardown is not scoped")
+	}
+}
+
+// A node that cannot be removed is a DURABLE failure: the caller's contract is
+// that a non-nil error means the account must not be deleted yet. Carrying on
+// would leave the account gone and the machine adopted, which is the whole
+// thing this exists to prevent.
+func TestTeardownStopsWhenANodeCannotBeRemoved(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+
+	fs := &teardownFakeStore{
+		nodes:         []models.Node{{ID: 7, Name: "kitchen-box", Token: "node-token-7"}},
+		deleteNodeErr: errors.New("still has servers on it"),
+	}
+	err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), "owner-1")
+	if err == nil {
+		t.Fatal("teardown reported success while the node stayed")
+	}
+	if !strings.Contains(err.Error(), "kitchen-box") {
+		t.Errorf("error = %q, want it to name the node an operator has to deal with", err)
+	}
+}
+
+// store.DeleteUser refuses while the account still owns servers, and this runs
+// BEFORE it. So an operator deleting such an account destroyed its link kit,
+// its Redis credentials and its addresses, and only then got a 409 telling them
+// to move the servers first - the account survived with everything it ran
+// already gone. A refusal has to change nothing.
+func TestTeardownRefusesBeforeItDestroysAnything(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+
+	fs := &teardownFakeStore{
+		ownedServers: 2,
+		keys:         []store.WarpAPIKey{{NodeID: "link-1", OwnerID: "owner-1"}},
+		nodes:        []models.Node{{ID: 7, Name: "kitchen-box", Token: "node-token-7"}},
+	}
+	err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), "owner-1")
+	if err == nil {
+		t.Fatal("teardown succeeded for an account that cannot be deleted")
+	}
+	if !strings.Contains(err.Error(), "2 server") {
+		t.Errorf("error = %q, want it to say how many servers are in the way", err)
+	}
+	if len(fs.revokeCalls) != 0 {
+		t.Errorf("revoked %v before refusing; a refused delete must change nothing", fs.revokeCalls)
+	}
+	if len(fs.deletedNodes) != 0 {
+		t.Errorf("deleted nodes %v before refusing", fs.deletedNodes)
 	}
 }

@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.13
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Closing an account now also removes the machines you registered with it, so
+  nothing of ours keeps talking to hardware that is no longer part of your
+  account.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.02.12
 
 ### Features

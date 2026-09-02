@@ -25,6 +25,16 @@ func (f *deleteUserFakeStore) GetUserByID(id string) (*models.User, error) {
 
 func (f *deleteUserFakeStore) DeleteUser(string) error { return f.deleteErr }
 
+// The account teardown now asks these before it destroys anything, so the fake
+// has to answer them. Zero and empty: this test is about the message DeleteUser
+// produces, not about what the account holds.
+func (f *deleteUserFakeStore) CountServersByOwner(string) (int, error) { return 0, nil }
+func (f *deleteUserFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
+	return nil, nil
+}
+func (f *deleteUserFakeStore) ListNodesByOwner(string) ([]models.Node, error)     { return nil, nil }
+func (f *deleteUserFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return nil, nil }
+
 func deleteUserRequest() *http.Request {
 	req := httptest.NewRequest(http.MethodDelete, "/api/users/11111111-1111-1111-1111-111111111111", nil)
 	ctx := context.WithValue(req.Context(), "username", "admin")

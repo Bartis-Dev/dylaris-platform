@@ -47,6 +47,7 @@ type Store interface {
 	GetNodeByToken(token string) (*models.Node, error)
 	GetNodeByName(name string) (*models.Node, error)
 	ListNodes() ([]models.Node, error)
+	ListNodesByOwner(ownerID string) ([]models.Node, error)
 	CreateNode(node *models.Node) error
 	DeleteNode(id int) error
 	SetNodeStatus(id int, status string) error

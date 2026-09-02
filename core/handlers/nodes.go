@@ -378,17 +378,10 @@ func (h *NodeHandler) cleanupDeletedNode(r *http.Request, token string) {
 	if h.state.Redis == nil || token == "" {
 		return
 	}
-	redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), token)
-
-	keys := []string{
-		storagePlacementKey(token),
-		"dylaris:node:" + token + ":cpu",
-		"dylaris:node:" + token + ":cpu:sig",
-		"dylaris:node:" + token + ":cmds",
-	}
-	if err := h.state.Redis.Del(r.Context(), keys...).Err(); err != nil {
-		log.Printf("node delete: leftover Redis keys for the deleted node could not be removed: %v", err)
-	}
+	// One implementation, because there are two callers: this, and the account
+	// teardown that removes the nodes a departing tenant brought. A second
+	// copy of the key list is how one of them ends up missing a key.
+	services.RemoveNodeRedisState(r.Context(), h.state.Redis, redisacl.NewProvisioner(h.state.Redis), token)
 }
 
 // GetNodeServers returns all servers assigned to a node

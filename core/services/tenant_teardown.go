@@ -48,6 +48,20 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 		return nil
 	}
 
+	// Refuse BEFORE anything is torn down, not after.
+	//
+	// store.DeleteUser refuses while the account still owns servers, and this
+	// runs first - so an operator deleting such an account used to destroy its
+	// link kit, its Redis credentials and its protected addresses, and THEN get
+	// a 409 telling them to move the servers first. The account survived with
+	// everything it ran already gone. Asking the same question up front makes a
+	// refused delete change nothing at all, which is what a refusal should mean.
+	if n, err := st.CountServersByOwner(userID); err != nil {
+		return fmt.Errorf("count servers: %w", err)
+	} else if n > 0 {
+		return fmt.Errorf("this account still owns %d server(s); move or delete them first", n)
+	}
+
 	// Link kits first: RevokeLinkKitTeardown also removes the routes that belong
 	// to each kit's tunnel, so the sweep below is left with whatever is not tied
 	// to a link.
@@ -72,6 +86,33 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 		log.Printf("tenant teardown for %s: link plane not wired, link kits and their credentials are NOT torn down", userID)
 	}
 
+	// The nodes the tenant brought. Their machine keeps running after the
+	// account goes, and owner_id is ON DELETE SET NULL - so it did not just
+	// survive, it BECAME a platform node: still holding its cached
+	// .node_secret, still authenticating with its scoped Redis users, and
+	// eligible to receive other people's servers. The platform went on
+	// trusting hardware belonging to someone who is no longer a customer.
+	//
+	// Enumerated here rather than after the row goes, because afterwards
+	// owner_id is NULL and there is nothing left to match on.
+	if rdb != nil {
+		nodes, err := st.ListNodesByOwner(userID)
+		if err != nil {
+			return fmt.Errorf("list the nodes this account brought: %w", err)
+		}
+		for _, n := range nodes {
+			// Credentials first, row second - the reverse of the operator-facing
+			// node delete, on purpose. Everything that revokes a node is keyed by
+			// its TOKEN, and the token lives in the row: delete the row first and
+			// then fail, and nothing can ever name the Redis user again. A node
+			// whose access was revoked while its row survives is recoverable; the
+			// other way round is not.
+			RemoveNodeRedisState(ctx, rdb, prov, n.Token)
+			if derr := st.DeleteNode(n.ID); derr != nil {
+				return fmt.Errorf("remove node %d (%s): %w", n.ID, n.Name, derr)
+			}
+		}
+	}
 	// Whatever addresses are left. A route can outlive the link it was created
 	// through, and one created by an admin on the tenant's behalf may never have
 	// had a link token at all, so this is keyed on the OWNER rather than on any
@@ -94,5 +135,6 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 			return fmt.Errorf("remove protected address %s: %w", rt.Domain, derr)
 		}
 	}
+
 	return nil
 }

@@ -43,6 +43,15 @@ func lastAdminRequest() *http.Request {
 	return mux.SetURLVars(req.WithContext(ctx), map[string]string{"id": targetID})
 }
 
+// Asked by the account teardown before it destroys anything; this test is
+// about a different question, so the answers are empty.
+func (f *lastAdminFakeStore) CountServersByOwner(string) (int, error)        { return 0, nil }
+func (f *lastAdminFakeStore) ListNodesByOwner(string) ([]models.Node, error) { return nil, nil }
+func (f *lastAdminFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
+	return nil, nil
+}
+func (f *lastAdminFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return nil, nil }
+
 // "You cannot delete yourself" does NOT keep an admin in the system:
 // users.delete is a delegatable capability, so a non-admin holding it could
 // remove every admin and lock the owner out of their own panel with nothing

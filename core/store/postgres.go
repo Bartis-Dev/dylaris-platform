@@ -607,6 +607,29 @@ func (s *PostgresStore) GetNodeByName(name string) (*models.Node, error) {
 // target from it. A node silently dropped by a failed scan is a node the
 // platform stops reasoning about while it is still running servers, so a short
 // read is an error here too.
+// ListNodesByOwner returns the nodes a tenant brought, which is a different
+// question from ListNodes filtered in Go: the account teardown has to enumerate
+// them BEFORE the user row goes, and afterwards owner_id is NULL and there is
+// nothing left to match on.
+func (s *PostgresStore) ListNodesByOwner(ownerID string) ([]models.Node, error) {
+	query := `SELECT ` + nodeSelectCols + ` FROM nodes WHERE owner_id = $1 ORDER BY id ASC`
+	rows, err := s.db.Query(query, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []models.Node
+	for rows.Next() {
+		n, err := scanNode(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, *n)
+	}
+	return nodes, rows.Err()
+}
+
 func (s *PostgresStore) ListNodes() ([]models.Node, error) {
 	query := `SELECT ` + nodeSelectCols + ` FROM nodes ORDER BY id ASC`
 	rows, err := s.db.Query(query)

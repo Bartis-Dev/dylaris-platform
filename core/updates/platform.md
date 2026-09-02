@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.13
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Deleting a customer now removes the nodes they brought, instead of turning
+  their machine into a platform node. It used to keep its cached secret, its
+  scoped Redis users and its heartbeat, and became eligible to receive other
+  people's servers - the platform went on trusting hardware belonging to
+  somebody who is no longer a customer. `core`
+
+### Fixes
+- Deleting an account that still owns servers no longer destroys anything first.
+  The refusal came AFTER the cleanup, so the link kit, its Redis credentials and
+  the protected addresses were already gone while the account survived. The
+  check runs up front now and says how many servers are in the way. `core`
+
 ## 2026.09.02.12
 
 ### Features

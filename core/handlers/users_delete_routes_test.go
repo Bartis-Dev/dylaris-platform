@@ -40,6 +40,14 @@ type deleteRoutesFakeGateway struct {
 	err     error
 }
 
+// Asked by the account teardown before it destroys anything; this test is
+// about a different question, so the answers are empty.
+func (f *deleteRoutesFakeStore) CountServersByOwner(string) (int, error)        { return 0, nil }
+func (f *deleteRoutesFakeStore) ListNodesByOwner(string) ([]models.Node, error) { return nil, nil }
+func (f *deleteRoutesFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
+	return nil, nil
+}
+
 func (g *deleteRoutesFakeGateway) DeleteCoreOwnedRoute(domain string) error {
 	if g.err != nil {
 		return g.err
