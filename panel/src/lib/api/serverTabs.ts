@@ -49,12 +49,19 @@ export interface ServerTabInput {
     shareExpiresAt?: string;
 }
 
+// RAISES on a failed request rather than returning no tabs.
+//
+// An empty list is a statement - "this server has no custom tabs" - and both
+// callers act on it. The shell removes them from the navigation, and the tab
+// page resolves the id against the list and renders "tab not found", which
+// tells someone their tab is gone when a proxy answered 502 for one request.
 export async function listServerTabs(serverId: number): Promise<ServerTab[]> {
-    try {
-        const res = await fetch(`${API_URL}/servers/${serverId}/tabs`, { headers: getAuthHeader() });
-        const data = await handleResponse(res);
-        return (data as any).tabs || [];
-    } catch (err) { handleError(err); return []; }
+    const res = await fetch(`${API_URL}/servers/${serverId}/tabs`, { headers: getAuthHeader() });
+    const data = await handleResponse(res);
+    if (!(data as any)?.success) {
+        throw new Error((data as any)?.message || 'Could not load the tabs for this server.');
+    }
+    return (data as any).tabs || [];
 }
 
 export async function createServerTab(serverId: number, input: ServerTabInput): Promise<{ success: boolean; id?: number; message?: string }> {

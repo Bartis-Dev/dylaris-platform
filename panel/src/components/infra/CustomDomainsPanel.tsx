@@ -19,7 +19,11 @@ import { cnameTargetsFor } from '@/lib/cnameTargets';
 // instruction read "Add a CNAME to route", and a customer who followed it
 // created a record pointing nowhere - then watched the claim expire and the
 // route disappear on the deadline.
-function describe(d: CustomDomain, cnameTargets: string[]): { tone: string; title: string; body: string } {
+export function describeClaim(
+  d: CustomDomain,
+  cnameTargets: string[],
+  cnameLookupFailed = false,
+): { tone: string; title: string; body: string } {
   switch (d.state) {
     case 'verified':
       return {
@@ -29,7 +33,16 @@ function describe(d: CustomDomain, cnameTargets: string[]): { tone: string; titl
       };
     case 'pending': {
       let body = 'Point this domain at us. We check every 30 minutes.';
-      if (cnameTargets.length === 1) {
+      // An empty target list has two causes and they need different sentences.
+      // The operator may genuinely have configured no CNAME label - then the
+      // generic line above is correct. Or the lookup that produces the targets
+      // failed, and the customer is being told to create a record we are not
+      // naming. cnameTargetUsage.test.ts already guards the label from being
+      // rendered raw; it cannot see the request that never answered.
+      if (cnameLookupFailed) {
+        body = 'Point this domain at us. We could not load the exact record to add - '
+          + 'reload the page to see it. We check every 30 minutes.';
+      } else if (cnameTargets.length === 1) {
         body = `Add a CNAME to ${cnameTargets[0]}, or an A record to one of our edge addresses. We check every 30 minutes.`;
       } else if (cnameTargets.length > 1) {
         // One target per region, and the choice decides which edges answer the
@@ -68,11 +81,18 @@ export function CustomDomainsPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<{ domain: string; text: string; ok: boolean } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [cnameLookupFailed, setCnameLookupFailed] = useState(false);
 
   const load = useCallback(async () => {
     try {
       setDomains(await listCustomDomains());
-    } catch {
+      setLoadError(null);
+    } catch (e) {
+      // Deliberately NOT an empty list: this panel renders nothing at all for
+      // one, so a failed load used to remove the whole section - including the
+      // TXT record that is the only way out of a permanent block.
+      setLoadError(e instanceof Error ? e.message : 'Could not load your domains.');
       setDomains([]);
     }
   }, []);
@@ -87,15 +107,36 @@ export function CustomDomainsPanel() {
   // route picker and the gateway settings tab read.
   useEffect(() => {
     getGatewayRouteOptions()
-      .then(o => setCnameTargets(cnameTargetsFor(o?.cnameTarget || '', o?.hosterDomains || [])))
-      .catch(() => setCnameTargets([]));
+      .then(o => {
+        // fetchAPI RESOLVES with { success: false } on a 4xx/5xx, so the catch
+        // below never ran for an HTTP failure - the failure arrived here, as an
+        // object with no cnameTarget, and became an empty target list that is
+        // indistinguishable from "the operator configured none".
+        if (o?.success === false) {
+          setCnameLookupFailed(true);
+          setCnameTargets([]);
+          return;
+        }
+        setCnameLookupFailed(false);
+        setCnameTargets(cnameTargetsFor(o?.cnameTarget || '', o?.hosterDomains || []));
+      })
+      .catch(() => setCnameLookupFailed(true));
   }, []);
 
   const getToken = async (domain: string) => {
     setBusy(domain);
+    setNote(null);
     try {
       await issueCustomDomainToken(domain);
       await load();
+    } catch (e) {
+      // Without this the button spun and then looked untouched, which reads as
+      // "nothing happened" rather than as a failure worth retrying.
+      setNote({
+        domain,
+        ok: false,
+        text: e instanceof Error ? e.message : 'Could not create a verification record.',
+      });
     } finally {
       setBusy(null);
     }
@@ -105,8 +146,11 @@ export function CustomDomainsPanel() {
     setBusy(domain);
     setNote(null);
     try {
-      const res = await verifyCustomDomainTXT(domain);
-      setNote({ domain, ok: true, text: res?.message ?? 'Verified.' });
+      // ok: true is now reachable only when the request actually succeeded.
+      // It used to be unconditional, so a 409 ("the TXT record was not found
+      // yet") printed Core's failure message in success green under a domain
+      // that stayed blocked.
+      setNote({ domain, ok: true, text: await verifyCustomDomainTXT(domain) });
       await load();
     } catch (e) {
       setNote({
@@ -129,6 +173,20 @@ export function CustomDomainsPanel() {
   if (domains === null) {
     return <div className="h-24 rounded-md bg-(--base-02) animate-pulse" aria-hidden />;
   }
+  if (loadError) {
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-(--warning)/30 bg-(--warning-ghost) p-4 text-xs text-(--warning-light)">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+        <div className="flex-1">
+          <p className="text-(--base-09)">We could not load your own domains.</p>
+          <p className="mt-0.5">{loadError}</p>
+        </div>
+        <button type="button" onClick={load} className="btn btn-secondary btn-sm shrink-0">
+          Try again
+        </button>
+      </div>
+    );
+  }
   if (domains.length === 0) return null;
 
   return (
@@ -140,7 +198,7 @@ export function CustomDomainsPanel() {
 
       <ul className="space-y-3">
         {domains.map((d) => {
-          const info = describe(d, cnameTargets);
+          const info = describeClaim(d, cnameTargets, cnameLookupFailed);
           const left = d.state === 'pending' ? timeLeft(d.deadlineAt) : null;
           return (
             <li key={d.domain} className="rounded-md border border-(--base-03) bg-(--base-02) p-3">

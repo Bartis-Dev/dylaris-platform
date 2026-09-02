@@ -56,6 +56,7 @@ export default function ServerConfigTabsPage() {
 
     const [tabs, setTabs] = useState<ServerTab[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [savingTab, runSave] = useBusy();
     const [deletingTab, runDelete] = useBusy();
     const [editing, setEditing] = useState<EditingTab | null>(null);
@@ -66,9 +67,16 @@ export default function ServerConfigTabsPage() {
 
     const refresh = useCallback(async () => {
         if (!serverId) return;
-        const list = await listServerTabs(serverId);
-        setTabs(list);
-        setLoading(false);
+        try {
+            setTabs(await listServerTabs(serverId));
+            setLoadError(null);
+        } catch (e) {
+            // "No custom tabs yet." next to a Create button is an invitation to
+            // build a second copy of a tab that already exists.
+            setLoadError(e instanceof Error ? e.message : 'Could not load the tabs for this server.');
+        } finally {
+            setLoading(false);
+        }
     }, [serverId]);
 
     useEffect(() => { refresh(); }, [refresh]);
@@ -266,6 +274,14 @@ export default function ServerConfigTabsPage() {
 
             {loading ? (
                 <SkeletonList rows={3} />
+            ) : loadError ? (
+                <div className="card p-8 flex flex-col items-center text-center gap-2">
+                    <AlertTriangle size={28} className="text-(--warning-light)" />
+                    <p className="text-sm text-(--base-07)">{loadError}</p>
+                    <button type="button" onClick={refresh} className="btn btn-secondary btn-sm mt-1">
+                        Try again
+                    </button>
+                </div>
             ) : tabs.length === 0 ? (
                 <div className="card p-8 flex flex-col items-center text-center gap-2">
                     <LayoutGrid size={28} className="text-(--base-05)" />

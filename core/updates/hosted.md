@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The panel for your own domains no longer disappears when it cannot load, and
+  a TXT check that did not find the record is no longer shown in green. If we
+  cannot look up the record you need to add, the page says so instead of
+  leaving it out of the instruction.
+- Opening a custom tab while a request failed said the tab had been deleted. It
+  now says the tab could not be loaded and offers to try again.
+
 ## 2026.09.02.5
 
 ### Features

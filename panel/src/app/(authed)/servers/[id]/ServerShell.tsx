@@ -114,12 +114,17 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     useEffect(() => {
         if (!selectedServer?.id) { setCustomTabs([]); return; }
         let cancelled = false;
-        listServerTabs(selectedServer.id).then(list => { if (!cancelled) setCustomTabs(list); });
+        // On failure the previous tabs are KEPT rather than cleared. Removing a
+        // navigation entry says the tab is gone; a request that did not answer
+        // says nothing, and the next event or server switch reloads it anyway.
+        const apply = (p: Promise<ServerTab[]>) =>
+            p.then(list => { if (!cancelled) setCustomTabs(list); }).catch(() => {});
+        apply(listServerTabs(selectedServer.id));
         const sid = selectedServer.id;
         const unsub = systemEvents.on('server_tabs.changed', (evt) => {
             const evtSid = (evt.payload as any)?.serverId;
             if (evtSid === undefined || evtSid === sid) {
-                listServerTabs(sid).then(list => { if (!cancelled) setCustomTabs(list); });
+                apply(listServerTabs(sid));
             }
         });
         return () => { cancelled = true; unsub(); };

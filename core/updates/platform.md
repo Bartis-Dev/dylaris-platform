@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A failed request no longer reads as an ordinary state in the custom-domain
+  panel. It used to hide itself entirely when the list could not be loaded,
+  report a failed TXT check in success green, and do nothing visible when the
+  unblock button failed. `core` `panel`
+- A custom tab whose list request failed said "Tab not found. It may have been
+  deleted." The three screens that read that list now tell a failure apart from
+  a server that has no tabs. `core` `panel`
+
 ## 2026.09.02.5
 
 ### Features

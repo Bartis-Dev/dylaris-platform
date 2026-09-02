@@ -44,10 +44,18 @@ export default function ServerCustomTabPage() {
     const [tab, setTab] = useState<ServerTab | null | undefined>(undefined);
     const [proxyAuth, setProxyAuth] = useState<ProxyAuthState>('pending');
     const [proxyAuthError, setProxyAuthError] = useState<string | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     const refresh = async () => {
-        const list = await listServerTabs(serverId);
-        setTab(list.find(t => t.id === tabId) || null);
+        try {
+            const list = await listServerTabs(serverId);
+            setTab(list.find(t => t.id === tabId) || null);
+            setLoadError(null);
+        } catch (e) {
+            // null here would render "tab not found", which is a statement about
+            // the tab. A request that failed is a statement about the request.
+            setLoadError(e instanceof Error ? e.message : 'Could not load this tab.');
+        }
     };
 
     useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [serverId, tabId]);
@@ -108,6 +116,22 @@ export default function ServerCustomTabPage() {
         return (
             <main className="h-full overflow-hidden bg-(--base-01) p-4">
                 <Skeleton className="w-full h-full rounded" />
+            </main>
+        );
+    }
+    // Before the not-found branch, because "we could not ask" must never be
+    // answered with "it does not exist" - somebody would go and recreate a tab
+    // that is still there.
+    if (loadError) {
+        return (
+            <main className="h-full flex items-center justify-center p-6">
+                <div className="card p-6 max-w-md text-center">
+                    <AlertTriangle size={20} className="text-(--warning-light) mx-auto mb-2" />
+                    <p className="text-sm text-(--base-07)">{loadError}</p>
+                    <button type="button" onClick={refresh} className="btn btn-secondary btn-sm mt-3">
+                        Try again
+                    </button>
+                </div>
             </main>
         );
     }
