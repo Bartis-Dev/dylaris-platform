@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- The demo server's file browser now shows the content of `server.properties`
+  (without its RCON password) and `eula.txt`, and nothing else. It used to show
+  every file except those two, so anyone with an account could read a plugin's
+  database credentials or a proxy forwarding secret off it. `core`
+- Removing a ticket watcher no longer accepts a removal that matched nothing.
+  Any account could write an audit entry into a stranger's ticket, and count
+  upwards to learn which ticket numbers exist. `core`
+
+### Fixes
+- Failing to remove a ticket watcher now says so and refreshes the list. It used
+  to leave the watcher on screen with nothing said. `core` `panel`
+
 ## 2026.09.02.10
 
 ### Features

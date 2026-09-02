@@ -195,15 +195,36 @@ func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool, req
 	return uuid, false, nil
 }
 
-// redactDemoFileContent strips secrets from a file's content when it was read
-// via the demo-server bypass (any authenticated user, not just the owner).
-// server.properties' rcon.password and ops.json (server operator identities)
-// are the two files that would otherwise leak real credentials/privilege on a
-// showcase server. Every other file is returned unchanged.
-func redactDemoFileContent(path, content string) string {
+// demoHiddenNotice stands in for the content of a file the demo bypass may not
+// show. It is deliberately a normal string, not an error: the file browser is
+// what the demo exists to show off, so opening a file has to keep working.
+const demoHiddenNotice = "This file is not shown on the demo server.\n\n" +
+	"Only server.properties and eula.txt are. Every other file on a Minecraft server may carry\n" +
+	"credentials - database passwords in plugin configuration, a proxy forwarding secret, player\n" +
+	"identities - and the demo is readable by anyone with an account.\n"
+
+// demoFileContent decides what a file's content looks like when it was read via
+// the demo-server bypass, which lets ANY authenticated user read a flagged
+// showcase server (see resolveServerUUID). Two files are shown; everything else
+// gets demoHiddenNotice.
+//
+// This used to be the other way round - everything was shown except
+// server.properties' rcon.password and ops.json - and the shape is why it
+// changed rather than the two names being wrong. Naming what must be hidden
+// requires having thought of it first, and a Minecraft server keeps secrets in
+// files nobody enumerated: plugins/LuckPerms/config.yml holds MySQL
+// credentials, a Velocity forwarding.secret lets its bearer join as any player,
+// half the plugins on a real server store an API token in their own config.yml.
+// Every one of those came back verbatim, to any account, with nothing failing.
+//
+// The listing is untouched: names, sizes and the directory tree are still the
+// whole file browser, which is what the demo is showing.
+func demoFileContent(path, content string) string {
 	base := filepath.Base(strings.ReplaceAll(path, "\\", "/"))
 	switch base {
 	case "server.properties":
+		// Shown because it is the file a visitor expects to look at, minus the
+		// one line in it that is a credential.
 		lines := strings.Split(content, "\n")
 		for i, line := range lines {
 			if strings.HasPrefix(strings.TrimSpace(line), "rcon.password=") {
@@ -211,10 +232,10 @@ func redactDemoFileContent(path, content string) string {
 			}
 		}
 		return strings.Join(lines, "\n")
-	case "ops.json":
-		return "[]"
-	default:
+	case "eula.txt":
 		return content
+	default:
+		return demoHiddenNotice
 	}
 }
 
@@ -349,8 +370,8 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 	content := buf.String()
 	if viaDemoBypass {
 		// Any authenticated user can reach this via the demo bypass, not just
-		// the owner - never hand back rcon.password or ops.json unredacted.
-		content = redactDemoFileContent(path, content)
+		// the owner, so only the two files the demo exists to show come back.
+		content = demoFileContent(path, content)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

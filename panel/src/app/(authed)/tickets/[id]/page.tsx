@@ -172,7 +172,17 @@ export default function TicketDetailPage() {
 
     const handleRemoveWatcher = async (userId: string) => {
         const res = await removeTicketWatcher(ticketId, userId);
-        if (res.success) reload();
+        if (res.success) {
+            reload();
+            return;
+        }
+        // A failure here used to leave the watcher on screen with nothing said,
+        // which reads as a click that did not register. Core now answers 404
+        // when the removal matched no row - the list on screen is simply stale -
+        // so reload either way and do not repeat its wording, which is
+        // deliberately the same as for a ticket that does not exist.
+        setError('Could not remove this watcher. The list has been refreshed.');
+        reload();
     };
 
     const handleUpload = async (file: File) => {

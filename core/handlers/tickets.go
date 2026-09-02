@@ -931,12 +931,30 @@ func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 	}
 	// Ticket owner can remove watchers; the watcher themselves can remove
 	// themselves; support+admin can do either.
+	//
+	// The targetID == userID arm looks like it lets a stranger act on any
+	// ticket, and on its own it does - but the DELETE below is scoped to
+	// (ticket, target), so all it can ever reach is the caller's OWN watcher
+	// row, which they are entitled to remove. What made that arm a hole was the
+	// code after it, not the arm itself.
 	if !(perms.IsAdmin || perms.IsSupport || t.UserID == userID || targetID == userID) {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	if err := h.state.Store.RemoveTicketWatcher(id, targetID); err != nil {
+	removed, err := h.state.Store.RemoveTicketWatcher(id, targetID)
+	if err != nil {
 		sendJSONError(w, "Remove failed", http.StatusInternalServerError)
+		return
+	}
+	// A delete that matched nothing is not a removal, and saying otherwise had
+	// two costs. Any authenticated account could POST its own id against any
+	// ticket number and have an audit event written into a ticket it has
+	// nothing to do with - the log of who touched a support ticket was writable
+	// by strangers. And the 200/404 split answered "does ticket N exist" for
+	// anyone willing to count upwards. Both end here: nothing removed reads
+	// exactly like a ticket that is not there.
+	if !removed {
+		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	actor := userID

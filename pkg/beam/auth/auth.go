@@ -6,13 +6,18 @@
 // equivalent claim structure + signing parameters). An integration smoke
 // test verifies a ticket signed here validates in the gateway relay.
 //
-// The VALIDATION side deliberately diverges and must not be "re-synced":
-// ValidateBeamTicket below requires the issuer, gateway's ValidateTicket does
-// not. Gateway says why in its own comment - it serves third-party hoster
-// panels that may not set one. This copy has exactly one signer, platform/core,
-// which always does, and it shares its key with core's panel sessions - so here
-// the issuer is what separates the two token types. Tickets signed by core
-// validate on both sides either way; only the reading strictness differs.
+// Both validators require the issuer, and that is a contract, not a detail.
+// The key is shared with core's panel session signing key (BEAM_JWT_SECRET is
+// wired to JWT_SECRET in every compose and stack file, in both repos), so
+// "signed with this key" does not mean "is a beam ticket" - the issuer is what
+// separates the two token types, and core's AuthMiddleware enforces the mirror
+// rule that a token WITH an issuer is not a session.
+//
+// The two copies used to disagree here: gateway validated laxly, for
+// third-party hoster panels that might not set an issuer. Nothing was relying
+// on that (both signers have always set it), and it left the relay separating
+// the token types on the presence of node_id alone, which is a routing claim.
+// Gateway enforces it too as of 2026-09-02.
 package auth
 
 import (

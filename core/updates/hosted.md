@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.02.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Two fixes to how tickets and the public demo server handle other people's
+  data. Nothing you run is involved and no action is needed.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.02.10
 
 ### Features

@@ -437,9 +437,20 @@ func (s *PostgresStore) AddTicketWatcher(w *models.TicketWatcher) error {
 	return err
 }
 
-func (s *PostgresStore) RemoveTicketWatcher(ticketID int, userID string) error {
-	_, err := s.db.Exec(`DELETE FROM ticket_watchers WHERE ticket_id = $1 AND user_id = $2`, ticketID, userID)
-	return err
+// RemoveTicketWatcher reports whether a row actually went away. The caller
+// needs that: a DELETE matching nothing is indistinguishable from a successful
+// removal by its error alone, and the handler writes an audit event on the
+// strength of it.
+func (s *PostgresStore) RemoveTicketWatcher(ticketID int, userID string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM ticket_watchers WHERE ticket_id = $1 AND user_id = $2`, ticketID, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (s *PostgresStore) IsTicketWatcher(ticketID int, userID string) (bool, error) {

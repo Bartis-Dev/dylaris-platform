@@ -480,7 +480,7 @@ type Store interface {
 	// Watchers
 	ListTicketWatchers(ticketID int) ([]models.TicketWatcher, error)
 	AddTicketWatcher(w *models.TicketWatcher) error
-	RemoveTicketWatcher(ticketID int, userID string) error
+	RemoveTicketWatcher(ticketID int, userID string) (removed bool, err error)
 	IsTicketWatcher(ticketID int, userID string) (bool, error)
 
 	// Audit
