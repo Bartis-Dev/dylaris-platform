@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { Database, CheckCircle2, AlertTriangle, XCircle, Loader2, Lock } from 'lucide-react';
+import { Database, CheckCircle2, AlertTriangle, XCircle, Loader2 } from 'lucide-react';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import {
     getMetricsDB, saveMetricsDB, testMetricsDB,
@@ -54,7 +54,6 @@ export default function MetricsDatabaseCard() {
     const value = form.value;
     const target: MetricsDBRequest = value ?? emptyMetricsDBTarget;
     const enabled = !!value?.enabled;
-    const locked = !!value?.managedByEnv;
     const incomplete = metricsDBIncomplete(target);
 
     // A field edit invalidates the last test result. Leaving a green banner
@@ -111,41 +110,28 @@ export default function MetricsDatabaseCard() {
                     </p>
                 </>
             }
-            form={locked ? undefined : form}
+            form={form}
             saveBlockedReason={incomplete ?? undefined}
             loadFailedMessage="The statistics database settings could not be loaded, so they are shown read-only. Saving now would write these defaults over the real configuration."
             actions={
-                !locked && (
-                    <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={runTest}
-                        disabled={testing || form.loading || form.loadFailed || !!incomplete}
-                        title={incomplete ?? 'Open a connection and report what it is'}
-                    >
-                        {testing ? <Loader2 size={14} className="animate-spin" /> : null}
-                        {testing ? 'Testing…' : 'Test connection'}
-                    </button>
-                )
+                <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={runTest}
+                    disabled={testing || form.loading || form.loadFailed || !!incomplete}
+                    title={incomplete ?? 'Open a connection and report what it is'}
+                >
+                    {testing ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {testing ? 'Testing…' : 'Test connection'}
+                </button>
             }
         >
-            {locked && (
-                <div className="flex items-start gap-2 rounded-md border border-(--base-04) bg-(--base-02) p-3">
-                    <Lock size={14} className="mt-0.5 shrink-0 text-(--base-06)" />
-                    <p className="text-xs text-(--base-07) leading-relaxed">
-                        <span className="text-(--base-09) font-medium">Set by this deployment.</span>{' '}
-                        <code>METRICS_DB_URL</code> is configured in the environment and takes
-                        precedence over anything set here, so this form is read-only. Change it where
-                        the stack is defined, or unset it to configure the target from the panel.
-                    </p>
-                </div>
-            )}
 
             <SwitchRow
                 label="Record long-term statistics"
                 description="Keeps what this platform handles - players, traffic, CPU and RAM, uptime per component - in buckets that survive, so months of operation can be shown later. Off by default. Everything stays in this installation; nothing is sent anywhere."
                 checked={enabled}
-                disabled={locked || form.loading || form.loadFailed}
+                disabled={form.loading || form.loadFailed}
                 onChange={v => set({ enabled: v })}
             />
 
@@ -167,8 +153,8 @@ export default function MetricsDatabaseCard() {
                     value={target.mode}
                     onChange={mode => set({ mode })}
                     options={[
-                        { id: 'core', label: 'Core database', hint: 'Hour buckets, no second service', disabled: locked },
-                        { id: 'separate', label: 'Separate database', hint: 'Minute buckets, needs TimescaleDB', disabled: locked },
+                        { id: 'core', label: 'Core database', hint: 'Hour buckets, no second service' },
+                        { id: 'separate', label: 'Separate database', hint: 'Minute buckets, needs TimescaleDB' },
                     ]}
                 />
                 <p className="text-xs text-(--base-06) leading-relaxed max-w-2xl">
@@ -179,13 +165,13 @@ export default function MetricsDatabaseCard() {
             {target.mode === 'separate' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <Field label="Host" value={target.host} onChange={v => set({ host: v })}
-                        disabled={locked} placeholder="metricsdb" />
+                        placeholder="metricsdb" />
                     <Field label="Port" value={target.port} onChange={v => set({ port: v })}
-                        disabled={locked} placeholder="5432" />
+                        placeholder="5432" />
                     <Field label="Database name" value={target.dbName} onChange={v => set({ dbName: v })}
-                        disabled={locked} placeholder="dylaris_metrics" />
+                        placeholder="dylaris_metrics" />
                     <Field label="User" value={target.user} onChange={v => set({ user: v })}
-                        disabled={locked} placeholder="metrics" />
+                        placeholder="metrics" />
                     <div>
                         <label className="input-label flex items-center gap-1.5">
                             Password
@@ -207,7 +193,6 @@ export default function MetricsDatabaseCard() {
                             className="input-field input-mono w-full mt-1"
                             type="password"
                             value={target.password ?? ''}
-                            disabled={locked}
                             placeholder={value?.passwordSet ? 'Stored - leave blank to keep' : 'None'}
                             onChange={e => set({ password: e.target.value })}
                             autoComplete="new-password"
@@ -220,8 +205,7 @@ export default function MetricsDatabaseCard() {
                                 ariaLabel="SSL mode"
                                 value={target.sslMode}
                                 onChange={v => set({ sslMode: v })}
-                                disabled={locked}
-                                options={[
+                                    options={[
                                     { value: 'disable', label: 'disable' },
                                     { value: 'require', label: 'require' },
                                     { value: 'verify-ca', label: 'verify-ca' },

@@ -13,11 +13,12 @@ import (
 
 // Where the long-term statistics are written, as an operator configures it.
 //
-// Two places can answer that, and they are not equal: METRICS_DB_URL in the
-// environment WINS and makes the panel form read-only. A deployment that sets it
-// (this one does) states its database in the stack file next to every other
-// service, and a panel that could quietly override it would mean the file no
-// longer describes what is running. The panel is for installations that did not.
+// The settings table is the ONLY answer. There was an environment variable too,
+// and it won where it was set - which meant the same question had two sources
+// and the panel could show a target that was not the one being written. For a
+// setting whose wrong value silently changes the resolution of history that
+// cannot be backfilled, one source is worth more than the convenience of
+// declaring it in a stack file.
 const (
 	MetricsDBModeSetting     = "metrics_db_mode"
 	MetricsDBHostSetting     = "metrics_db_host"
@@ -154,18 +155,6 @@ func SaveMetricsDBTarget(st store.Store, t MetricsDBTarget) error {
 		}
 	}
 	return nil
-}
-
-// EffectiveMetricsDSN is the one answer to "where does the recorder write".
-//
-// envURL wins over everything stored. Keep this the single place that decides,
-// so boot and a settings save can never reach different conclusions - which
-// would show the panel one database while another is being written.
-func EffectiveMetricsDSN(envURL string, t MetricsDBTarget) string {
-	if strings.TrimSpace(envURL) != "" {
-		return strings.TrimSpace(envURL)
-	}
-	return t.DSN()
 }
 
 // MetricsDBProbe is what a test button learns about a target.

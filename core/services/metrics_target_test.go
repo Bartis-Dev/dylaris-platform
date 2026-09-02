@@ -1,6 +1,8 @@
 package services
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,24 +20,38 @@ type metricsSettingsStore struct {
 func (s *metricsSettingsStore) GetSetting(k string) (string, error) { return s.vals[k], nil }
 func (s *metricsSettingsStore) SetSetting(k, v string) error        { s.vals[k] = v; return nil }
 
-// The environment is the authority when it is set, and the reason is not
-// taste: this deployment names its metrics database in the stack file beside
-// every other service. A panel that could override it would make that file stop
-// describing what is running, and the two answers would drift with nothing
-// reporting it.
-func TestTheEnvironmentBeatsTheStoredTarget(t *testing.T) {
-	stored := MetricsDBTarget{
-		Mode: MetricsDBModeSeparate, Host: "panel-host", Port: "5432",
-		DBName: "panel_db", User: "panel_user",
+// The settings table is the ONLY source. There was an environment variable
+// beside it that won where it was set, so the same question had two answers and
+// the panel could show a target that was not the one being written. For a
+// setting whose wrong value silently changes the resolution of history nobody
+// can backfill, that was the wrong trade.
+//
+// The site is named exactly: config.go's reader is the only way a variable
+// could come back, so its absence there IS the invariant.
+func TestThereIsNoMetricsDatabaseEnvironmentVariable(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "config", "config.go"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := EffectiveMetricsDSN("postgres://env@envhost/envdb", stored)
-	if !strings.Contains(got, "envhost") {
-		t.Fatalf("EffectiveMetricsDSN = %q; the environment must win", got)
+	if strings.Contains(string(src), "METRICS_DB_URL") {
+		t.Fatal("config.go reads METRICS_DB_URL again; the metrics target is a panel setting " +
+			"and a second source can silently point recording somewhere the panel does not show")
 	}
-	// And with nothing in the environment, the stored one is used.
-	got = EffectiveMetricsDSN("   ", stored)
-	if !strings.Contains(got, "panel-host") {
-		t.Fatalf("with a blank env var the stored target must be used, got %q", got)
+}
+
+// What boot uses is exactly what the settings screen wrote - one function, one
+// row, no second opinion.
+func TestTheStoredTargetIsWhatBootApplies(t *testing.T) {
+	st := &metricsSettingsStore{vals: map[string]string{}}
+	want := MetricsDBTarget{
+		Mode: MetricsDBModeSeparate, Host: "metricsdb", Port: "5432",
+		DBName: "dylaris_metrics", User: "metrics", SSLMode: "disable",
+	}
+	if err := SaveMetricsDBTarget(st, want); err != nil {
+		t.Fatal(err)
+	}
+	if dsn := LoadMetricsDBTarget(st).DSN(); !strings.Contains(dsn, "host=metricsdb") {
+		t.Fatalf("boot would apply %q, which is not what was saved", dsn)
 	}
 }
 

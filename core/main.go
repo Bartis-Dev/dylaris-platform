@@ -377,22 +377,21 @@ func main() {
 
 	// Long-term metrics — leader-gated and OFF by default
 	// (feature_metrics_enabled). Records what the platform handled over months,
-	// into hour buckets in this database or minute buckets in a dedicated one
-	// (METRICS_DB_URL). Nothing leaves the installation: telemetry that phoned
+	// into hour buckets in this database or minute buckets in a dedicated one.
+	// Nothing leaves the installation: telemetry that phoned
 	// home was removed in full and the README says so.
 	//
 	// An unreachable metrics database is logged and skipped, never fatal. It is
 	// a statistics store; it must not be a reason Core does not come up.
 	//
-	// The TARGET comes from the environment if it is set there, otherwise from
-	// the panel (Settings, Features). One function decides, so boot and a later
-	// save can never disagree about which database is being written.
+	// The TARGET is a panel setting and nothing else - boot reads the same
+	// stored row the settings screen writes, so the two cannot disagree about
+	// which database is being written.
 	metricsManager := metrics.NewManager(bgCtx, db, config.UsesTimescale(cfg.DBType))
 	appState.Metrics = metricsManager
-	appState.MetricsDBURLFromEnv = cfg.MetricsDBURL
 	defer metricsManager.Close()
 
-	if mErr := metricsManager.Apply(services.EffectiveMetricsDSN(cfg.MetricsDBURL, services.LoadMetricsDBTarget(pgStore))); mErr != nil {
+	if mErr := metricsManager.Apply(services.LoadMetricsDBTarget(pgStore).DSN()); mErr != nil {
 		log.Printf("metrics: disabled (%v)", mErr)
 	}
 	// Started regardless of whether that target opened. The collector records

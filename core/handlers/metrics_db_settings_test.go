@@ -27,13 +27,12 @@ func (s *metricsDBStore) TimescaleEnabled(context.Context) (bool, error) {
 	return s.timescal, nil
 }
 
-func metricsDBHandlerFor(st *metricsDBStore, env string) *MetricsDBHandler {
+func metricsDBHandlerFor(st *metricsDBStore) *MetricsDBHandler {
 	// FeatureFlags reads the same store: this endpoint owns the recording
 	// switch now, so the two cannot be given different views of it.
 	return NewMetricsDBHandler(&AppState{
-		Store:               st,
-		FeatureFlags:        services.NewFeatureFlags(st),
-		MetricsDBURLFromEnv: env,
+		Store:        st,
+		FeatureFlags: services.NewFeatureFlags(st),
 	})
 }
 
@@ -53,7 +52,7 @@ func storedSeparate() map[string]string {
 // A GET that returned it would put a live database credential into every
 // browser tab, every proxy log and every screenshot of this page.
 func TestTheStoredPasswordIsNeverSentToTheBrowser(t *testing.T) {
-	h := metricsDBHandlerFor(&metricsDBStore{vals: storedSeparate()}, "")
+	h := metricsDBHandlerFor(&metricsDBStore{vals: storedSeparate()})
 	w := httptest.NewRecorder()
 	h.Get(w, httptest.NewRequest("GET", "/api/admin/settings/metrics-db", nil))
 
@@ -85,37 +84,6 @@ func TestTheStoredPasswordIsNeverSentToTheBrowser(t *testing.T) {
 	}
 }
 
-// With METRICS_DB_URL set, the stack file is the authority. The panel says so
-// and refuses rather than storing a target that would never be used.
-func TestTheEnvironmentLocksTheForm(t *testing.T) {
-	st := &metricsDBStore{vals: map[string]string{}}
-	h := metricsDBHandlerFor(st, "postgres://metrics@metricsdb:5432/dylaris_metrics")
-
-	w := httptest.NewRecorder()
-	h.Get(w, httptest.NewRequest("GET", "/x", nil))
-	var got struct {
-		Settings struct {
-			ManagedByEnv bool `json:"managedByEnv"`
-		} `json:"settings"`
-	}
-	json.Unmarshal(w.Body.Bytes(), &got)
-	if !got.Settings.ManagedByEnv {
-		t.Error("managedByEnv is false, so the form would render editable over a setting it cannot change")
-	}
-
-	w = httptest.NewRecorder()
-	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(`{"mode":"core"}`)))
-	if w.Code != http.StatusConflict {
-		t.Fatalf("PUT under an env override returned %d, want 409", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), "METRICS_DB_URL") {
-		t.Errorf("the refusal does not name the variable to change: %s", w.Body.String())
-	}
-	if len(st.vals) != 0 {
-		t.Errorf("the refused PUT still wrote settings: %v", st.vals)
-	}
-}
-
 // A blank password means "keep the one you have" - but only while the form
 // still points at the SAME database. The reasoning is the Core-storage form's,
 // written out at length there: carrying it across a host change would hand one
@@ -134,7 +102,7 @@ func TestABlankPasswordIsKeptOnlyForTheSameEndpoint(t *testing.T) {
 		{"a different host gets nothing", moved, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			h := metricsDBHandlerFor(&metricsDBStore{vals: storedSeparate()}, "")
+			h := metricsDBHandlerFor(&metricsDBStore{vals: storedSeparate()})
 			got, ok := h.decodeAndMerge(httptest.NewRecorder(), httptest.NewRequest("PUT", "/x", strings.NewReader(c.body)))
 			if !ok {
 				t.Fatal("the body was rejected")
@@ -195,7 +163,7 @@ func TestASeparateDatabaseWithoutTimescaleWarnsRatherThanFails(t *testing.T) {
 // proof that Core can reach it, and dialling it again would only add a way for
 // a working setup to report a failure.
 func TestTestingTheCoreDatabaseAnswersWithoutDialling(t *testing.T) {
-	h := metricsDBHandlerFor(&metricsDBStore{vals: map[string]string{}, timescal: true}, "")
+	h := metricsDBHandlerFor(&metricsDBStore{vals: map[string]string{}, timescal: true})
 	w := httptest.NewRecorder()
 	h.Test(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"mode":"core"}`)))
 
@@ -218,7 +186,7 @@ func TestTestingTheCoreDatabaseAnswersWithoutDialling(t *testing.T) {
 // A form missing its host is refused before anything is dialled, and the
 // message names the field so the panel can point at it.
 func TestAnIncompleteSeparateTargetIsRefusedBeforeDialling(t *testing.T) {
-	h := metricsDBHandlerFor(&metricsDBStore{vals: map[string]string{}}, "")
+	h := metricsDBHandlerFor(&metricsDBStore{vals: map[string]string{}})
 	w := httptest.NewRecorder()
 	h.Test(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"mode":"separate","dbName":"d","user":"u"}`)))
 	if w.Code != http.StatusBadRequest {
@@ -232,7 +200,7 @@ func TestAnIncompleteSeparateTargetIsRefusedBeforeDialling(t *testing.T) {
 // Nothing open is a normal state (the feature is off by default), and the
 // screen has to render it rather than panic on a nil handle.
 func TestTheActiveBlockCopesWithNothingRecording(t *testing.T) {
-	h := metricsDBHandlerFor(&metricsDBStore{vals: map[string]string{}}, "")
+	h := metricsDBHandlerFor(&metricsDBStore{vals: map[string]string{}})
 	got := h.activeState()
 	if got.Recording || got.Resolution != "" {
 		t.Fatalf("activeState with no manager = %+v; want the empty state", got)
@@ -245,7 +213,7 @@ func TestTheActiveBlockCopesWithNothingRecording(t *testing.T) {
 // endpoints meant a window where those disagreed.
 func TestOneSaveWritesBothTheSwitchAndTheTarget(t *testing.T) {
 	st := &metricsDBStore{vals: map[string]string{}}
-	h := metricsDBHandlerFor(st, "")
+	h := metricsDBHandlerFor(st)
 
 	w := httptest.NewRecorder()
 	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(`{"enabled":true,"mode":"core"}`)))
@@ -273,7 +241,7 @@ func TestOneSaveWritesBothTheSwitchAndTheTarget(t *testing.T) {
 func TestTheGetReportsWhetherRecordingIsOn(t *testing.T) {
 	st := &metricsDBStore{vals: map[string]string{services.MetricsEnabledSetting: "true"}}
 	w := httptest.NewRecorder()
-	metricsDBHandlerFor(st, "").Get(w, httptest.NewRequest("GET", "/x", nil))
+	metricsDBHandlerFor(st).Get(w, httptest.NewRequest("GET", "/x", nil))
 
 	var resp struct {
 		Settings struct {
@@ -294,7 +262,7 @@ func TestTheGetReportsWhetherRecordingIsOn(t *testing.T) {
 // on a screen that says something else.
 func TestARefusedTargetLeavesTheSwitchAlone(t *testing.T) {
 	st := &metricsDBStore{vals: map[string]string{services.MetricsEnabledSetting: "false"}}
-	h := metricsDBHandlerFor(st, "")
+	h := metricsDBHandlerFor(st)
 
 	w := httptest.NewRecorder()
 	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(

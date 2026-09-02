@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03
+
+### Features
+- Nothing.
+
+### Breaking
+- `METRICS_DB_URL` is gone. Where the long-term statistics are written is set in
+  the panel only, under Settings, Features, and stored in the Core database. If
+  you had the variable set, enter the same host, database, user and password
+  there once - it is now ignored, and until you do, recording falls back to hour
+  buckets in the Core database. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.02.21
 
 ### Features

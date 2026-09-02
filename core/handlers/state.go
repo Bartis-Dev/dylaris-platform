@@ -24,10 +24,6 @@ type AppState struct {
 	// because a statistics store is never a reason for anything else to fail.
 	Metrics *metrics.Manager
 
-	// MetricsDBURLFromEnv is METRICS_DB_URL as this process received it. Held
-	// so the settings screen can say WHY it is read-only rather than appearing
-	// broken: the environment wins over the stored target.
-	MetricsDBURLFromEnv string
 
 	Store            store.Store
 	Redis            *redis.Client

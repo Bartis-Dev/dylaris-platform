@@ -85,10 +85,13 @@ describe('the card that renders it', () => {
         expect(card).not.toMatch(/useRef<[^>]*\| null>\(null\)/);
     });
 
-    // With METRICS_DB_URL set the panel is not the authority, so there must be
-    // no save bar to press - not merely disabled inputs.
-    it('an environment-managed target gets no save bar', () => {
-        expect(card).toMatch(/form=\{locked \? undefined : form\}/);
+    // The panel is the ONLY place this is configured - there is no environment
+    // variable beside it any more, so nothing here may render read-only on the
+    // grounds that something else owns the setting.
+    it('the panel is the sole authority: no environment lock left', () => {
+        expect(card).not.toContain('managedByEnv');
+        expect(card).not.toContain('METRICS_DB_URL');
+        expect(card).toContain('form={form}');
     });
 
     // Three severities. "Connected, but no TimescaleDB" is neither a pass nor a

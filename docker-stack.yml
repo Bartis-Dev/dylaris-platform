@@ -86,13 +86,10 @@ services:
       # Must be flipped on Core AND every Node together, or the mesh breaks.
       GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"
       DB_TYPE: "${DB_TYPE:-timescaledb}"
-      # Long-term statistics. EMPTY is the supported default: the buckets go
-      # into the Core database at HOUR resolution, a few hundred megabytes a
-      # year, no extension needed. Point this at a TimescaleDB instance and the
-      # recorder switches to MINUTE resolution - see the commented `metricsdb`
-      # service. Either way the switch is Settings -> Features (off by default),
-      # and nothing ever leaves this installation.
-      METRICS_DB_URL: "${METRICS_DB_URL:-}"
+      # NO metrics database variable. Where the long-term statistics are
+      # written is set in the panel under Settings, Features - it is stored in
+      # the database, so it survives a redeploy and there is only one place that
+      # can answer it.
       EXTERNAL_TICKET_DB_URL: "${EXTERNAL_TICKET_DB_URL:-}"
       BILLING_SUSPEND_GRACE: "${BILLING_SUSPEND_GRACE:-48h}"
       # DNS updater (owner/SaaS, off by default). Present here so a value put in
@@ -373,9 +370,9 @@ services:
   # ───────────────────────────────────────────────────────────────────────
   # metricsdb - the long-term statistics store. COMMENTED OUT by default.
   #
-  # Only needed for MINUTE resolution. With METRICS_DB_URL empty the recorder
-  # writes HOUR buckets into the Core database and this service is not used at
-  # all, which is the supported default and what a self-hoster runs.
+  # Only needed for MINUTE resolution. Left unconfigured in the panel, the
+  # recorder writes HOUR buckets into the Core database and this service is not
+  # used at all, which is the supported default and what a self-hoster runs.
   #
   # Why a separate database rather than the Core one: the Core Postgres here is
   # Supabase's, where the platform user is not superuser and cannot install the
@@ -385,11 +382,13 @@ services:
   #
   # To enable:
   #   1. uncomment this service and the metricsdb_data volume below
-  #   2. put a password in .env and set
-  #      METRICS_DB_URL=postgres://dylaris:<pw>@metricsdb:5432/dylaris_metrics?sslmode=disable
+  #   2. put a password in .env for POSTGRES_PASSWORD here
   #   3. pin it to a host with room:
   #      docker node update --label-add dylaris.metricsdb=true <node>
-  #   4. deploy, then turn it on in Settings -> Features
+  #   4. deploy, then in Settings -> Features enter this host, database, user
+  #      and password and switch the statistics on. There is no environment
+  #      variable for it: the target is stored in the database, so the panel is
+  #      the only place that answers where recording goes.
   #
   # It is deliberately NOT published to the host. Only Core talks to it, over
   # the overlay network. And if it is down, Core does not care: the recorder

@@ -45,8 +45,6 @@ export interface MetricsDBSettings extends MetricsDBRequest {
      * legitimately run without one.
      */
     passwordSet: boolean;
-    /** METRICS_DB_URL is set in the environment and wins over all of this. */
-    managedByEnv: boolean;
     active: MetricsDBActive;
     /**
      * The CORE database has the TimescaleDB extension. It does NOT make the

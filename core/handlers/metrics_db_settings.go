@@ -41,10 +41,6 @@ type metricsDBResponse struct {
 	// Without this the field looks empty and identical to "there is none",
 	// which are opposite configurations here.
 	PasswordSet bool `json:"passwordSet"`
-	// ManagedByEnv means METRICS_DB_URL is set and wins. The form goes
-	// read-only rather than hidden: an operator has to be able to SEE that the
-	// panel is not the authority here, or the greyed-out fields read as a bug.
-	ManagedByEnv bool `json:"managedByEnv"`
 	// Active describes what is being written RIGHT NOW, which is not always
 	// what is configured: an unreachable target leaves the previous one running.
 	Active metricsDBActive `json:"active"`
@@ -78,7 +74,6 @@ func (h *MetricsDBHandler) Get(w http.ResponseWriter, r *http.Request) {
 			MetricsDBTarget: stored,
 			Enabled:         h.state.FeatureFlags.Get(r.Context(), services.MetricsEnabledSetting, false),
 			PasswordSet:     pwSet,
-			ManagedByEnv:    h.state.MetricsDBURLFromEnv != "",
 			Active:          h.activeState(),
 			CoreTimescale:   tsInstalled,
 		},
@@ -193,14 +188,6 @@ func separateDBOutcome(p services.MetricsDBProbe) (severity, message string) {
 
 // Set PUT /api/admin/settings/metrics-db. PANEL settings.write.
 func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
-	if h.state.MetricsDBURLFromEnv != "" {
-		sendJSONError(w,
-			"METRICS_DB_URL is set in this deployment's environment, which takes precedence. "+
-				"Change it there, or unset it to configure the target here.",
-			http.StatusConflict)
-		return
-	}
-
 	req, ok := h.decodeAndMerge(w, r)
 	if !ok {
 		return

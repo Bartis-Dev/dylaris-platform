@@ -81,13 +81,10 @@ services:
       GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"
       # timescaledb (hypertable + native retention) or postgres (plain table).
       DB_TYPE: "${DB_TYPE:-timescaledb}"
-      # Long-term statistics. EMPTY is the supported default: the buckets go
-      # into the Core database at HOUR resolution, a few hundred megabytes a
-      # year, no extension needed. Point this at a TimescaleDB instance and the
-      # recorder switches to MINUTE resolution - see the commented `metricsdb`
-      # service. Either way the switch is Settings -> Features (off by default),
-      # and nothing ever leaves this installation.
-      METRICS_DB_URL: "${METRICS_DB_URL:-}"
+      # NO metrics database variable. Where the long-term statistics are
+      # written is set in the panel under Settings, Features - it is stored in
+      # the database, so it survives a redeploy and there is only one place that
+      # can answer it.
       # Only relevant when pointing DB_HOST at an external Postgres.
       DB_SSLMODE: "${DB_SSLMODE:-disable}"
       EXTERNAL_TICKET_DB_URL: "${EXTERNAL_TICKET_DB_URL:-}"
