@@ -23,6 +23,9 @@ Newest release first. The format is fixed and checked in CI - see the
   year, with headline figures and a CSV or JSON export. `core` `panel`
 - Concurrent panel users are counted for the first time, once per person however
   many tabs they have open. `core` `panel`
+- None of this records anything until you switch it on under Settings, Features.
+  It is off by default and history cannot be collected backwards, so the record
+  starts the day you enable it. `core`
 
 ### Breaking
 - Nothing.
