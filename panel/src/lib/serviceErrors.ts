@@ -1,5 +1,10 @@
-// The service error streams (dylaris:errors:<service>:<instance>) that edge,
-// link, hub, beam, node and warp write to.
+// The service error streams (dylaris:errors:<service>:<instance>) that core,
+// edge, link, hub, beam, node and warp write to.
+//
+// core is the newest and the one that was missing longest: it runs every
+// periodic job - dunning, the backup scheduler, the retention sweeps - and
+// reported their failures only to its own stdout, which does not survive the
+// container's next deploy.
 //
 // These are not a nice-to-have. Some failures are reported HERE AND NOWHERE
 // ELSE, because the component that can see them is not the component the

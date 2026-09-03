@@ -183,7 +183,7 @@ func (s *AutoDeleteService) processWarnings(_ context.Context, p policySnapshot)
 		// and a user who actually logs in cancels automatically.
 		if c.Email != "" {
 			if err := sendDeletionWarningEmail(s.store, s.frontendURL, c.Email, c.Username, scheduledAt, p.Mode); err != nil {
-				log.Printf("auto-delete: warning mail to %s failed: %v", c.Email, err)
+				logErrf("auto-delete", "warning mail to %s failed: %v", c.Email, err)
 			}
 		}
 
@@ -212,7 +212,7 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 		// anyway. Leaving a dormant row for another day is recoverable; removing
 		// the only record of who owned a live credential is not.
 		if err := TeardownTenantInfrastructure(ctx, s.store, s.gateway, s.redis, s.provisioner, userID); err != nil {
-			log.Printf("auto-delete: teardown for userID=%s failed, leaving the account in place: %v", userID, err)
+			logErrf("auto-delete", "teardown for userID=%s failed, leaving the account in place: %v", userID, err)
 			continue
 		}
 		switch p.Mode {

@@ -28,6 +28,7 @@ import (
 	"dylaris-core/storage"
 	"dylaris-core/store"
 	beamauth "dylaris-pkg/beam/auth"
+	"dylaris-pkg/errlog"
 
 	gorillaHandlers "github.com/gorilla/handlers"
 )
@@ -261,6 +262,11 @@ func main() {
 
 	appState.Redis = redisClient
 	appState.Queue = services.NewQueueService(redisClient)
+	// The background services report their failures here as well as to the log,
+	// so the panel's Errors screen can show them. Core is the component running
+	// the periodic work and was the only one not writing to these streams; a
+	// container's stdout does not survive its redeploy. See services/errsink.go.
+	services.SetErrorSink(errlog.New(redisClient, "core", cfg.CoreID))
 	// Metadata caches default into this same Redis. An operator who pointed them
 	// at a dedicated endpoint gets it applied here; a failure is logged and the
 	// caches stay on the default rather than being switched off, because a cache

@@ -64,7 +64,7 @@ func (s *ServerAuditRetentionService) runOnce(_ context.Context) {
 	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	deleted, err := s.store.PurgeServerAuditOlderThan(cutoff)
 	if err != nil {
-		log.Printf("server-audit-retention: purge error: %v", err)
+		logErrf("server-audit-retention", "purge error: %v", err)
 		return
 	}
 	if deleted > 0 {

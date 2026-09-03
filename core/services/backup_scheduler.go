@@ -127,12 +127,12 @@ func (b *BackupScheduler) reporterMatchesServer(channel string, serverID int, wh
 	}
 	srv, err := b.store.GetServerByID(serverID)
 	if err != nil || srv == nil {
-		log.Printf("%s: dropping a message from node %q: server %d could not be loaded: %v", what, token, serverID, err)
+		logErrf("backup-scheduler", "%s: dropping a message from node %q: server %d could not be loaded: %v", what, token, serverID, err)
 		return false
 	}
 	node, err := b.store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
-		log.Printf("%s: dropping a message from node %q: node %d could not be loaded: %v", what, token, srv.NodeID, err)
+		logErrf("backup-scheduler", "%s: dropping a message from node %q: node %d could not be loaded: %v", what, token, srv.NodeID, err)
 		return false
 	}
 	if node.Token != token {
@@ -171,7 +171,7 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 				Error     string `json:"error"`
 			}
 			if err := json.Unmarshal([]byte(msg.Payload), &result); err != nil {
-				log.Printf("restore result: decode failed: %v", err)
+				logErrf("backup-scheduler", "restore result: decode failed: %v", err)
 				continue
 			}
 			if result.RestoreID == 0 {
@@ -192,7 +192,7 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 				completed = time.Now()
 			}
 			if err := b.store.UpdateBackupRestoreStatus(result.RestoreID, result.Status, result.Error, completed); err != nil {
-				log.Printf("restore result: update failed for id=%d: %v", result.RestoreID, err)
+				logErrf("backup-scheduler", "restore result: update failed for id=%d: %v", result.RestoreID, err)
 			}
 			if result.Status == "success" {
 				b.restoreInstalls(restore.RunID, restore.ServerID)
@@ -231,7 +231,7 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 				SizeBytes int64  `json:"sizeBytes"`
 			}
 			if err := json.Unmarshal([]byte(msg.Payload), &result); err != nil {
-				log.Printf("backup result: decode failed: %v", err)
+				logErrf("backup-scheduler", "backup result: decode failed: %v", err)
 				continue
 			}
 			run, err := b.store.GetBackupRun(result.RunID)
@@ -290,12 +290,12 @@ func (b *BackupScheduler) enforceRetention(ctx context.Context, jobID int) {
 	for _, run := range pruned {
 		storage, err := ResolveRunStorage(b.store, &run, job.StorageID, owner)
 		if err != nil {
-			log.Printf("retention prune: job %d — cannot resolve storage for run %d: %v; the archive is now untracked",
+			logErrf("backup-scheduler", "retention prune: job %d — cannot resolve storage for run %d: %v; the archive is now untracked",
 				jobID, run.ID, err)
 			continue
 		}
 		if err := b.deleteStorageObject(ctx, storage, run.StorageKey); err != nil {
-			log.Printf("retention prune: %s delete failed: %v", run.StorageKey, err)
+			logErrf("backup-scheduler", "retention prune: %s delete failed: %v", run.StorageKey, err)
 		}
 	}
 }
@@ -334,12 +334,12 @@ func (b *BackupScheduler) tick(ctx context.Context) {
 	now := time.Now()
 	jobs, err := b.store.ListDueBackupJobs(now)
 	if err != nil {
-		log.Printf("backup-scheduler: ListDueBackupJobs error: %v", err)
+		logErrf("backup-scheduler", "ListDueBackupJobs error: %v", err)
 		return
 	}
 	for _, job := range jobs {
 		if err := b.dispatch(ctx, job); err != nil {
-			log.Printf("backup-scheduler: job %d dispatch failed: %v", job.ID, err)
+			logErrf("backup-scheduler", "job %d dispatch failed: %v", job.ID, err)
 		}
 	}
 
@@ -381,7 +381,7 @@ const backupReapBatchSize = 25
 func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) {
 	runs, err := b.store.ListAbandonedBackupRuns(now.Add(-backupRunAbandonedAfter), backupReapBatchSize)
 	if err != nil {
-		log.Printf("backup-scheduler: listing abandoned runs failed: %v", err)
+		logErrf("backup-scheduler", "listing abandoned runs failed: %v", err)
 		return
 	}
 	for _, run := range runs {
@@ -389,7 +389,7 @@ func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) 
 		age := now.Sub(run.StartedAt).Round(time.Minute)
 		message := fmt.Sprintf("No result was received from the node within %s. %s", age, detail)
 		if err := b.store.UpdateBackupRunStatus(run.ID, "failed", message, size, run.StorageKey, now); err != nil {
-			log.Printf("backup-scheduler: could not close abandoned run %d: %v", run.ID, err)
+			logErrf("backup-scheduler", "could not close abandoned run %d: %v", run.ID, err)
 			continue
 		}
 		log.Printf("backup-scheduler: closed abandoned run %d (job %d, started %s ago): %s", run.ID, run.JobID, age, detail)
@@ -432,7 +432,7 @@ func (b *BackupScheduler) describeAbandonedRun(ctx context.Context, run models.B
 		// often an internal IP to exactly the audience the settings boundary
 		// keeps them from. The storage key is already in the API response, so
 		// naming it costs nothing.
-		log.Printf("backup-scheduler: could not determine whether run %d wrote an archive at %s: %v", run.ID, run.StorageKey, err)
+		logErrf("backup-scheduler", "could not determine whether run %d wrote an archive at %s: %v", run.ID, run.StorageKey, err)
 		return 0, fmt.Sprintf("Whether an archive exists at %s could not be determined. The Core log has the reason.", run.StorageKey)
 	}
 }

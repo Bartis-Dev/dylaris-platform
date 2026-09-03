@@ -111,7 +111,7 @@ func (s *RouteRepublisher) RunOnce(ctx context.Context) {
 		// Reading it as "no routes" would be a silent no-op every minute, and
 		// this loop only ever exists for the case where something already went
 		// wrong.
-		log.Printf("[routes] republish: list stored routes: %v", err)
+		logErrf("route-republisher", "republish: list stored routes: %v", err)
 		return
 	}
 	restored, corrected := 0, 0
@@ -155,12 +155,12 @@ func (s *RouteRepublisher) republish(ctx context.Context, r store.CoreLinkRoute)
 	// never take a domain from whoever holds it now.
 	claimed, err := s.redis.SetNX(ctx, "route:"+r.Domain, data, coreOwnedRouteTTL).Result()
 	if err != nil {
-		log.Printf("[routes] republish %s: %v", r.Domain, err)
+		logErrf("route-republisher", "republish %s: %v", r.Domain, err)
 		return republishSkipped
 	}
 	if claimed {
 		if err := s.redis.SAdd(ctx, "sys:index:routes", r.Domain).Err(); err != nil {
-			log.Printf("[routes] republish %s: index: %v", r.Domain, err)
+			logErrf("route-republisher", "republish %s: index: %v", r.Domain, err)
 		}
 		log.Printf("[routes] restored route-only entry %s (it was missing from Redis)", r.Domain)
 		return republishRestored
@@ -189,7 +189,7 @@ func (s *RouteRepublisher) republish(ctx context.Context, r store.CoreLinkRoute)
 		return republishSkipped
 	}
 	if err := s.redis.Set(ctx, "route:"+r.Domain, data, coreOwnedRouteTTL).Err(); err != nil {
-		log.Printf("[routes] republish %s: %v", r.Domain, err)
+		logErrf("route-republisher", "republish %s: %v", r.Domain, err)
 		return republishSkipped
 	}
 	s.redis.SAdd(ctx, "sys:index:routes", r.Domain)
@@ -218,7 +218,7 @@ func (s *RouteRepublisher) adoptExisting(ctx context.Context) {
 	rows, err := s.store.ListCoreLinkRoutes()
 	if err != nil {
 		// Every domain would look unrecorded, and this writes rows.
-		log.Printf("[routes] adopt: list stored routes: %v", err)
+		logErrf("route-republisher", "adopt: list stored routes: %v", err)
 		return
 	}
 	stored := make(map[string]bool, len(rows))
@@ -227,7 +227,7 @@ func (s *RouteRepublisher) adoptExisting(ctx context.Context) {
 	}
 	domains, err := s.redis.SMembers(ctx, "sys:index:routes").Result()
 	if err != nil {
-		log.Printf("[routes] adopt: %v", err)
+		logErrf("route-republisher", "adopt: %v", err)
 		return
 	}
 	adopted := 0
@@ -256,7 +256,7 @@ func (s *RouteRepublisher) adoptExisting(ctx context.Context) {
 			Domain: domain, OwnerID: live.OwnerID, LinkToken: live.TunnelID,
 			TargetHost: live.TargetIP, TargetPort: live.TargetPort,
 		}); err != nil {
-			log.Printf("[routes] adopt %s: %v", domain, err)
+			logErrf("route-republisher", "adopt %s: %v", domain, err)
 			continue
 		}
 		adopted++

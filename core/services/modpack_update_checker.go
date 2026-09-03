@@ -65,7 +65,7 @@ func (c *ModpackUpdateChecker) runOnce(ctx context.Context) {
 	staleBefore := time.Now().Add(-time.Duration(hours) * time.Hour)
 	due, err := c.store.ListModversionsDueForCheck(staleBefore)
 	if err != nil {
-		log.Printf("modpack update checker: list due failed: %v", err)
+		logErrf("modpack-update-checker", "list due failed: %v", err)
 		return
 	}
 	if len(due) == 0 {
@@ -103,7 +103,7 @@ func (c *ModpackUpdateChecker) runOnce(ctx context.Context) {
 			}
 			res, err := CheckLatestVersions(hashes, "sha1", []string{g.loader}, []string{g.mc})
 			if err != nil {
-				log.Printf("modpack update checker: modrinth check failed (loader=%s mc=%s): %v", g.loader, g.mc, err)
+				logErrf("modpack-update-checker", "modrinth check failed (loader=%s mc=%s): %v", g.loader, g.mc, err)
 				continue // leave this chunk for the next tick
 			}
 			for _, row := range chunk {
@@ -112,7 +112,7 @@ func (c *ModpackUpdateChecker) runOnce(ctx context.Context) {
 					latest = v.ID
 				}
 				if err := c.store.SetModversionCheckResult(row.Modversion.ID, latest, now); err != nil {
-					log.Printf("modpack update checker: persist failed (mv=%d): %v", row.Modversion.ID, err)
+					logErrf("modpack-update-checker", "persist failed (mv=%d): %v", row.Modversion.ID, err)
 				}
 			}
 		}

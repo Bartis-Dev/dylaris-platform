@@ -124,7 +124,7 @@ func (s *WarpSelfRegistrar) RunOnce(ctx context.Context) {
 	}
 	found, err := s.announcements(ctx)
 	if err != nil {
-		log.Printf("[warp] self-registration: %v", err)
+		logErrf("warp-selfreg", "%v", err)
 		return
 	}
 	if len(found) == 0 {
@@ -133,12 +133,12 @@ func (s *WarpSelfRegistrar) RunOnce(ctx context.Context) {
 
 	regions, err := s.store.ListWarpRegions()
 	if err != nil {
-		log.Printf("[warp] self-registration: list regions: %v", err)
+		logErrf("warp-selfreg", "list regions: %v", err)
 		return
 	}
 	leaders, err := s.store.ListWarpLeaders()
 	if err != nil {
-		log.Printf("[warp] self-registration: list leaders: %v", err)
+		logErrf("warp-selfreg", "list leaders: %v", err)
 		return
 	}
 
@@ -219,7 +219,7 @@ func (s *WarpSelfRegistrar) applyLeader(id string, a LeaderAnnouncement, byID ma
 		// everything a leader does. A pending state would only reinstate the
 		// manual step this removes.
 		if err := s.store.UpsertWarpLeader(id, a.Region, a.Endpoint, true); err != nil {
-			log.Printf("[warp] self-registration: register leader %s: %v", id, err)
+			logErrf("warp-selfreg", "register leader %s: %v", id, err)
 			return
 		}
 		byID[id] = store.WarpLeader{LeaderID: id, Region: a.Region, Endpoint: a.Endpoint, Enabled: true}
@@ -235,7 +235,7 @@ func (s *WarpSelfRegistrar) applyLeader(id string, a LeaderAnnouncement, byID ma
 	// while the machine it belongs to is still running, which is exactly when
 	// someone reaches for it.
 	if err := s.store.UpsertWarpLeader(id, a.Region, a.Endpoint, l.Enabled); err != nil {
-		log.Printf("[warp] self-registration: update leader %s: %v", id, err)
+		logErrf("warp-selfreg", "update leader %s: %v", id, err)
 		return
 	}
 	log.Printf("[warp] leader %s moved: %s/%s -> %s/%s", id, l.Region, l.Endpoint, a.Region, a.Endpoint)
@@ -270,7 +270,7 @@ func (s *WarpSelfRegistrar) ensureRegion(id string, a LeaderAnnouncement, subnet
 		return false
 	}
 	if err := s.store.UpsertWarpRegion(a.Region, a.Subnet, true); err != nil {
-		log.Printf("[warp] self-registration: create region %s: %v", a.Region, err)
+		logErrf("warp-selfreg", "create region %s: %v", a.Region, err)
 		return false
 	}
 	subnetByRegion[a.Region] = a.Subnet

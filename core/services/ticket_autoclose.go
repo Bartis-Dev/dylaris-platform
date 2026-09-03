@@ -64,12 +64,12 @@ func (s *TicketAutoCloseService) runOnce(_ context.Context) {
 	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	ids, err := s.store.ListResolvedTicketsOlderThan(cutoff)
 	if err != nil {
-		log.Printf("ticket-autoclose: list error: %v", err)
+		logErrf("ticket-autoclose", "list error: %v", err)
 		return
 	}
 	for _, id := range ids {
 		if err := s.store.UpdateTicketStatus(id, "closed"); err != nil {
-			log.Printf("ticket-autoclose: close %d failed: %v", id, err)
+			logErrf("ticket-autoclose", "close %d failed: %v", id, err)
 			continue
 		}
 		_ = s.store.InsertTicketAudit(&models.TicketAuditEvent{

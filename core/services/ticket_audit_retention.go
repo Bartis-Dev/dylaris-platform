@@ -74,7 +74,7 @@ func (s *TicketAuditRetentionService) runOnce(_ context.Context) {
 	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	deleted, err := s.store.PurgeTicketAuditOlderThan(cutoff)
 	if err != nil {
-		log.Printf("ticket-audit-retention: purge error: %v", err)
+		logErrf("ticket-audit-retention", "purge error: %v", err)
 		return
 	}
 	if deleted > 0 {

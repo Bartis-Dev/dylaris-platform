@@ -240,7 +240,7 @@ func (r *ACLReconciler) pruneOrphanNodeACLs(ctx context.Context, nodes []models.
 	for _, n := range nodes {
 		servers, lerr := r.store.ListServersByNode(n.ID)
 		if lerr != nil {
-			log.Printf("acl reconciler: prune skipped, list servers for node %d (%s): %v",
+			logErrf("acl-reconciler", "prune skipped, list servers for node %d (%s): %v",
 				n.ID, tokenPrefix(n.Token), lerr)
 			return
 		}

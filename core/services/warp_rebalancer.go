@@ -203,7 +203,7 @@ func (w *WarpRebalancer) tick(ctx context.Context, now time.Time) {
 	// 1. Which hosts are sustained over threshold (reuse F2's evaluator).
 	rows, err := w.store.GetGatewayBandwidthHistory(now.Add(-sustain), "", "")
 	if err != nil {
-		log.Printf("warp-rebalance: history: %v", err)
+		logErrf("warp-rebalancer", "history: %v", err)
 		return
 	}
 	alerts := evaluateAlerts(rows, pct, sustain, now)
@@ -220,7 +220,7 @@ func (w *WarpRebalancer) tick(ctx context.Context, now time.Time) {
 	// 2. Build the capacity view + per-leader host + PerPeer for all warp leaders.
 	leaders, err := w.store.ListWarpLeaders()
 	if err != nil {
-		log.Printf("warp-rebalance: leaders: %v", err)
+		logErrf("warp-rebalancer", "leaders: %v", err)
 		return
 	}
 	leaderIDs := make([]string, 0, len(leaders))
@@ -300,7 +300,7 @@ func (w *WarpRebalancer) apply(ctx context.Context, mode string, sustainMin int,
 	if applied {
 		for _, m := range moves {
 			if err := w.store.SetWarpPeerAssignedLeader(m.Pubkey, m.To); err != nil {
-				log.Printf("warp-rebalance: pin %s -> %s: %v", m.Pubkey, m.To, err)
+				logErrf("warp-rebalancer", "pin %s -> %s: %v", m.Pubkey, m.To, err)
 				continue
 			}
 			w.redis.Set(ctx, warpRebalanceLastMovePfx+m.Pubkey, "1", time.Duration(sustainMin)*time.Minute)

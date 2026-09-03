@@ -441,7 +441,7 @@ func (s *BillingLifecycleService) deleteTenantBackups(ctx context.Context, userI
 		// predates it went to the platform default.
 		storage, err := ResolveJobStorage(s.store, ref.StorageID, "")
 		if err != nil {
-			log.Printf("billing lifecycle: run %d (%s): cannot resolve storage: %v — keeping the row so the object is not orphaned",
+			logErrf("billing-lifecycle", "run %d (%s): cannot resolve storage: %v — keeping the row so the object is not orphaned",
 				ref.RunID, ref.StorageKey, err)
 			continue
 		}
@@ -454,7 +454,7 @@ func (s *BillingLifecycleService) deleteTenantBackups(ctx context.Context, userI
 		}
 		provider, err := backupstorage.Open(ctx, storage, deps)
 		if err != nil {
-			log.Printf("billing lifecycle: run %d (%s): cannot open storage %q: %v — keeping the row",
+			logErrf("billing-lifecycle", "run %d (%s): cannot open storage %q: %v — keeping the row",
 				ref.RunID, ref.StorageKey, storage.Name, err)
 			continue
 		}
@@ -676,7 +676,7 @@ Your data is safe either way — nothing is deleted when you miss a payment.
 — Dylaris
 `, u.Username, graceUntil.UTC().Format("2006-01-02 15:04 UTC"), s.paymentURL())
 	if err := transport.Send(mailer.Message{To: u.Email, Subject: "Payment required — your Dylaris services", Body: body}); err != nil {
-		log.Printf("billing lifecycle: dunning mail to %s failed: %v", u.Email, err)
+		logErrf("billing-lifecycle", "dunning mail to %s failed: %v", u.Email, err)
 	}
 }
 
@@ -700,7 +700,7 @@ Pay here to reactivate:
 — Dylaris
 `, u.Username, s.paymentURL())
 	if err := transport.Send(mailer.Message{To: u.Email, Subject: "Your Dylaris services are suspended", Body: body}); err != nil {
-		log.Printf("billing lifecycle: suspended mail to %s failed: %v", u.Email, err)
+		logErrf("billing-lifecycle", "suspended mail to %s failed: %v", u.Email, err)
 	}
 }
 

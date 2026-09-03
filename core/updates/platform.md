@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.13
+
+### Features
+- Core's own failures now reach Settings, Infrastructure, Errors. Its periodic
+  jobs - dunning, the backup scheduler, the retention sweeps, the route
+  republisher - reported only to the container log, which is discarded when Core
+  is redeployed. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.03.12
 
 ### Features

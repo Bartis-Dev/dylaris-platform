@@ -159,7 +159,7 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 	}
 	owners, err := a.subjectOwners()
 	if err != nil {
-		log.Printf("traffic aggregator: tenant lookup: %v", err)
+		logErrf("traffic-aggregator", "tenant lookup: %v", err)
 		return
 	}
 	if len(owners) == 0 {
@@ -176,7 +176,7 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 	for tenant, acc := range perTenant {
 		if err := a.store.AddTrafficUsage(tenant, period, acc.edge, acc.relay); err != nil {
 			// Leave `seen` untouched so the delta is retried next tick.
-			log.Printf("traffic aggregator: add usage for %s: %v", tenant, err)
+			logErrf("traffic-aggregator", "add usage for %s: %v", tenant, err)
 			continue
 		}
 		// The breakdown is written AFTER the total and its failure does not
@@ -189,7 +189,7 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 				continue
 			}
 			if err := a.store.AddTrafficUsageRegion(tenant, period, rk.region, rk.kind, rk.product, bytes); err != nil {
-				log.Printf("traffic aggregator: add region usage for %s/%s/%s/%s: %v", tenant, rk.region, rk.kind, rk.product, err)
+				logErrf("traffic-aggregator", "add region usage for %s/%s/%s/%s: %v", tenant, rk.region, rk.kind, rk.product, err)
 			}
 		}
 		for _, su := range tenantSeen[tenant] {
@@ -202,7 +202,7 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 	// write a zero-byte storage row for an account that never had one.
 	serverOwners, err := a.store.TenantServerOwners()
 	if err != nil {
-		log.Printf("traffic aggregator: server owner lookup for backup snapshot: %v", err)
+		logErrf("traffic-aggregator", "server owner lookup for backup snapshot: %v", err)
 		return
 	}
 	a.snapshotBackupStorage(serverOwners, period)
@@ -215,7 +215,7 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 func (a *TrafficAggregator) snapshotBackupStorage(owners map[string]string, period time.Time) {
 	byTenant, err := a.store.TenantBackupBytes()
 	if err != nil {
-		log.Printf("traffic aggregator: backup storage lookup: %v", err)
+		logErrf("traffic-aggregator", "backup storage lookup: %v", err)
 		return
 	}
 	// Union of tenants that own a server and tenants that still hold backups
@@ -229,7 +229,7 @@ func (a *TrafficAggregator) snapshotBackupStorage(owners map[string]string, peri
 	}
 	for tenant := range tenants {
 		if err := a.store.SetTrafficBackupBytes(tenant, period, byTenant[tenant]); err != nil {
-			log.Printf("traffic aggregator: set backup bytes for %s: %v", tenant, err)
+			logErrf("traffic-aggregator", "set backup bytes for %s: %v", tenant, err)
 		}
 	}
 }
@@ -286,7 +286,7 @@ func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners m
 	for {
 		keys, next, err := a.redis.Scan(ctx, cursor, prefix+"*", trafficScanCount).Result()
 		if err != nil {
-			log.Printf("traffic aggregator: scan %s: %v", prefix, err)
+			logErrf("traffic-aggregator", "scan %s: %v", prefix, err)
 			return
 		}
 		for _, key := range keys {

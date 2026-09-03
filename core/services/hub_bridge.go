@@ -684,6 +684,13 @@ func GetServiceErrorsFromRedis(rdb *redis.Client, service string, count int64) [
 // "node" is the platform side rather than the gateway: it is the one component
 // that can still reach Redis while its control channel to Core is broken, so it
 // is the only thing able to report WHY a node looks offline.
+// "core" is the platform side too, and the one that took longest to arrive:
+// Core runs every periodic job - dunning, the backup scheduler, the retention
+// sweeps, the ACL reconciler, the route republisher - and reported their
+// failures to its own stdout and nowhere else. A container's stdout dies with
+// the container, so a job that had been failing every night left no trace once
+// Core was redeployed, which is the first thing anyone does when something
+// looks wrong. See services/errsink.go for the producer side.
 var ErrorStreamServices = errlog.Services
 
 // GetAllServiceErrorsFromRedis reads errors for every service in

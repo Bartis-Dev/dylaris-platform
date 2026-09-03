@@ -118,7 +118,7 @@ func (w *RebalanceWorker) tick(ctx context.Context) {
 
 	nodes, err := w.store.ListNodes()
 	if err != nil {
-		log.Printf("rebalance: list nodes failed: %v", err)
+		logErrf("rebalance", "list nodes failed: %v", err)
 		return
 	}
 	heartbeats := LoadHeartbeats(ctx, w.redis)
@@ -166,7 +166,7 @@ func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nod
 	}
 
 	if err := w.orchestrator.EnqueueMigration(ctx, candidate.ID, target.ID, "rebalance", "system"); err != nil {
-		log.Printf("rebalance: enqueue failed for server %s (node %d -> %d): %v", candidate.UUID, src.ID, target.ID, err)
+		logErrf("rebalance", "enqueue failed for server %s (node %d -> %d): %v", candidate.UUID, src.ID, target.ID, err)
 		return
 	}
 	log.Printf("rebalance: enqueued server %s (%dMB) node %d (%.0f%%) -> node %d (%.0f%%), threshold %d%% [capped at 1 move/node/tick]",
@@ -182,7 +182,7 @@ func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nod
 func (w *RebalanceWorker) pickCandidate(ctx context.Context, src *models.Node) *models.Server {
 	rows, err := w.store.ListServersByNode(src.ID)
 	if err != nil {
-		log.Printf("rebalance: list servers for node %d failed: %v", src.ID, err)
+		logErrf("rebalance", "list servers for node %d failed: %v", src.ID, err)
 		return nil
 	}
 

@@ -87,7 +87,7 @@ func (s *ScheduledTaskService) runDue(ctx context.Context) {
 	now := time.Now().UTC()
 	due, err := s.store.ListDueScheduledTasks(now, scheduledTaskBatchLimit)
 	if err != nil {
-		log.Printf("scheduled-tasks: list due failed: %v", err)
+		logErrf("scheduled-tasks", "list due failed: %v", err)
 		return
 	}
 	if len(due) == 0 {
@@ -114,13 +114,13 @@ func (s *ScheduledTaskService) runDue(ctx context.Context) {
 			// does not stick the task stays enabled and errors on every tick
 			// from here on, so the failure has to be visible.
 			if derr := s.store.SetScheduledTaskEnabled(t.ID, false, nil); derr != nil {
-				log.Printf("scheduled-tasks: task #%d has an unparseable schedule but could not be disabled; it will keep failing every tick: %v", t.ID, derr)
+				logErrf("scheduled-tasks", "task #%d has an unparseable schedule but could not be disabled; it will keep failing every tick: %v", t.ID, derr)
 			}
 		} else {
 			nextPtr = &next
 		}
 		if recErr := s.store.RecordScheduledTaskRun(t.ID, now, status, errMsg, nextPtr); recErr != nil {
-			log.Printf("scheduled-tasks: record run for #%d failed: %v", t.ID, recErr)
+			logErrf("scheduled-tasks", "record run for #%d failed: %v", t.ID, recErr)
 		}
 		if t.TaskType == "restart" {
 			publishServers = true

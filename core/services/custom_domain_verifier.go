@@ -135,7 +135,7 @@ func (v *CustomDomainVerifier) RunOnce(ctx context.Context) {
 		}
 		state, ferr := v.store.FailCustomDomainClaim(c.ID)
 		if ferr != nil {
-			log.Printf("custom-domain verifier: fail %s: %v", c.Domain, ferr)
+			logErrf("custom-domain-verifier", "fail %s: %v", c.Domain, ferr)
 			continue
 		}
 		log.Printf("custom-domain verifier: %s not proven in time for user %s -> %s",
