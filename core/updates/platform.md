@@ -8,6 +8,31 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The Statistics headlines "Peak player throughput" and the per-player figure
+  were recorded in bytes per second under a bits-per-second name, so both read
+  an eighth of the truth while the edge charts beside them read it correctly.
+  Corrected from this update on. `core`
+- Statistics still spelled throughput "Mbps" while the rest of the panel had
+  moved to "Mbit/s". Same numbers, one spelling. `core` `panel`
+- Warp placement and rebalancing judged a host by its OUTBOUND traffic alone, so
+  a host saturated inbound looked wide open and could still be handed new peers.
+  Both directions now count, and the busier one decides. `core`
+- The Gateway tab showed outbound throughput only. Each row now shows out and
+  in, because a link carries its rated speed in each direction at the same time.
+  `core` `panel`
+
 ## 2026.09.03.8
 
 ### Features

@@ -246,14 +246,28 @@ func (w *WarpRebalancer) tick(ctx context.Context, now time.Time) {
 		}
 		budgetBps := int64(agg.BudgetMbit) * 1_000_000
 		thresholdBps := budgetBps * int64(pct) / 100
-		headroom := thresholdBps - int64(agg.TxBps)
+		// A target's headroom is measured against its BUSIER direction: the
+		// budget is a per-direction ceiling (full duplex), so a host saturated
+		// inbound has no room for more peers even with a quiet uplink.
+		busier := int64(agg.TxBps)
+		if int64(agg.RxBps) > busier {
+			busier = int64(agg.RxBps)
+		}
+		headroom := thresholdBps - busier
 		if headroom < 0 {
 			headroom = 0
 		}
 		targets = append(targets, moveTarget{leaderID: lid, region: leaderRegion[lid], headroomBps: headroom})
 		if hot[host] {
+			// Shedding is measured in TRANSMIT, because that is the direction
+			// the per-peer telemetry can attribute. A host that is hot inbound
+			// only therefore has nothing this rebalancer can move, and says so
+			// rather than looking like a no-op: relieving it is an operator
+			// decision (a bigger uplink, or fewer peers), not a placement one.
 			shed := int64(agg.TxBps) - thresholdBps
 			if shed <= 0 {
+				log.Printf("warp-rebalance: host %s is over threshold inbound (rx %d bps, tx %d bps, threshold %d bps); moving peers cannot relieve that",
+					host, agg.RxBps, agg.TxBps, thresholdBps)
 				continue
 			}
 			saturated = append(saturated, saturatedLeader{

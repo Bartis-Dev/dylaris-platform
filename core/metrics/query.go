@@ -233,7 +233,7 @@ var headlineSpecs = []headlineSpec{
 	{"platform.concurrent_users", "Peak concurrent users", "peak"},
 	{"platform.servers_online", "Peak servers running", "peak"},
 	{"platform.player_tx_bps", "Peak player throughput", "peak"},
-	{"platform.bps_per_player", "Peak bandwidth per player", "peak"},
+	{"platform.bps_per_player", "Peak traffic per player (in + out)", "peak"},
 	{"splice.sessions_opened", "Player sessions carried", "total"},
 	{"splice.handover_ok", "Players carried through an edge restart", "total"},
 	{"splice.players_dropped", "Players dropped in a handover", "total"},

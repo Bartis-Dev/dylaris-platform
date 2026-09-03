@@ -102,7 +102,7 @@ export default function BandwidthHostRow({
                         ? `BANDWIDTH_MBIT is ${host.budgetMbit} Mbit/s. Ethernet is full duplex, so that is the ceiling for EACH direction, not for the two together.`
                         : 'No BANDWIDTH_MBIT set on this host, so there is nothing to measure against.'}
                 >
-                    {host.capKnown ? `${(host.budgetMbit / 1000).toFixed(1)} Gbps each way` : 'no cap set'}
+                    {host.capKnown ? `${(host.budgetMbit / 1000).toFixed(1)} Gbit/s each way` : 'no cap set'}
                 </div>
                 <DirBlock dir="tx" bps={host.txBps} pct={host.utilPct} known={host.capKnown} />
                 <DirBlock dir="rx" bps={host.rxBps} pct={host.utilPctRx} known={host.capKnown} />

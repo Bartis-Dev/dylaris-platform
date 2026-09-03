@@ -33,8 +33,18 @@ describe('formatting by unit', () => {
         // decimal, and using one scale for both misstates a headline figure by
         // about seven percent - enough to be wrong and not enough to be noticed.
         expect(formatMetric(1024, 'bytes')).toBe('1 KB');
-        expect(formatMetric(1000, 'bps')).toBe('1 Kbps');
-        expect(formatMetric(1024, 'bps')).toBe('1.02 Kbps');
+        expect(formatMetric(1000, 'bps')).toBe('1 kbit/s');
+        expect(formatMetric(1024, 'bps')).toBe('1.02 kbit/s');
+    });
+
+    it('spells throughput in bits, not in the ambiguous Mbps', () => {
+        // The unit is the whole finding here. "Mbps" is read as megaBYTES often
+        // enough that a saturated gigabit link looked like 12% of one, so this
+        // screen spells it the way the Bandwidth tab does. The value is
+        // unchanged - only the label was ever wrong.
+        expect(formatMetric(2_500_000, 'bps')).toBe('2.5 Mbit/s');
+        expect(formatMetric(2_500_000_000, 'bps')).toBe('2.5 Gbit/s');
+        expect(formatMetric(0, 'bps')).toBe('0 bit/s');
     });
 
     it('renders percentages, durations and counts in their own terms', () => {

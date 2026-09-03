@@ -447,3 +447,70 @@ func TestEdgeThroughputIsRecordedInBitsNotBytes(t *testing.T) {
 		}
 	}
 }
+
+// The platform-wide totals are the same reading as the per-edge series, and so
+// they are in the same unit.
+//
+// This was the sibling the earlier fix missed: three lines below the per-edge
+// conversion, the same loop accumulated the RAW byte figures into totalRx and
+// totalTx, and those fed platform.player_rx_bps, platform.player_tx_bps and
+// platform.bps_per_player - two of which are HEADLINES. So "Peak player
+// throughput" read an eighth of the truth while the per-edge chart directly
+// below it read the truth, on the same screen.
+func TestPlatformPlayerThroughputIsRecordedInBitsNotBytes(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	// Two edges, so the test also pins that the totals sum ACROSS machines -
+	// two separate uplinks, so adding them is the right thing to do here even
+	// though adding the two DIRECTIONS of one link would not be.
+	for _, e := range []struct{ id, stats string }{
+		{"e1", `{"cpu":10,"ram_pct":40,"rx_speed":1000,"tx_speed":2000,"active_mc_streams":3}`},
+		{"e2", `{"cpu":10,"ram_pct":40,"rx_speed":500,"tx_speed":1500,"active_mc_streams":1}`},
+	} {
+		mr.Set("edge:registry:"+e.id, `{"edge_id":"`+e.id+`","region":"eu","status":"online"}`)
+		if _, err := rdb.XAdd(t.Context(), &redis.XAddArgs{
+			Stream: "dylaris:edge:" + e.id + ":stats",
+			Values: map[string]any{"data": e.stats},
+		}).Result(); err != nil {
+			t.Fatalf("seed stats: %v", err)
+		}
+	}
+
+	capt := &captureStore{}
+	c := NewMetricsCollector(nil, rdb, nil,
+		fixedRecorder{metrics.NewRecorder(capt, time.Hour)},
+		NewFeatureFlags(settingsMap{MetricsEnabledSetting: "true"}))
+	c.sampleGateway(t.Context(), time.Now())
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	for metric, want := range map[string]float64{
+		"platform.player_rx_bps": 12000, // (1000 + 500) bytes/s
+		"platform.player_tx_bps": 28000, // (2000 + 1500) bytes/s
+		// Both directions over four players: (12000 + 28000) / 4.
+		"platform.bps_per_player": 10000,
+	} {
+		got := capt.one(t, metric).Bucket.Sum
+		if got != want {
+			t.Errorf("%s = %v, want %v (the raw byte figure would be %v)", metric, got, want, want/8)
+		}
+	}
+
+	// And the totals agree with the per-edge series they are built from. This
+	// is the assertion that would have caught the original defect: the two
+	// numbers sat on one screen and disagreed by a factor of eight.
+	var perEdgeTx float64
+	for _, r := range capt.byMetric("edge.tx_bps") {
+		perEdgeTx += r.Bucket.Sum
+	}
+	if got := capt.one(t, "platform.player_tx_bps").Bucket.Sum; got != perEdgeTx {
+		t.Errorf("platform total %v disagrees with the sum of the per-edge series %v", got, perEdgeTx)
+	}
+}

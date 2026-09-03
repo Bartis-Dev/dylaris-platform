@@ -288,7 +288,7 @@ function EdgeRow({ edge, load }: { edge: GatewayEdge; load: LoadHistory }) {
                     {online && s ? (
                         <>
                             <span className="text-(--base-07)">{s.active_mc_streams} players</span>
-                            <span>tx {formatBitsPerSec(s.tx_speed * 8)}</span>
+                            <Throughput txBps={s.tx_speed * 8} rxBps={s.rx_speed * 8} />
                         </>
                     ) : (
                         <span className="text-(--error-light)">offline</span>
@@ -301,6 +301,23 @@ function EdgeRow({ edge, load }: { edge: GatewayEdge; load: LoadHistory }) {
                     : null
             }
         />
+    );
+}
+
+/**
+ * Both directions, because both have their own ceiling.
+ *
+ * This line used to show transmit alone, which is the direction that saturates
+ * first on an edge and so reads as "the" throughput - but the link carries its
+ * rated speed each way at the same time, and an inbound-saturated host looked
+ * idle here. Named out/in rather than tx/rx: up and down are ambiguous about
+ * whose point of view they are, and tx/rx means nothing to most readers.
+ */
+function Throughput({ txBps, rxBps }: { txBps: number; rxBps: number }) {
+    return (
+        <span title="out = what this machine sends (tx), in = what it receives (rx). A full-duplex link carries its rated speed in each direction at once.">
+            out {formatBitsPerSec(txBps)} &middot; in {formatBitsPerSec(rxBps)}
+        </span>
     );
 }
 
@@ -320,7 +337,7 @@ function ComponentRow({ comp, extra, load }: { comp: GatewayComponentView; extra
                     <span>{comp.host}</span>
                     {comp.region && <span>{comp.region}</span>}
                     <span className="text-(--base-07)">{extra}</span>
-                    <span>tx {formatBitsPerSec(comp.txBps)}</span>
+                    <Throughput txBps={comp.txBps} rxBps={comp.rxBps} />
                     {comp.uptimeSec !== undefined && comp.uptimeSec > 0 && (
                         <span title="process uptime">up {formatUptime(comp.uptimeSec)}</span>
                     )}

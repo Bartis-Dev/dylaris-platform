@@ -431,7 +431,11 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 	edges := GetEdgesFromRedis(ctx, c.redis)
 	var onlineEdges int
 	var players int64
-	var totalRx, totalTx uint64
+	// In BITS per second, like every other throughput figure here. The edge
+	// reports bytes (see the conversion below), so the accumulation converts
+	// too - the platform totals are the same reading as the per-edge series and
+	// must not disagree with it by a factor of eight.
+	var totalRxBits, totalTxBits uint64
 	for _, e := range edges {
 		up := 0.0
 		if e.Status == "online" {
@@ -460,8 +464,8 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 		c.obs("edge.tx_bps", e.EdgeID, e.Region, float64(s.TxSpeed)*8, now)
 		c.obs("edge.players", e.EdgeID, e.Region, float64(s.ActiveMCStreams), now)
 		players += s.ActiveMCStreams
-		totalRx += s.RxSpeed
-		totalTx += s.TxSpeed
+		totalRxBits += s.RxSpeed * 8
+		totalTxBits += s.TxSpeed * 8
 	}
 	if len(edges) > 0 {
 		c.obs("platform.edges", "", "", float64(len(edges)), now)
@@ -469,15 +473,21 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 		// The players number the whole record is built around. It comes from
 		// the edges because that is where a connection actually terminates.
 		c.obs("platform.players", "", "", float64(players), now)
-		c.obs("platform.player_rx_bps", "", "", float64(totalRx), now)
-		c.obs("platform.player_tx_bps", "", "", float64(totalTx), now)
+		c.obs("platform.player_rx_bps", "", "", float64(totalRxBits), now)
+		c.obs("platform.player_tx_bps", "", "", float64(totalTxBits), now)
 		// What ONE player costs in bandwidth, sampled rather than divided later:
 		// a quotient of two averages is not the average of the quotient, so
 		// dividing the monthly totals at read time would give a number that is
 		// close and wrong. Recorded per sample, the bucket min/max are then the
 		// real quietest and busiest player load seen in that window.
+		//
+		// Both directions together, which is what makes it a cost figure rather
+		// than a capacity figure: a link's rated speed applies to each
+		// direction on its own, so this number must never be used to ask how
+		// many players fit on an uplink. The label says "in + out" for that
+		// reason, and player_tx_bps is the one to size against.
 		if players > 0 {
-			c.obs("platform.bps_per_player", "", "", float64(totalRx+totalTx)/float64(players), now)
+			c.obs("platform.bps_per_player", "", "", float64(totalRxBits+totalTxBits)/float64(players), now)
 		}
 	}
 

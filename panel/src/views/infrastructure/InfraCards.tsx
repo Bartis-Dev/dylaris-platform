@@ -148,8 +148,15 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
-export function formatSpeed(bps: number): string {
-  return `${formatBytes(bps)}/s`;
+/**
+ * A node's network speed, which arrives in BYTES per second (`rx_speed`).
+ *
+ * The parameter is named for what it is: feeding this a bits-per-second figure
+ * renders an eighth of the truth with a byte unit on it. The gateway screens
+ * work in bits and format with formatBitsPerSec instead.
+ */
+export function formatSpeed(bytesPerSec: number): string {
+  return `${formatBytes(bytesPerSec)}/s`;
 }
 
 export function ProgressBar({ value, max, color = 'accent' }: { value: number; max: number; color?: 'accent' | 'primary' | 'success' }) {

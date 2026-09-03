@@ -80,8 +80,8 @@ var Catalog = []Series{
 	// Traffic
 	{Metric: "platform.player_rx_bps", Label: "Player traffic in", Group: "Traffic", Kind: KindGauge, Unit: UnitBps},
 	{Metric: "platform.player_tx_bps", Label: "Player traffic out", Group: "Traffic", Kind: KindGauge, Unit: UnitBps},
-	{Metric: "platform.bps_per_player", Label: "Bandwidth per player", Group: "Traffic", Kind: KindGauge, Unit: UnitBps,
-		Help: "Sampled per reading rather than divided afterwards, so the minimum and maximum are real observations."},
+	{Metric: "platform.bps_per_player", Label: "Traffic per player (in + out)", Group: "Traffic", Kind: KindGauge, Unit: UnitBps,
+		Help: "Both directions added together, so this is what a player costs, not what an uplink can hold - a link carries its rated speed each way at the same time. Size against \"Player traffic out\". Sampled per reading rather than divided afterwards, so the minimum and maximum are real observations."},
 	{Metric: "platform.user_traffic_total_bytes", Label: "Customer traffic this month", Group: "Traffic", Kind: KindGauge, Unit: UnitBytes},
 	{Metric: "platform.user_traffic_avg_bytes", Label: "Average per customer", Group: "Traffic", Kind: KindGauge, Unit: UnitBytes},
 	{Metric: "platform.user_traffic_min_bytes", Label: "Lightest customer", Group: "Traffic", Kind: KindGauge, Unit: UnitBytes},

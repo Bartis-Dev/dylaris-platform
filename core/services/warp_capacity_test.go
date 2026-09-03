@@ -51,23 +51,35 @@ func setLeaderAlive(t *testing.T, mr *miniredis.Miniredis, leaderID string) {
 	mr.Set("dylaris:warp:"+leaderID+":alive", "1")
 }
 
+// Free capacity is the headroom of the BUSIER direction.
+//
+// The budget is a per-direction ceiling, because Ethernet is full duplex - so a
+// host has two headrooms and a leader placed on it needs both. Reading transmit
+// alone (what this did) reported a host saturated inbound as wide open, and
+// transmit is only usually the binding direction, never necessarily.
 func TestHostFreeBps(t *testing.T) {
 	cases := []struct {
 		name       string
 		budgetMbit int
 		txBps      uint64
+		rxBps      uint64
 		wantFree   int64
 		wantKnown  bool
 	}{
-		{"headroom", 1000, 900_000_000, 100_000_000, true},
-		{"unset budget is unknown", 0, 500_000_000, 0, false},
-		{"negative budget is unknown", -5, 0, 0, false},
-		{"over budget clamps to zero", 100, 200_000_000, 0, true},
-		{"idle host full budget", 1000, 0, 1_000_000_000, true},
+		{"headroom", 1000, 900_000_000, 0, 100_000_000, true},
+		{"unset budget is unknown", 0, 500_000_000, 0, 0, false},
+		{"negative budget is unknown", -5, 0, 0, 0, false},
+		{"over budget clamps to zero", 100, 200_000_000, 0, 0, true},
+		{"idle host full budget", 1000, 0, 0, 1_000_000_000, true},
+		// The direction that used to be invisible: a quiet uplink and a
+		// saturated downlink is a full host, not an empty one.
+		{"saturated inbound is not free", 1000, 0, 950_000_000, 50_000_000, true},
+		{"the busier direction wins", 1000, 400_000_000, 700_000_000, 300_000_000, true},
+		{"over budget inbound clamps to zero", 100, 0, 200_000_000, 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			free, known := hostFreeBps(hostAggregate{BudgetMbit: c.budgetMbit, TxBps: c.txBps})
+			free, known := hostFreeBps(hostAggregate{BudgetMbit: c.budgetMbit, TxBps: c.txBps, RxBps: c.rxBps})
 			if free != c.wantFree || known != c.wantKnown {
 				t.Fatalf("got (%d,%v), want (%d,%v)", free, known, c.wantFree, c.wantKnown)
 			}

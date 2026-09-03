@@ -186,7 +186,11 @@ export function formatMetric(value: number, unit: MetricUnit): string {
         case 'bytes':
             return formatScaled(value, ['B', 'KB', 'MB', 'GB', 'TB', 'PB'], 1024);
         case 'bps':
-            return formatScaled(value, ['bps', 'Kbps', 'Mbps', 'Gbps', 'Tbps'], 1000);
+            // "Mbit/s", not "Mbps" - the same spelling the Bandwidth tab uses,
+            // and for the same reason: Mbps is widely read as megaBYTES, which
+            // is an eightfold error in the direction of "plenty of room". These
+            // series are bits per second.
+            return formatScaled(value, ['bit/s', 'kbit/s', 'Mbit/s', 'Gbit/s', 'Tbit/s'], 1000);
         case 'percent':
             return `${round(value, 1)}%`;
         case 'seconds':

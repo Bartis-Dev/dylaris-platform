@@ -30,16 +30,27 @@ func (c gatewayCapacity) freeBpsForLeader(leaderID string) (int64, bool) {
 	return free, ok
 }
 
-// hostFreeBps converts a host aggregate into free transmit capacity in bits/s.
+// hostFreeBps converts a host aggregate into free capacity in bits/s.
 // The budget is BudgetMbit megabit/s (1 Mbit = 1e6 bits); a host with no
 // configured budget (BudgetMbit <= 0, i.e. BANDWIDTH_MBIT unset) has UNKNOWN
 // free capacity, not zero. Free is clamped at 0 so an over-budget host never
 // reports negative headroom.
+//
+// Measured against the BUSIER direction, not against transmit alone. Ethernet
+// is full duplex, so BudgetMbit is a ceiling for each direction separately -
+// which means there are two headrooms, and a leader placed here needs both.
+// Transmit is usually the binding one on a host that also runs an edge (players
+// download far more than they upload), so this rarely changes the answer; where
+// it does, the old reading was the optimistic one.
 func hostFreeBps(agg hostAggregate) (int64, bool) {
 	if agg.BudgetMbit <= 0 {
 		return 0, false
 	}
-	free := int64(agg.BudgetMbit)*1_000_000 - int64(agg.TxBps)
+	busier := agg.TxBps
+	if agg.RxBps > busier {
+		busier = agg.RxBps
+	}
+	free := int64(agg.BudgetMbit)*1_000_000 - int64(busier)
 	if free < 0 {
 		free = 0
 	}
