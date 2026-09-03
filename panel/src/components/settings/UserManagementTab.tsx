@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import {
     ShieldCheck, Mail, KeyRound, Trash2, HelpCircle, Send, Loader2, Plus, X, FileText, UserCog,
+    AlertTriangle,
 } from 'lucide-react';
 import {
     AuthPolicy, SMTPConfig, MailProvider,
@@ -52,6 +53,10 @@ export default function UserManagementTab() {
     // auto-delete rule silently reverted the first. Loading it once removes the
     // second copy that made that possible.
     const [uncovered, setUncovered] = useState<{ missing: number; total: number } | null>(null);
+    // Whether Core can send mail at all. Core answers it by loading the same
+    // transport a real send loads, so this cannot say "configured" about a
+    // configuration that would not actually deliver.
+    const [mailConfigured, setMailConfigured] = useState<boolean | null>(null);
     const auth = useSettingsForm<AuthPolicy>({
         load: async () => {
             const res = await getAuthPolicy();
@@ -59,6 +64,7 @@ export default function UserManagementTab() {
             if (typeof res.accountsMissingSecurityQuestions === 'number') {
                 setUncovered({ missing: res.accountsMissingSecurityQuestions, total: res.accountsTotal ?? 0 });
             }
+            if (typeof res.mailConfigured === 'boolean') setMailConfigured(res.mailConfigured);
             return res.policy as AuthPolicy;
         },
         save: async policy => {
@@ -98,7 +104,9 @@ export default function UserManagementTab() {
 
             <div className="flex-1 overflow-y-auto pt-5">
                 <div className="space-y-6 max-w-3xl">
-                    {tab === 'signin' && <AuthPolicySection form={auth} uncovered={uncovered} />}
+                    {tab === 'signin' && (
+                        <AuthPolicySection form={auth} uncovered={uncovered} mailConfigured={mailConfigured} />
+                    )}
                     {tab === 'email' && <MailSection />}
                     {tab === 'accounts' && (
                         <>
@@ -171,9 +179,11 @@ function DemoAccountSection() {
 function AuthPolicySection({
     form,
     uncovered,
+    mailConfigured,
 }: {
     form: SettingsForm<AuthPolicy>;
     uncovered: { missing: number; total: number } | null;
+    mailConfigured: boolean | null;
 }) {
     const policy = form.value;
 
@@ -196,6 +206,26 @@ function AuthPolicySection({
     return (
         <SettingsCard title="Authentication policy" icon={Mail} form={form}>
             <div className="space-y-4">
+                {/* Everything on this card that reaches a person reaches them by
+                    mail: the verification link, the reset link, the notice sent
+                    before an inactive account is deleted. With no transport
+                    configured none of it is sent, and nothing else here would
+                    say so - the reset endpoint answers success either way, on
+                    purpose, so that it cannot be used to test whether an address
+                    has an account. That leaves this screen as the only place an
+                    operator can find out. */}
+                {mailConfigured === false && (
+                    <div className="flex items-start gap-2 bg-(--error-ghost) border border-(--error)/30 rounded-md p-3 text-xs">
+                        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-(--error-light)" />
+                        <span className="text-(--error-light)">
+                            <strong>No mail is configured, so nothing on this card can be delivered.</strong>{' '}
+                            Verification links, password resets and inactivity warnings are all
+                            silently dropped. Password reset still reports success to the person
+                            asking, so nobody but you can notice. Set it up under the{' '}
+                            <strong>Email</strong> tab and confirm it with the test send.
+                        </span>
+                    </div>
+                )}
                 <h4 className="mono-label text-(--base-07)">Registration</h4>
                 <ToggleRow
                     label="Allow self-registration"

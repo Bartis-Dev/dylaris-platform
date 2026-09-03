@@ -67,12 +67,24 @@ export async function getSystemFeatures(): Promise<{ success: boolean; features?
 
 // Admin-only GET — returns the same shape as the public /system/features map
 // but with a body shape ready to round-trip back through PUT.
-export async function getSystemFeaturesAdmin(): Promise<{ success: boolean; features?: FeatureFlagsAdminPayload; message?: string }> {
+/** enabledTicketCategories rides along with the flags because the Tickets
+ *  switch is a lie without it: a ticket must name an enabled category, so with
+ *  zero of them the module accepts nothing while reporting itself as on. Absent
+ *  when Core could not count them, which the screen treats as "say nothing"
+ *  rather than as zero. */
+type SystemFeaturesAdminResult = {
+    success: boolean;
+    features?: FeatureFlagsAdminPayload;
+    enabledTicketCategories?: number;
+    message?: string;
+};
+
+export async function getSystemFeaturesAdmin(): Promise<SystemFeaturesAdminResult> {
     try {
         const res = await fetch(`${API_URL}/admin/settings/features`, { headers: getAuthHeader() });
-        return (await handleResponse(res)) as { success: boolean; features?: FeatureFlagsAdminPayload; message?: string };
+        return (await handleResponse(res)) as SystemFeaturesAdminResult;
     } catch (err) {
-        return handleError(err) as { success: boolean; features?: FeatureFlagsAdminPayload; message?: string };
+        return handleError(err) as SystemFeaturesAdminResult;
     }
 }
 

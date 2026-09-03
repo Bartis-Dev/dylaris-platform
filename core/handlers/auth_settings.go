@@ -161,6 +161,27 @@ func (h *AuthSettingsHandler) GetAuthPolicy(w http.ResponseWriter, r *http.Reque
 		"success": true,
 		"policy":  LoadAuthPolicy(h.state),
 	}
+	// Whether mail can be sent AT ALL, answered by loading the transport the
+	// real senders load rather than by inspecting settings keys. A second
+	// "is it configured" rule beside the one that actually sends is how the two
+	// drift, and the whole point here is that the screen must not be able to
+	// disagree with reality.
+	//
+	// Every switch above it is a promise that a message will arrive:
+	// emailVerifyRequired refuses a login until one does, the reset link IS the
+	// message, and the inactive-account sweep warns before it deletes. With no
+	// transport the first of those locks every new account out at the moment it
+	// is switched on, and nothing anywhere says why - the reset endpoint answers
+	// success either way, deliberately, so that an attacker cannot enumerate
+	// accounts with it. That anti-enumeration is right and it is also why the
+	// operator is the one who needs telling.
+	//
+	// Purpose "auth", because that is what the reset and verification senders
+	// pass; a deployment may configure ticket mail and nothing else.
+	if h.state.Store != nil {
+		_, mailErr := mailer.Load(h.state.Store, "auth")
+		out["mailConfigured"] = mailErr == nil
+	}
 	// How many accounts "Require during password reset" does not actually
 	// cover. That toggle skips any user with no questions stored - deliberately,
 	// so it cannot lock out accounts that predate it - and the screen says so.

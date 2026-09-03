@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.14
+
+### Features
+- Password-reset and registration mail failures now appear under Infrastructure,
+  Errors. The reset endpoint reports success either way so that it cannot be
+  used to tell a real address from an invented one, which left nobody able to
+  see that mail was failing. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The authentication policy screen now says when no mail transport is
+  configured. Every switch on it promises a message - verification links,
+  password resets, inactivity warnings - and none of them were being sent.
+  `core` `panel`
+- The Tickets switch now warns when no enabled ticket category exists. A ticket
+  must name one, so turning the module on without a category makes every ticket
+  a customer submits fail. `core` `panel`
+
 ## 2026.09.03.13
 
 ### Features

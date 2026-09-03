@@ -70,6 +70,10 @@ export default function FeaturesTab() {
     // the backend still correctly 409s on enable if storage really isn't
     // configured, so failing open here just avoids a dead toggle.
     const [storageConfigured, setStorageConfigured] = useState<boolean | null>(null);
+    // Enabled ticket categories. null while unknown, and unknown is NOT treated
+    // as a problem - unlike storage this only warns, so a failed count must not
+    // invent a warning that is not there.
+    const [ticketCategories, setTicketCategories] = useState<number | null>(null);
 
     // WS5 custom-tab reverse proxy toggles - same save-on-click/blur pattern
     // as the platform flags above, but its own admin settings endpoint.
@@ -106,6 +110,9 @@ export default function FeaturesTab() {
             setLoading(false);
         });
         getSystemFeaturesAdmin().then(res => {
+            if (typeof res.enabledTicketCategories === 'number') {
+                setTicketCategories(res.enabledTicketCategories);
+            }
             if (res.success && res.features) {
                 setPlatformFlags(res.features);
                 // Seeding this is what makes the card savable at all: `dirty`
@@ -299,6 +306,23 @@ export default function FeaturesTab() {
                             <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-2">
                                 <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                                 <span>Requires Core file storage. Configure and save it under Settings, Core storage first.</span>
+                            </p>
+                        )}
+                        {/* A ticket must name an enabled category, so with none
+                            defined the module accepts nothing: every customer
+                            attempt fails with "Unknown or disabled category"
+                            while this screen reports the feature as on. Shown
+                            whether the switch is on or off, because it is just
+                            as wrong afterwards - deleting the last category
+                            breaks it again. */}
+                        {ticketCategories === 0 && (
+                            <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-2">
+                                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                <span>
+                                    No enabled ticket categories exist. Every ticket a customer
+                                    submits will be rejected until you create one under Settings,
+                                    Tickets.
+                                </span>
                             </p>
                         )}
                     </SwitchRow>

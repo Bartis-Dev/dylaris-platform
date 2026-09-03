@@ -257,9 +257,18 @@ func dropTelemetrySettings(db *sql.DB) error {
 	return nil
 }
 
-// applyPhase17Schema seeds the two First-Run Setup Wizard
-// settings rows used by the wizard + admin-reset ENV. Both default to empty
-// strings.
+// applyPhase17Schema seeds two settings rows that are INERT: nothing reads
+// either of them any more. setup_recovery_token lost its reader when the
+// break-glass rework replaced the recovery token with ADMIN_SECRET, and
+// last_admin_reset_nonce went with the DYLARIS_RESET_ADMINS path
+// (docs/superpowers/plans/2026-07-15-admin-secret-break-glass.md, which records
+// leaving this seed in place as a deliberate choice).
+//
+// Kept, and the comment corrected rather than the code deleted, because both
+// rows hold the empty string and dropping them is a migration that buys
+// nothing. But see dropTelemetrySettings above for the opposite call on the
+// same question - rows nothing reads are exactly what "a feature that is merely
+// switched off" looks like to whoever reads the settings table next.
 func applyPhase17Schema(db *sql.DB) error {
 	for _, k := range []string{"setup_recovery_token", "last_admin_reset_nonce"} {
 		if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ($1, '')

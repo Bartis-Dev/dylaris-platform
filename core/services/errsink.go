@@ -50,3 +50,17 @@ func logErrf(source, format string, args ...interface{}) {
 	log.Printf("%s: %s", source, msg)
 	errSink.Load().Error(source, msg)
 }
+
+// ReportOperatorError is logErrf for callers outside this package.
+//
+// It exists for the failures a REQUEST path swallows on purpose. The one that
+// motivated it is the password reset: the endpoint answers success whether the
+// mail went out or not, deliberately, so that nobody can enumerate accounts
+// with it - which leaves the operator as the only party who can be told, and
+// "just log for ops" was not telling anyone.
+//
+// The stream is capped at 500 entries and trims itself, which is what keeps a
+// hammered public endpoint from pushing every other error out of the record.
+func ReportOperatorError(source, format string, args ...interface{}) {
+	logErrf(source, format, args...)
+}

@@ -25,6 +25,13 @@ type gateFakeStore struct {
 	bulkCalls []bulkModpackCall
 }
 
+// The features GET counts enabled ticket categories, so this fake has to answer
+// it - the embedded nil store.Store panics otherwise. None here, which is the
+// state that makes the screen warn.
+func (f *gateFakeStore) ListTicketCategories(bool) ([]models.TicketCategory, error) {
+	return nil, nil
+}
+
 func (f *gateFakeStore) GetSetting(key string) (string, error) { return f.kv[key], nil }
 
 // SetSetting persists into the same map GetSetting reads from. Needed once a

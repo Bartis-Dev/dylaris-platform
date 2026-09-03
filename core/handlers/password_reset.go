@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/mailer"
+	"dylaris-core/services"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -96,9 +97,13 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 	}
 
 	if err := sendPasswordResetEmail(h.state, user.Email, user.Username, token, policy.PasswordResetLinkTTLMinutes); err != nil {
-		// Mail failed but the token is stored — the user can retry. Don't
-		// surface it: silent-success is the rule. Just log for ops.
-		log.Printf("forgot-password: send to %s failed: %v", user.Email, err)
+		// Mail failed but the token is stored — the user can retry. Not
+		// surfaced to the caller: silent-success is the rule, so that the
+		// endpoint cannot be used to tell a real address from an invented one.
+		// That is also why this goes to the operator's error stream and not
+		// only to the log - the requester is told nothing by design, so the
+		// operator is the only one left who can learn that resets are dead.
+		services.ReportOperatorError("password-reset", "send to %s failed: %v", user.Email, err)
 	}
 
 	LogIdentityAudit(h.state, r, AuditEventPasswordResetRequested, "", user.ID, map[string]interface{}{

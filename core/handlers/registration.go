@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/mailer"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-pkg/validate"
 
 	"golang.org/x/crypto/bcrypt"
@@ -199,7 +200,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 		// Send synchronously so the client gets a real result. Mail failures
 		// don't roll back the user — they can re-request verification.
 		if err := sendVerificationEmail(h.state, user.Email, user.Username, token); err != nil {
-			log.Printf("registration: send verification email to %s failed: %v", user.Email, err)
+			services.ReportOperatorError("registration", "send verification email to %s failed: %v", user.Email, err)
 			// Still report success — the account exists, user can resend.
 		}
 	} else {
@@ -331,7 +332,7 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := sendVerificationEmail(h.state, user.Email, user.Username, token); err != nil {
-		log.Printf("resend-verification: send to %s failed: %v", user.Email, err)
+		services.ReportOperatorError("registration", "resend verification to %s failed: %v", user.Email, err)
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

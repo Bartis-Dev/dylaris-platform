@@ -69,10 +69,30 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		UserAPIKeyAllowedCaps: strings.Join(
 			h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context()), ","),
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"success":  true,
 		"features": out,
-	})
+	}
+	// How many ENABLED ticket categories exist, because switching Tickets on
+	// without one produces a support system that accepts nothing: creating a
+	// ticket requires a valid, enabled category, so every customer attempt
+	// fails with "Unknown or disabled category" and the operator's own screen
+	// looks fine. Measured in production on 2026-09-03: the flag was off and
+	// ticket_categories held zero rows, so turning it on would have shipped
+	// exactly that.
+	//
+	// Same shape as accountsMissingSecurityQuestions on the auth policy: a
+	// number the screen needs in order to say what a switch will really do.
+	// Best-effort - a count that cannot be read omits the hint rather than
+	// failing the settings screen.
+	if h.state.Store != nil {
+		if cats, err := h.state.Store.ListTicketCategories(false); err == nil {
+			resp["enabledTicketCategories"] = len(cats)
+		} else {
+			log.Printf("feature-settings: could not count ticket categories: %v", err)
+		}
+	}
+	json.NewEncoder(w).Encode(resp)
 }
 
 // Set PUT /api/admin/settings/features — write the bundle. Each setting key
