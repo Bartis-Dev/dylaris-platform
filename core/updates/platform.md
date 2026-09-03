@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Node CPU, RAM and server count are read from the node's heartbeat, which the
+  long-term recorder was not reading. Every machine was recorded at 0% CPU with
+  0 servers, and node memory was never recorded at all. `core`
+- A node that is online but has not reported now records no load figures rather
+  than zeros, so "no measurement" stops looking like an idle machine. `core`
+
 ## 2026.09.03.10
 
 ### Features

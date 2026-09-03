@@ -358,6 +358,12 @@ func (c *MetricsCollector) samplePlatform(ctx context.Context, now time.Time) {
 	if err != nil {
 		return
 	}
+	// The live figures are NOT columns on the nodes table - they arrive in the
+	// node's heartbeat - so the rows have to be enriched before anything reads
+	// CPU, RAM or the server count off them. Skipping this is what made
+	// node.cpu_pct and node.servers a flat zero for the life of the record and
+	// left node.ram_pct with no rows at all.
+	withHeartbeat := EnrichNodesWithLiveStats(ctx, c.store, c.redis, nodes)
 	// Kept for sampleGateway, which runs later in the same tick and needs to
 	// know which links are customers'. Reading the table again there would be a
 	// second query per 30 seconds for an answer already in hand.
@@ -395,7 +401,7 @@ func (c *MetricsCollector) samplePlatform(ctx context.Context, now time.Time) {
 		} else {
 			platform++
 		}
-		c.sampleNode(ctx, n, now)
+		c.sampleNode(n, withHeartbeat[n.Token], now)
 	}
 
 	// platform.nodes is OUR fleet: platform + external. It is what
@@ -431,7 +437,7 @@ func (c *MetricsCollector) samplePlatform(ctx context.Context, now time.Time) {
 // A boolean averaged over a bucket IS the availability fraction, which is why
 // it is recorded as a number rather than inferred later from gaps - a gap is
 // ambiguous between "down" and "nothing was sampling".
-func (c *MetricsCollector) sampleNode(_ context.Context, n *models.Node, now time.Time) {
+func (c *MetricsCollector) sampleNode(n *models.Node, hasHeartbeat bool, now time.Time) {
 	up := 0.0
 	if n.Status == "online" {
 		up = 1
@@ -441,6 +447,14 @@ func (c *MetricsCollector) sampleNode(_ context.Context, n *models.Node, now tim
 		// CPU and RAM from an offline node are the last values seen, not
 		// current ones. Recording them would put a flatline into the average
 		// that reads like a healthy idle machine.
+		return
+	}
+	// No heartbeat is not a reading of zero, and the struct cannot tell them
+	// apart: these fields are not persisted, so an unenriched or unreported node
+	// carries the zero value. The guard below is `>= 0` because the documented
+	// sentinel for "not available" is -1 - which a zero passes, so without this
+	// an absent heartbeat recorded a machine at 0% CPU running 0 servers.
+	if !hasHeartbeat {
 		return
 	}
 	if n.CPUUsage >= 0 {

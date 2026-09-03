@@ -2,6 +2,7 @@ package services
 
 import (
 	"dylaris-core/metrics"
+	"dylaris-core/models"
 	"dylaris-core/store"
 	"dylaris-pkg/protocol"
 	"strings"
@@ -545,5 +546,104 @@ func TestPlatformPlayerThroughputIsRecordedInBitsNotBytes(t *testing.T) {
 	}
 	if got := capt.one(t, "platform.player_tx_bps").Bucket.Sum; got != perEdgeTx {
 		t.Errorf("platform total %v disagrees with the sum of the per-edge series %v", got, perEdgeTx)
+	}
+}
+
+// nodeFakeStore is the narrow store the node sampling needs.
+type nodeFakeStore struct {
+	store.Store
+	nodes   []models.Node
+	perNode map[int]int
+}
+
+func (f *nodeFakeStore) ListNodes() ([]models.Node, error)           { return f.nodes, nil }
+func (f *nodeFakeStore) CountServersByNode(id int) (int, error)      { return f.perNode[id], nil }
+func (f *nodeFakeStore) CountUsers() (int, error)                    { return 0, nil }
+func (f *nodeFakeStore) ListServers(string) ([]models.Server, error) { return nil, nil }
+
+// A node's CPU, RAM and server count come from its HEARTBEAT, not from its row.
+//
+// models.Node documents these as "live stats from heartbeat (not persisted)".
+// The panel's infrastructure handler enriched the ListNodes result from
+// dylaris:discovery:<token> before reading them; the metrics collector read them
+// straight off the unenriched rows, where they are the zero value.
+//
+// Measured in production on 2026-09-03: node.cpu_pct and node.servers held 1218
+// rows each and every one was 0, on a machine running two servers, while
+// node.ram_pct and node.ram_used_bytes had NO rows at all - their guard is
+// RAMTotal > 0 and an unenriched RAMTotal is 0. The catalogue offered all four.
+func TestNodeLoadComesFromTheHeartbeatNotTheRow(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	mr.Set("dylaris:discovery:n-live", `{"cpuUsage":37.5,"ramFree":2000,"ramTotal":8000,"linkCount":2}`)
+
+	st := &nodeFakeStore{
+		nodes: []models.Node{
+			{ID: 1, Token: "n-live", Status: "online", Region: "eu"},
+			// Online, but silent: no heartbeat key. Its load is UNKNOWN, which
+			// is not the same as zero.
+			{ID: 2, Token: "n-quiet", Status: "online", Region: "eu"},
+		},
+		perNode: map[int]int{1: 3},
+	}
+
+	capt := &captureStore{}
+	c := NewMetricsCollector(st, rdb, nil,
+		fixedRecorder{metrics.NewRecorder(capt, time.Hour)},
+		NewFeatureFlags(settingsMap{MetricsEnabledSetting: "true"}))
+	c.SetLeader(fakeLeader{leader: true})
+	c.samplePlatform(t.Context(), time.Now())
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	for metric, want := range map[string]float64{
+		"node.cpu_pct":        37.5,
+		"node.servers":        3,
+		"node.ram_used_bytes": 6000, // 8000 total - 2000 free
+		"node.ram_pct":        75,   // and the series that had never been written
+	} {
+		rows := capt.byMetric(metric)
+		var got float64
+		var found bool
+		for _, r := range rows {
+			if r.Key.Subject == "n-live" {
+				got, found = r.Bucket.Sum, true
+			}
+		}
+		if !found {
+			t.Errorf("%s was never recorded; the heartbeat did not reach the sampler", metric)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s = %v, want %v", metric, got, want)
+		}
+	}
+
+	// The silent node is recorded as UP - that comes from its row, which is
+	// persisted - and contributes nothing else. Recording 0%% CPU and 0 servers
+	// for it would put an idle machine into the fleet average that nobody
+	// measured.
+	for _, metric := range []string{"node.cpu_pct", "node.servers", "node.ram_pct"} {
+		for _, r := range capt.byMetric(metric) {
+			if r.Key.Subject == "n-quiet" {
+				t.Errorf("%s recorded %v for a node with no heartbeat", metric, r.Bucket.Sum)
+			}
+		}
+	}
+	var sawUp bool
+	for _, r := range capt.byMetric("node.up") {
+		if r.Key.Subject == "n-quiet" {
+			sawUp = true
+		}
+	}
+	if !sawUp {
+		t.Error("a node with no heartbeat lost its availability series too")
 	}
 }

@@ -41,6 +41,10 @@ type NodeHeartbeat struct {
 	RAMTotal      uint64                 `json:"ramTotal"`
 	TotalCPU      float64                `json:"totalCpu"`
 	Storage       []HeartbeatStoragePath `json:"storage"`
+	// LinkCount is how many link containers the node runs. The node has always
+	// written it (main.go); this struct did not declare it, so the panel handler
+	// read the same key through a private duplicate of this type just to see it.
+	LinkCount int `json:"linkCount"`
 	// PortRange is the node's effective MC host-port range ("25600-25699") and
 	// PortRangeNotice is set only when the node fell back to its default because
 	// PORT_RANGE was unset or unparseable. Surfaced so an admin sees the ports

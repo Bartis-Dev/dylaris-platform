@@ -3,10 +3,8 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
-	"dylaris-core/models"
 	"dylaris-core/services"
 )
 
@@ -16,20 +14,6 @@ type InfrastructureHandler struct {
 
 func NewInfrastructureHandler(state *AppState) *InfrastructureHandler {
 	return &InfrastructureHandler{state: state}
-}
-
-// nodeHeartbeatStats is the subset we read from the Redis heartbeat key.
-type nodeHeartbeatStats struct {
-	CPUUsage        float64 `json:"cpuUsage"`
-	RAMFree         int64   `json:"ramFree"`
-	RAMTotal        uint64  `json:"ramTotal"`
-	LinkCount       int     `json:"linkCount"`
-	PortRange       string  `json:"portRange"`
-	PortRangeNotice string  `json:"portRangeNotice"`
-	// SharedStorage carries the node's own detection of a storage path mounted
-	// into more than one node. Passed straight through: the node is the only
-	// party that can see it, and it must not stay in that node's log.
-	SharedStorage []models.SharedStorageConflict `json:"sharedStorage"`
 }
 
 // GetOverview GET /api/infrastructure/overview - one payload for the
@@ -52,26 +36,9 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		nodes = nil
 	}
 
-	for i := range nodes {
-		count, _ := h.state.Store.CountServersByNode(nodes[i].ID)
-		nodes[i].ServerCount = count
-
-		// Node writes the heartbeat key every 5s — values may be up to that stale.
-		redisKey := fmt.Sprintf("dylaris:discovery:%s", nodes[i].Token)
-		val, redisErr := h.state.Redis.Get(ctx, redisKey).Result()
-		if redisErr == nil && val != "" {
-			var hb nodeHeartbeatStats
-			if jsonErr := json.Unmarshal([]byte(val), &hb); jsonErr == nil {
-				nodes[i].CPUUsage = hb.CPUUsage
-				nodes[i].RAMFree = hb.RAMFree
-				nodes[i].RAMTotal = hb.RAMTotal
-				nodes[i].LinkCount = hb.LinkCount
-				nodes[i].PortRange = hb.PortRange
-				nodes[i].PortRangeNotice = hb.PortRangeNotice
-				nodes[i].SharedStorage = hb.SharedStorage
-			}
-		}
-	}
+	// Shared with the metrics collector, which used to read these fields off an
+	// unenriched ListNodes result and record the zero value as a measurement.
+	services.EnrichNodesWithLiveStats(ctx, h.state.Store, h.state.Redis, nodes)
 
 	// Aggregate stats. Links are split by who RUNS them: a customer's BYON or
 	// route-only link going down is not an outage of this platform, so the

@@ -7,19 +7,27 @@ import (
 	"dylaris-core/store"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // metricsFakeStore embeds store.Store (nil) so it satisfies the full interface
 // while implementing only what the collector calls.
 type metricsFakeStore struct {
 	store.Store
-	nodes   []models.Node
-	servers []models.Server
-	users   int
+	nodes         []models.Node
+	servers       []models.Server
+	serversByNode map[int]int
+	users         int
 }
 
 func (f *metricsFakeStore) ListNodes() ([]models.Node, error) { return f.nodes, nil }
-func (f *metricsFakeStore) CountUsers() (int, error)          { return f.users, nil }
+
+// The collector enriches the node rows before reading their live figures, so
+// this is now one of the methods it calls. serversByNode is keyed by node ID.
+func (f *metricsFakeStore) CountServersByNode(id int) (int, error) { return f.serversByNode[id], nil }
+func (f *metricsFakeStore) CountUsers() (int, error)               { return f.users, nil }
 func (f *metricsFakeStore) ListServers(string) ([]models.Server, error) {
 	return f.servers, nil
 }
@@ -154,11 +162,32 @@ func TestAnOfflineNodeRecordsDownAndNotItsStaleReadings(t *testing.T) {
 	// ones. Recording them puts a flatline into the average that reads like a
 	// healthy idle machine - the graph would show the fleet coping while half
 	// of it was unreachable.
+	//
+	// The load values arrive through the HEARTBEAT, so the test seeds one
+	// rather than setting the struct fields. It used to set them by hand, which
+	// is why it stayed green while production recorded a flat zero for every
+	// node: those fields are not persisted, the collector read them off an
+	// unenriched row, and no test ever went through the path that fills them.
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	// Both nodes report; only the offline one's reading is stale.
+	mr.Set("dylaris:discovery:down", `{"cpuUsage":42,"ramTotal":100,"ramFree":40}`)
+	mr.Set("dylaris:discovery:up", `{"cpuUsage":10,"ramTotal":100,"ramFree":40}`)
+
 	st := &metricsFakeStore{nodes: []models.Node{
-		{Token: "down", Status: "offline", CPUUsage: 42, RAMTotal: 100, RAMFree: 40},
-		{Token: "up", Status: "online", CPUUsage: 10, RAMTotal: 100, RAMFree: 40, Region: "eu"},
+		{Token: "down", Status: "offline"},
+		{Token: "up", Status: "online", Region: "eu"},
 	}}
-	c, capt := newCollectorForTest(t, st, true, true)
+	capt := &captureStore{}
+	c := NewMetricsCollector(st, rdb, nil,
+		fixedRecorder{metrics.NewRecorder(capt, time.Hour)},
+		NewFeatureFlags(settingsMap{MetricsEnabledSetting: "true"}))
+	c.SetLeader(fakeLeader{leader: true})
 
 	c.sampleOnce(context.Background())
 	if err := c.recorders.Recorder().Flush(context.Background()); err != nil {
@@ -180,9 +209,14 @@ func TestAnOfflineNodeRecordsDownAndNotItsStaleReadings(t *testing.T) {
 			}
 		}
 	}
-	// The live one keeps its region, so a per-region reading stays per-region.
-	if got := capt.byMetric("node.cpu_pct"); len(got) != 1 || got[0].Key.Region != "eu" {
+	// The live one keeps its region, so a per-region reading stays per-region -
+	// and it carries the heartbeat's value, not the row's.
+	got := capt.byMetric("node.cpu_pct")
+	if len(got) != 1 || got[0].Key.Region != "eu" {
 		t.Fatalf("live node cpu row wrong: %+v", got)
+	}
+	if got[0].Bucket.Sum != 10 {
+		t.Errorf("node.cpu_pct = %v, want 10 from the heartbeat", got[0].Bucket.Sum)
 	}
 }
 
