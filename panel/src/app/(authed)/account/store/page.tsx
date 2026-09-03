@@ -89,6 +89,14 @@ export default function StoreConnectPage() {
                     <p className="text-sm text-(--base-07)">
                         You will be sent to the Dylaris store to sign in and confirm the link. Your panel account stays in full control; the store only learns which account to attach purchases to.
                     </p>
+                    {/* Said here because this is where somebody arrives who has just linked a
+                        NEW panel account expecting their servers to follow. They do not: servers,
+                        addresses and nodes are owned by the panel account that created them and
+                        there is no transfer. Learning that before the link is a decision; learning
+                        it after is a support ticket. */}
+                    <p className="text-sm text-(--base-06)">
+                        Linking attaches purchases to this account. It does not bring servers, protected addresses or nodes over from another panel account, because those stay with the account that created them.
+                    </p>
                     <button onClick={handleConnect} disabled={redirecting} className="btn btn-primary inline-flex items-center gap-2 w-fit disabled:opacity-60">
                         {redirecting ? <Loader2 size={16} className="animate-spin" /> : <Store size={16} />}
                         {redirecting ? 'Redirecting…' : 'Connect Store'}

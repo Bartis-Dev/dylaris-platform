@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.04.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The store link screens now say what linking actually moves. Connecting a
+  different panel account brings the subscription across, not your servers,
+  protected addresses or your own nodes, which stay with the account that
+  created them. `panel`
+
 ## 2026.09.03.15
 
 ### Features
