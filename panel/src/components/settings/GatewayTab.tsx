@@ -6,6 +6,7 @@ import {
     getRoutingMode, saveRoutingMode, getRoutingMigrationStatus,
     bulkDeleteRoutesBySuffix,
     RoutingMode, FileAccessMode,
+    getInfrastructureOverview, type GatewayEdge,
     API_URL,
 } from '@/lib/api';
 import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network } from 'lucide-react';
@@ -1103,6 +1104,14 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
     const [saving, setSaving] = useState(false);
     const [present, setPresent] = useState(false);
 
+    // What the EDGES report, which is a different question from what is stored.
+    // `present` only ever meant "a config row exists in Redis", so one save made
+    // this screen look settled forever - and on 2026-09-03 both production edges
+    // were running with no shield attached at all while it did. null = not
+    // asked yet or the request failed, which must not be rendered as either
+    // answer.
+    const [shield, setShield] = useState<{ total: number; up: number } | null>(null);
+
     // Snapshot of last-saved config for dirty detection.
     const snapshotRef = useRef<XDPConfig | null>(null);
     const [loadFailed, setLoadFailed] = useState(false);
@@ -1126,6 +1135,16 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
             setLoadFailed(true);
         } finally {
             setLoading(false);
+        }
+        // Best-effort and separate: the config is what this page edits, the
+        // edges are what it is claiming about. A failure here leaves the
+        // banner silent rather than asserting either state.
+        try {
+            const inf = await getInfrastructureOverview();
+            const edges = ((inf?.edges || []) as GatewayEdge[]).filter(e => e.status === 'online');
+            setShield({ total: edges.length, up: edges.filter(e => e.stats?.xdp_enabled).length });
+        } catch {
+            setShield(null);
         }
     }, []);
 
@@ -1179,6 +1198,20 @@ function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => voi
             description="Kernel-level packet filtering on every Edge replica. Changes are written to Redis and picked up by all Edges within about 30 seconds; saving triggers an automatic sidecar recreate, which is one to three seconds of downtime for the XDP shield while the Edge proxy itself stays up."
         >
             <div>
+                {/* The state of the actual shield comes first: everything below
+                    it is settings, and settings that reach nothing are worse
+                    than no settings, because they read as protection. */}
+                {!gatewayOff && shield !== null && shield.total > 0 && shield.up < shield.total && (
+                    <div className="mt-3 flex items-start gap-2 p-3 rounded-md bg-(--danger)/10 border border-(--danger)/40 text-xs text-(--base-09)">
+                        <AlertTriangle size={14} className="text-(--danger-light) mt-0.5 shrink-0" />
+                        <span>
+                            {shield.up === 0
+                                ? `The shield is not loaded on any of the ${shield.total} online edge${shield.total === 1 ? '' : 's'}. Nothing on this page is filtering traffic.`
+                                : `The shield is not loaded on ${shield.total - shield.up} of ${shield.total} online edges. Those edges are filtering nothing.`}
+                            {' '}An edge loads it when <span className="font-mono">XDP_ENABLED</span> is set in its deployment; the settings below only take effect where it is.
+                        </span>
+                    </div>
+                )}
                 {!present && !gatewayOff && (
                     <div className="mt-3 flex items-start gap-2 p-3 rounded-md bg-(--accent)/5 border border-(--accent-border)/40 text-xs text-(--base-08)">
                         <AlertTriangle size={14} className="text-(--accent-light) mt-0.5 shrink-0" />

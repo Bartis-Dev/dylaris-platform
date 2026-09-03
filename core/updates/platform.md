@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.12
+
+### Features
+- The statistics record now covers the DDoS shield: whether it is loaded on each
+  edge, the packets it passed, the packets it dropped by block or by rate limit,
+  and how many addresses it is holding out. The edge has always published these
+  and nothing had ever read them. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Settings, Gateway, DDoS Protection now says when the shield is not loaded on
+  an edge. Its only warning meant "no config saved yet", so one save made the
+  page look settled while edges ran with no filter attached. An edge loads the
+  shield when `XDP_ENABLED` is set in its deployment. `core` `panel`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.03.11
 
 ### Features
