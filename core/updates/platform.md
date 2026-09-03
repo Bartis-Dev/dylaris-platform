@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.15
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A backup restore whose node goes offline is now shown as paused, with the
+  reason. It stayed on "queued" with a pulsing spinner forever, because only the
+  node's reply ever moves that row. Nothing is lost either way - the restore
+  resumes when the node returns. `core` `panel`
+- The backups screen no longer refreshes every five seconds forever behind such
+  a restore. It treated the stuck row as work in progress and kept polling for
+  as long as the tab was open. `panel`
+
 ## 2026.09.03.14
 
 ### Features

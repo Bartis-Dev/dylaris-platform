@@ -618,6 +618,12 @@ export interface BackupRestore {
     completedAt?: string | null;
     status: 'queued' | 'running' | 'success' | 'failed';
     errorMessage: string;
+    /** Set at response time, not stored: still queued while the node that would
+     *  run it is gone. The status stays "queued" because the job sits on the
+     *  node's durable stream and really does resume - so this explains the wait
+     *  rather than declaring a failure. */
+    stalled?: boolean;
+    stallReason?: string;
 }
 export const listBackupRestores = (serverId: number): Promise<{ success: boolean; restores?: BackupRestore[] }> =>
     fetchAPI(`/servers/${serverId}/backup-restores`);

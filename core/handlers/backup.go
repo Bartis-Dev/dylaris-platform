@@ -635,7 +635,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 // ListRestores GET /api/servers/{id}/backup-restores
 // Recent restore history for a server, newest first.
 func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
-	serverID, _, ok := h.resolveServer(w, r)
+	serverID, srv, ok := h.resolveServer(w, r)
 	if !ok {
 		return
 	}
@@ -646,6 +646,11 @@ func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
 	}
 	if restores == nil {
 		restores = []models.BackupRestore{}
+	}
+	// A restore left "queued" by a node that went away looks exactly like one
+	// that is about to start. See restore_stall.go.
+	if srv != nil && h.state.GRPCRegistry != nil {
+		annotateStalledRestores(r.Context(), h.state.Redis, h.state.GRPCRegistry.IsConnected, srv.NodeID, srv.UUID, restores)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "restores": restores})
 }

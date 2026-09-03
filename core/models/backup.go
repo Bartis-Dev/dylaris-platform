@@ -83,4 +83,12 @@ type BackupRestore struct {
 	CompletedAt  *time.Time `json:"completedAt,omitempty"`
 	Status       string     `json:"status"` // queued | running | success | failed
 	ErrorMessage string     `json:"errorMessage"`
+
+	// Stalled is set at response time (not a DB column) when this restore is
+	// still queued and the node that would run it is not there. The status stays
+	// what it is: the job sits on the node's durable stream and really does
+	// resume, so calling it failed would be wrong in the common case of a node
+	// rebooting. Same treatment, and the same reasoning, as Server.InstallStalled.
+	Stalled     bool   `json:"stalled,omitempty"`
+	StallReason string `json:"stallReason,omitempty"`
 }

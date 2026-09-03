@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.15
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- If your node goes offline while a backup is being restored, the panel now says
+  the restore is paused and why, instead of showing it as still running. Nothing
+  is lost: it picks up on its own once your node is back. Nothing for you to
+  update - this is on our side.
+
 ## 2026.09.02.19
 
 ### Features

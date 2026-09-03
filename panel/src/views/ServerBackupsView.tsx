@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 
 import { Plus, Play, Trash2, Pencil, X, Download, Clock, HardDrive, CircleAlert, Save, Undo2, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import { restoresNeedPolling } from '@/lib/backupPolling';
 import {
     BackupJob, BackupRun, BackupStorage, BackupRestore,
     listBackupJobs, createBackupJob, updateBackupJob, deleteBackupJob, triggerBackupJob,
@@ -235,7 +236,7 @@ export default function ServerBackupsView() {
     // Refresh while any run or restore is in progress.
     useEffect(() => {
         const hasRunning = Object.values(runs).some(list => list.some(r => r.status === 'running'));
-        const hasPendingRestore = restoreHistory.some(r => r.status === 'queued' || r.status === 'running');
+        const hasPendingRestore = restoresNeedPolling(restoreHistory);
         if (!hasRunning && !hasPendingRestore) return;
         const interval = setInterval(reload, 5000);
         return () => clearInterval(interval);
@@ -472,12 +473,22 @@ export default function ServerBackupsView() {
                     <div className="space-y-1">
                         {restoreHistory.slice(0, 8).map(restore => (
                             <div key={restore.id} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-(--base-03)/40">
-                                <span className={`badge-dot ${restore.status === 'success' ? 'bg-(--success-light)' : restore.status === 'failed' ? 'bg-(--error)' : 'bg-(--warning) animate-pulse'}`} />
+                                {/* No pulse on a stalled one: the animation is the
+                                    claim that something is happening, and for
+                                    these nothing is until the node returns. */}
+                                <span className={`badge-dot ${restore.status === 'success' ? 'bg-(--success-light)' : restore.status === 'failed' ? 'bg-(--error)' : restore.stalled ? 'bg-(--warning)' : 'bg-(--warning) animate-pulse'}`} />
                                 <span className="text-sm text-(--base-08) flex-1">
                                     Run #{restore.runId}
                                     <span className="text-xs text-(--base-06) ml-2">{formatRel(restore.requestedAt)}</span>
                                 </span>
-                                <span className="badge badge-neutral capitalize">{restore.status}</span>
+                                <span className="badge badge-neutral capitalize">
+                                    {restore.stalled ? 'paused' : restore.status}
+                                </span>
+                                {restore.stalled && (
+                                    <span className="text-[10px] text-(--warning-light) max-w-xs truncate" title={restore.stallReason}>
+                                        {restore.stallReason}
+                                    </span>
+                                )}
                                 {restore.errorMessage && (
                                     <span className="text-[10px] text-(--error-light) max-w-xs truncate" title={restore.errorMessage}>
                                         {restore.errorMessage}
