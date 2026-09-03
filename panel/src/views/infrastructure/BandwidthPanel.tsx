@@ -457,7 +457,7 @@ function ComponentCell({
         <span className="text-[11px] text-(--base-06) ml-auto">rx {formatBitsPerSec(comp.rxBps)}</span>
       </div>
       <Sparkline
-        values={(series?.points ?? []).map(p => p.txBps)}
+        series={[{ values: (series?.points ?? []).map(p => p.txBps), color: 'var(--accent)', fill: true }]}
         max={sparkMax}
         title={`${comp.component} ${comp.id} transmit history`}
       />

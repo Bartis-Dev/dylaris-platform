@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.5
+
+### Features
+- Warp leaders and beam relays now record CPU and RAM once a minute. The
+  long-term record had this for edges only, so the two components without a
+  screen had no history either. It starts from the update - there is nothing to
+  backfill. `core`
+- The Gateway tab draws a CPU and RAM graph per component, with one range
+  switcher for the whole screen (15 min, 1 h, 6 h, 24 h). The rows are taller
+  and the meters much wider. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.03.4
 
 ### Features

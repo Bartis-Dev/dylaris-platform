@@ -121,6 +121,8 @@ var Catalog = []Series{
 	{Metric: "warp.peers", Label: "Overlay peers", Group: "Warp", Kind: KindGauge, Unit: UnitCount, PerSubject: true},
 	{Metric: "warp.peers_active", Label: "Overlay tunnels up", Group: "Warp", Kind: KindGauge, Unit: UnitCount, PerSubject: true,
 		Help: "Peers with a recent handshake. The gap to configured peers is the outage."},
+	{Metric: "warp.cpu_pct", Label: "Warp leader CPU", Group: "Warp", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
+	{Metric: "warp.ram_pct", Label: "Warp leader RAM", Group: "Warp", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
 	{Metric: "warp.restarts", Label: "Warp leader restarts", Group: "Warp", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
 
 	// Link
@@ -142,6 +144,8 @@ var Catalog = []Series{
 	{Metric: "beam.transfers_failed", Label: "Beam transfers refused", Group: "Beam", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
 		Help: "Reached the relay and did not get through: a bad ticket, no tunnel to the node, or a failed stream."},
 	{Metric: "beam.tunnels", Label: "Beam relay tunnels", Group: "Beam", Kind: KindGauge, Unit: UnitCount, PerSubject: true},
+	{Metric: "beam.cpu_pct", Label: "Beam relay CPU", Group: "Beam", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
+	{Metric: "beam.ram_pct", Label: "Beam relay RAM", Group: "Beam", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
 	{Metric: "beam.rx_bps", Label: "Beam relay in", Group: "Beam", Kind: KindGauge, Unit: UnitBps, PerSubject: true},
 	{Metric: "beam.tx_bps", Label: "Beam relay out", Group: "Beam", Kind: KindGauge, Unit: UnitBps, PerSubject: true},
 

@@ -270,3 +270,77 @@ func TestTheQuietestTenantDoesNotVanishFromTheMinimum(t *testing.T) {
 		t.Fatalf("minimum = %v, want 500", got)
 	}
 }
+
+// Warp leaders and beam relays cost a machine something, and until 2026-09-03
+// the long-term record held nothing about it. CPU and RAM are typed fields on
+// the telemetry record rather than entries in its Gauges map, so the loop that
+// turns a component's own numbers into series walked straight past them.
+func TestWarpAndBeamSystemLoadIsRecorded(t *testing.T) {
+	c, capt := newInfraCollector(t)
+	c.SetGatewayStats(gwSnapshot{
+		{Component: "warp", ID: "w1", Region: "eu", CPU: 12.5, RAMPct: 28},
+		{Component: "beam", ID: "b1", Region: "eu", CPU: 3, RAMPct: 9.5},
+	})
+	c.sampleGatewayComponents(time.Now())
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	for metric, want := range map[string]float64{
+		"warp.cpu_pct": 12.5,
+		"warp.ram_pct": 28,
+		"beam.cpu_pct": 3,
+		"beam.ram_pct": 9.5,
+	} {
+		row := capt.one(t, metric)
+		if row.Bucket.Sum != want {
+			t.Errorf("%s = %v, want %v", metric, row.Bucket.Sum, want)
+		}
+	}
+	// The subject has to be the component id, because that is what the screen
+	// showing these lines labels them with.
+	if s := capt.one(t, "warp.cpu_pct").Key.Subject; s != "w1" {
+		t.Errorf("warp.cpu_pct subject = %q, want the leader id", s)
+	}
+}
+
+// A component that does not measure its machine publishes 0 for both. The
+// splice and the link do exactly that, and recording it would put a permanent
+// flat zero into the record - which reads like an idle machine rather than like
+// an absent measurement.
+func TestAComponentThatMeasuresNothingRecordsNoLoad(t *testing.T) {
+	c, capt := newInfraCollector(t)
+	c.SetGatewayStats(gwSnapshot{
+		{Component: "splice", ID: "host-1", Counters: map[string]int64{"handover_ok": 1}},
+		{Component: "link", ID: "l1", Gauges: map[string]float64{"active_tunnels": 2}},
+	})
+	c.sampleGatewayComponents(time.Now())
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{"splice.cpu_pct", "splice.ram_pct", "link.cpu_pct", "link.ram_pct"} {
+		if got := capt.byMetric(m); len(got) != 0 {
+			t.Errorf("%s got %d rows; nothing publishes it", m, len(got))
+		}
+	}
+	// Their real numbers still arrive - this guard is about the two fields they
+	// leave empty, not about ignoring the component.
+	capt.one(t, "splice.handover_ok")
+	capt.one(t, "link.active_tunnels")
+}
+
+// An edge's CPU is recorded ONCE per tick, from the edge list in sampleGateway.
+// Recording it here as well would fold two readings of one machine into one
+// bucket and inflate its sample count, so the component loop skips edges - and
+// this pins that, because the skip is invisible until somebody counts.
+func TestAnEdgeIsNotRecordedTwice(t *testing.T) {
+	c, capt := newInfraCollector(t)
+	c.SetGatewayStats(gwSnapshot{{Component: "edge", ID: "e1", Region: "eu", CPU: 30, RAMPct: 44}})
+	c.sampleGatewayComponents(time.Now())
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := capt.byMetric("edge.cpu_pct"); len(got) != 0 {
+		t.Fatalf("the component loop recorded edge.cpu_pct; sampleGateway already does, so the bucket would hold two readings of one machine")
+	}
+}

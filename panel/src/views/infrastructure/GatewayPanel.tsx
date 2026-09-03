@@ -1,33 +1,42 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Cpu, MemoryStick, ArrowUpCircle } from 'lucide-react';
 import { getGatewayBandwidthOverview } from '@/lib/api';
+import { getMetricsSeries, type MetricsSeriesResponse } from '@/lib/api/metrics';
+import Sparkline from '@/components/infra/Sparkline';
 import { SpliceVersionSummary } from './InfraCards';
 import { useInfra } from './context';
 import { spliceImageMismatch } from '@/lib/spliceDrift';
 import { formatBitsPerSec, type GatewayBandwidthOverview, type GatewayComponentView } from '@/lib/bandwidth';
+import {
+    LOAD_RANGES, loadSeriesRequest, indexLoadSeries, type LoadRange, type LoadHistory,
+} from '@/lib/gatewayLoad';
 import type { GatewayEdge } from '@/lib/api';
 
 /**
- * What runs the gateway: edges, warp leaders and beam relays, one compact row
- * each, with what the machine costs.
+ * What runs the gateway: edges, warp leaders and beam relays, one row each,
+ * with what the machine costs and how that has moved.
  *
  * The three sections rather than one table, and this is the whole reason: each
  * kind has a number the others do not have. An edge carries PLAYERS and pins a
  * splice version, a warp leader holds PEERS, a beam relay has TRANSFERS in
- * flight. A single table would have to show all three columns for all three
- * kinds and leave two thirds of every row structurally blank.
+ * flight. A single table would show all three columns for all three kinds and
+ * leave two thirds of every row structurally blank.
  *
- * Two sources, deliberately. Edges come from the infrastructure overview, which
- * knows things the telemetry record does not - the address, the splice version,
- * whether the running splice is the pinned image. Warp and beam come from the
- * bandwidth mirror, which is the only place their live CPU and RAM exist.
+ * Three sources, each because it is the only one that has the answer:
+ *   - the infrastructure overview, for edges - it knows the address, the splice
+ *     version, and whether the running splice is the pinned image;
+ *   - the bandwidth mirror, for the LIVE CPU and RAM of warp and beam;
+ *   - the long-term metrics database, for the HISTORY behind the graphs. The
+ *     mirror holds one instant and nothing else, so it cannot draw a line.
  */
 
 export default function GatewayPanel() {
     const { edges } = useInfra();
     const [overview, setOverview] = useState<GatewayBandwidthOverview | null>(null);
+    const [range, setRange] = useState<LoadRange>('1h');
+    const [history, setHistory] = useState<MetricsSeriesResponse | null>(null);
 
     useEffect(() => {
         const load = () => { getGatewayBandwidthOverview().then(setOverview).catch(() => { /* keep the last snapshot */ }); };
@@ -36,13 +45,64 @@ export default function GatewayPanel() {
         return () => clearInterval(t);
     }, []);
 
+    // Every line in one request: six metrics, split per component. The API caps
+    // a request at 24 metrics, so this stays one round trip however many
+    // machines are in the fleet - the split happens server-side.
+    useEffect(() => {
+        let cancelled = false;
+        const fetchHistory = () => {
+            getMetricsSeries(loadSeriesRequest(range))
+                .then(res => { if (!cancelled) setHistory(res); })
+                .catch(() => { if (!cancelled) setHistory(null); });
+        };
+        fetchHistory();
+        // The buckets are a minute wide, so anything faster re-sends the same points.
+        const t = setInterval(fetchHistory, 60000);
+        return () => { cancelled = true; clearInterval(t); };
+    }, [range]);
+
+    const load: LoadHistory = useMemo(() => indexLoadSeries(history?.series), [history]);
+
     const of = (kind: string) => (overview?.components ?? []).filter(c => c.component === kind);
     const warp = of('warp');
     const beam = of('beam');
 
+    // Why there is no line, when there is none. Recording is OFF by default and
+    // that is not a fault, so it is said once at the top rather than as six
+    // identical empty charts that look like a broken screen.
+    const noHistory = history && history.available === false
+        ? history.reason === 'disabled'
+            ? 'Long-term statistics are switched off, so the graphs have nothing to draw. Turn them on under Settings, Features.'
+            : history.message || 'The statistics database could not be reached, so the graphs are empty.'
+        : null;
+
     return (
         <div className="flex flex-col gap-5">
             <SpliceVersionSummary edges={edges} />
+
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+                <span className="mono-label">Load history</span>
+                <div className="flex gap-1" role="group" aria-label="Time range">
+                    {LOAD_RANGES.map(r => (
+                        <button
+                            key={r}
+                            onClick={() => setRange(r)}
+                            aria-pressed={range === r}
+                            className={`px-2.5 py-1 rounded-sm text-xs font-medium transition-colors ${
+                                range === r ? 'bg-(--base-04) text-(--base-09)' : 'text-(--base-07) hover:text-(--base-09)'
+                            }`}
+                        >
+                            {r}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {noHistory && (
+                <div className="rounded-lg border border-(--base-03) bg-(--base-02) px-4 py-2.5 text-xs text-(--base-06)">
+                    {noHistory}
+                </div>
+            )}
 
             <Section
                 title="Edges"
@@ -51,7 +111,7 @@ export default function GatewayPanel() {
                 // section should not have to guess whether it is broken or idle.
                 empty="No edges registered. Edges auto-discover through Redis once one is deployed."
             >
-                {edges.map(e => <EdgeRow key={e.edge_id} edge={e} />)}
+                {edges.map(e => <EdgeRow key={e.edge_id} edge={e} load={load} />)}
             </Section>
 
             <Section
@@ -63,6 +123,7 @@ export default function GatewayPanel() {
                     <ComponentRow
                         key={c.id}
                         comp={c}
+                        load={load}
                         // Both numbers, because the gap between them IS the
                         // health of the overlay: a configured peer is a row,
                         // an active one is a tunnel that handshook recently.
@@ -77,7 +138,7 @@ export default function GatewayPanel() {
                 empty="No beam relay reporting. A relay appears here once it publishes telemetry."
             >
                 {beam.map(c => (
-                    <ComponentRow key={c.id} comp={c} extra={`${fmtGauge(c, 'active_transfers')} transfers`} />
+                    <ComponentRow key={c.id} comp={c} load={load} extra={`${fmtGauge(c, 'active_transfers')} transfers`} />
                 ))}
             </Section>
         </div>
@@ -110,18 +171,56 @@ function Section({ title, count, empty, children }: {
     );
 }
 
-/** A CPU or RAM reading: the number, with a thin bar behind it. */
-function Meter({ icon, pct, label }: { icon: React.ReactNode; pct: number; label: string }) {
+/** A CPU or RAM reading: a wide bar, the number, and the label. */
+function Meter({ icon, label, pct, color }: {
+    icon: React.ReactNode; label: string; pct: number; color: string;
+}) {
     return (
-        <div className="flex items-center gap-1.5 w-24 shrink-0" title={`${label} ${pct.toFixed(0)}%`}>
-            <span className="text-(--base-05)">{icon}</span>
-            <div className="flex-1 h-1 rounded-full bg-(--base-03) overflow-hidden">
+        <div className="flex items-center gap-2">
+            <span className="text-(--base-05) shrink-0">{icon}</span>
+            <span className="mono-label text-(--base-06) w-8 shrink-0">{label}</span>
+            <div className="w-52 h-1.5 rounded-full bg-(--base-03) overflow-hidden shrink-0">
                 <div
-                    className="h-full rounded-full bg-(--accent) transition-all duration-500"
-                    style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, Math.max(0, pct))}%`, backgroundColor: color }}
                 />
             </div>
-            <span className="text-[11px] font-mono tabular-nums text-(--base-07) w-8 text-right">{pct.toFixed(0)}%</span>
+            <span className="text-xs font-mono tabular-nums text-(--base-08) w-10 text-right shrink-0">
+                {pct.toFixed(0)}%
+            </span>
+        </div>
+    );
+}
+
+/**
+ * The load block: both meters and the graph behind them.
+ *
+ * The graph is fixed to a 0-100 scale rather than to the highest value in the
+ * window. A machine idling between 2 and 4 percent would otherwise draw the
+ * same alarming sawtooth as one swinging between 40 and 90, and the whole point
+ * of putting it next to the bar is that the two agree.
+ */
+function LoadBlock({ cpu, ram, history, label }: {
+    cpu: number; ram: number; history?: { cpu: number[]; ram: number[] }; label: string;
+}) {
+    return (
+        <div className="flex items-center gap-6 flex-wrap">
+            <div className="flex flex-col gap-2">
+                <Meter icon={<Cpu size={12} />} label="CPU" pct={cpu} color="var(--accent)" />
+                <Meter icon={<MemoryStick size={12} />} label="RAM" pct={ram} color="var(--primary)" />
+            </div>
+            <div className="w-44">
+                <Sparkline
+                    series={[
+                        { values: history?.cpu ?? [], color: 'var(--accent)' },
+                        { values: history?.ram ?? [], color: 'var(--primary)' },
+                    ]}
+                    max={100}
+                    height={44}
+                    title={`${label} CPU and RAM history`}
+                    empty="no history yet"
+                />
+            </div>
         </div>
     );
 }
@@ -135,11 +234,20 @@ function StatusDot({ online }: { online: boolean }) {
     );
 }
 
-function Row({ children }: { children: React.ReactNode }) {
-    return <div className="flex items-center gap-3 px-4 py-2.5 flex-wrap text-xs">{children}</div>;
+/** One instance: identity on the left, what it costs on the right. */
+function Row({ head, meta, load }: { head: React.ReactNode; meta: React.ReactNode; load: React.ReactNode }) {
+    return (
+        <div className="flex items-center justify-between gap-6 px-4 py-4 flex-wrap">
+            <div className="flex flex-col gap-1 min-w-56">
+                <div className="flex items-center gap-2 flex-wrap text-sm">{head}</div>
+                <div className="flex items-center gap-3 flex-wrap text-xs text-(--base-06) font-mono">{meta}</div>
+            </div>
+            {load}
+        </div>
+    );
 }
 
-function EdgeRow({ edge }: { edge: GatewayEdge }) {
+function EdgeRow({ edge, load }: { edge: GatewayEdge; load: LoadHistory }) {
     const online = edge.status === 'online';
     const s = edge.stats;
     const running = edge.splice_version || '';
@@ -151,71 +259,84 @@ function EdgeRow({ edge }: { edge: GatewayEdge }) {
     const wrongImage = spliceImageMismatch(edge.splice_image_running || '', edge.splice_image_available || '');
 
     return (
-        <Row>
-            <StatusDot online={online} />
-            <span className="font-medium text-(--base-09) truncate min-w-32">{edge.name}</span>
-            <span className="font-mono text-(--base-05) truncate">{edge.ip}:{edge.service_port}</span>
-            {edge.region && <span className="mono-label text-(--base-06)">{edge.region}</span>}
-            <div className="flex items-center gap-3 ml-auto flex-wrap justify-end">
-                {online && s ? (
-                    <>
-                        <Meter icon={<Cpu size={11} />} pct={s.cpu} label="CPU" />
-                        <Meter icon={<MemoryStick size={11} />} pct={s.ram_pct} label="RAM" />
-                        <span className="font-mono tabular-nums text-(--base-07) w-24 text-right">
-                            {s.active_mc_streams} players
+        <Row
+            head={
+                <>
+                    <StatusDot online={online} />
+                    <span className="font-medium text-(--base-09) truncate">{edge.name}</span>
+                    {behind ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--warning)/10 mono-label text-(--warning-light)">
+                            <ArrowUpCircle size={9} /> splice {running ? `v${running}` : 'unknown'} &rarr; v{latest}
                         </span>
-                        <span className="font-mono tabular-nums text-(--base-06) w-28 text-right">
-                            tx {formatBitsPerSec(s.tx_speed * 8)}
+                    ) : wrongImage ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--danger)/10 mono-label text-(--danger-light)">
+                            <ArrowUpCircle size={9} /> splice v{running || latest} &middot; wrong image
                         </span>
-                    </>
-                ) : (
-                    <span className="font-mono text-(--error-light)">offline</span>
-                )}
-                {behind ? (
-                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--warning)/10 mono-label text-(--warning-light)">
-                        <ArrowUpCircle size={9} /> splice {running ? `v${running}` : 'unknown'} &rarr; v{latest}
-                    </span>
-                ) : wrongImage ? (
-                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--danger)/10 mono-label text-(--danger-light)">
-                        <ArrowUpCircle size={9} /> splice v{running || latest} &middot; wrong image
-                    </span>
-                ) : (running || latest) ? (
-                    <span className="font-mono text-(--base-06)">splice v{running || latest}</span>
-                ) : null}
-            </div>
-        </Row>
+                    ) : (running || latest) ? (
+                        <span className="mono-label text-(--base-06)">splice v{running || latest}</span>
+                    ) : null}
+                </>
+            }
+            meta={
+                <>
+                    <span>{edge.ip}:{edge.service_port}</span>
+                    {edge.region && <span>{edge.region}</span>}
+                    {online && s ? (
+                        <>
+                            <span className="text-(--base-07)">{s.active_mc_streams} players</span>
+                            <span>tx {formatBitsPerSec(s.tx_speed * 8)}</span>
+                        </>
+                    ) : (
+                        <span className="text-(--error-light)">offline</span>
+                    )}
+                </>
+            }
+            load={
+                online && s
+                    ? <LoadBlock cpu={s.cpu} ram={s.ram_pct} history={load.get(`edge:${edge.edge_id}`)} label={edge.name} />
+                    : null
+            }
+        />
     );
 }
 
-function ComponentRow({ comp, extra }: { comp: GatewayComponentView; extra: string }) {
+function ComponentRow({ comp, extra, load }: { comp: GatewayComponentView; extra: string; load: LoadHistory }) {
     return (
-        <Row>
-            {/* Alive is always true here: a component has a mirror entry only
-                while it is reporting, and the entry expires on its own. */}
-            <StatusDot online={comp.alive} />
-            <span className="font-medium text-(--base-09) truncate min-w-32">{comp.id}</span>
-            <span className="font-mono text-(--base-05) truncate">{comp.host}</span>
-            {comp.region && <span className="mono-label text-(--base-06)">{comp.region}</span>}
-            <div className="flex items-center gap-3 ml-auto flex-wrap justify-end">
-                <Meter icon={<Cpu size={11} />} pct={comp.cpuPct} label="CPU" />
-                <Meter icon={<MemoryStick size={11} />} pct={comp.ramPct} label="RAM" />
-                <span className="font-mono tabular-nums text-(--base-07) w-24 text-right">{extra}</span>
-                <span className="font-mono tabular-nums text-(--base-06) w-28 text-right">
-                    tx {formatBitsPerSec(comp.txBps)}
-                </span>
-                {comp.uptimeSec !== undefined && comp.uptimeSec > 0 && (
-                    <span className="font-mono text-(--base-05) w-16 text-right" title="process uptime">
-                        up {formatUptime(comp.uptimeSec)}
-                    </span>
-                )}
-            </div>
-        </Row>
+        <Row
+            head={
+                <>
+                    {/* Alive is always true here: a component has a mirror entry
+                        only while it is reporting, and the entry expires on its own. */}
+                    <StatusDot online={comp.alive} />
+                    <span className="font-medium text-(--base-09) truncate">{comp.id}</span>
+                </>
+            }
+            meta={
+                <>
+                    <span>{comp.host}</span>
+                    {comp.region && <span>{comp.region}</span>}
+                    <span className="text-(--base-07)">{extra}</span>
+                    <span>tx {formatBitsPerSec(comp.txBps)}</span>
+                    {comp.uptimeSec !== undefined && comp.uptimeSec > 0 && (
+                        <span title="process uptime">up {formatUptime(comp.uptimeSec)}</span>
+                    )}
+                </>
+            }
+            load={
+                <LoadBlock
+                    cpu={comp.cpuPct}
+                    ram={comp.ramPct}
+                    history={load.get(`${comp.component}:${comp.id}`)}
+                    label={comp.id}
+                />
+            }
+        />
     );
 }
 
 // formatUptime renders a process age at one unit of precision. Days matter,
-// seconds do not: what a reader takes from this column is "did this restart
-// recently", not the exact age.
+// seconds do not: what a reader takes from this is "did this restart recently",
+// not the exact age.
 export function formatUptime(sec: number): string {
     if (sec < 60) return `${Math.floor(sec)}s`;
     if (sec < 3600) return `${Math.floor(sec / 60)}m`;

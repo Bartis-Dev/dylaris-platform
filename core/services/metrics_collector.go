@@ -227,8 +227,37 @@ func (c *MetricsCollector) sampleGatewayComponents(now time.Time) {
 			accepted++
 			c.obs(gs.Component+"."+name, gs.ID, gs.Region, v, now)
 		}
+		c.recordSystemLoad(gs, now)
 		c.recordRestart(gs, now)
 	}
+}
+
+// recordSystemLoad records what a gateway component costs its machine.
+//
+// CPU and RAM are TYPED fields on the record rather than entries in the Gauges
+// map, which is why they never reached the long-term store: the loop above
+// walks Counters and Gauges, and these two are neither. Measured 2026-09-03,
+// the metrics database held edge.cpu_pct and edge.ram_pct and NOTHING for warp
+// or beam - not a decision, just the gap this closes.
+//
+// Two guards, and both are the difference between a series and a lie:
+//
+//   - A component that does not measure its machine at all publishes 0 for
+//     both. The splice and the link do exactly that. Recording them would put
+//     a permanent flat zero into the record that reads like an idle machine
+//     rather than like an absent measurement. RAM is the discriminator and CPU
+//     cannot be: a running box never reports 0% memory used, while 0% CPU is an
+//     ordinary quiet second.
+//   - Edges are skipped HERE because sampleGateway already records them from
+//     the edge list, which is a different source with its own view of which
+//     edges exist. Recording both would fold two readings of one machine into
+//     one bucket and inflate its sample count.
+func (c *MetricsCollector) recordSystemLoad(gs protocol.GatewayStats, now time.Time) {
+	if gs.Component == "edge" || gs.RAMPct <= 0 {
+		return
+	}
+	c.obs(gs.Component+".cpu_pct", gs.ID, gs.Region, gs.CPU, now)
+	c.obs(gs.Component+".ram_pct", gs.ID, gs.Region, gs.RAMPct, now)
 }
 
 // recordRestart turns a component uptime into a restart COUNT.
