@@ -8,6 +8,37 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.8
+
+### Features
+- Warp leaders and beam relays now record throughput as well as CPU and RAM, so
+  the long-term record finally covers all three gateway components. It starts at
+  this update; there is nothing to backfill. `core`
+- Bandwidth is one row per host. Each service on it gets its own chart, framed
+  at its cap, with outbound above the centre line and inbound below it, and a
+  window switcher for 1 hour, 6 hours, 24 hours and 7 days. `core` `panel`
+- Throughput is written as **Mbit/s** rather than Mbps everywhere. Mbps is read
+  as megaBYTES often enough to matter on a screen used to judge headroom.
+  `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Edge throughput in the long-term record was stored in BYTES per second under a
+  bits-per-second name, so every long-term edge figure was an eighth of the
+  truth. Corrected from this update on; anything recorded before it stays eight
+  times too low. `core`
+- Utilisation and the bandwidth alerts only ever measured OUTBOUND traffic. A
+  component saturating its inbound direction read as idle and raised nothing -
+  the likelier failure for a beam relay taking uploads. Both directions are now
+  measured, and an alert says which one tripped. `core` `panel`
+- The statistics catalogue offered beam traffic in and out, which nothing had
+  ever recorded. Picking either drew an empty chart forever. `core`
+
 ## 2026.09.03.7
 
 ### Features

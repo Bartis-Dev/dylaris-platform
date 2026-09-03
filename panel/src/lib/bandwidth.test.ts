@@ -16,12 +16,12 @@ import type { WarpDecision } from './api/types';
 
 describe('formatBitsPerSec', () => {
   it('renders zero', () => {
-    expect(formatBitsPerSec(0)).toBe('0 bps');
+    expect(formatBitsPerSec(0)).toBe('0 bit/s');
   });
-  it('scales to Kbps/Mbps/Gbps (base 1000)', () => {
-    expect(formatBitsPerSec(1500)).toBe('1.5 Kbps');
-    expect(formatBitsPerSec(2_500_000)).toBe('2.5 Mbps');
-    expect(formatBitsPerSec(2_500_000_000)).toBe('2.5 Gbps');
+  it('scales to kbit/s/Mbit/s/Gbit/s (base 1000)', () => {
+    expect(formatBitsPerSec(1500)).toBe('1.5 kbit/s');
+    expect(formatBitsPerSec(2_500_000)).toBe('2.5 Mbit/s');
+    expect(formatBitsPerSec(2_500_000_000)).toBe('2.5 Gbit/s');
   });
 });
 
@@ -113,10 +113,21 @@ describe('seriesKey', () => {
 });
 
 describe('BANDWIDTH_RANGES', () => {
-  it('stops at 24h, which is how long the rows are kept', () => {
-    // gateway_bandwidth_stats keeps 24 hours. A longer range would draw a chart
-    // that is empty at its left edge and reads like an outage.
-    expect(BANDWIDTH_RANGES).toEqual(['15m', '1h', '6h', '24h']);
+  // This used to assert that nothing exceeded 24 hours, because the raw
+  // per-component rows are kept for exactly a day and a longer window came back
+  // empty at its left edge. That is no longer the whole story: past the raw
+  // retention the server answers from the long-term record instead, in the same
+  // response shape. So the assertion moved from "nothing is longer than a day"
+  // to "a longer window exists, and the screen can say why it might be empty".
+  it('offers a window past the raw retention', () => {
+    expect(BANDWIDTH_RANGES).toEqual(['1h', '6h', '24h', '7d']);
+  });
+
+  it('defaults to a window the raw rows can always answer', () => {
+    // The first entry is what the screen opens on. It has to be one that works
+    // without long-term statistics switched on, or the default view of a fresh
+    // install is an explanation instead of a chart.
+    expect(BANDWIDTH_RANGES[0]).toBe('1h');
   });
 });
 

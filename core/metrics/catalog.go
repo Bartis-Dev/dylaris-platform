@@ -121,6 +121,8 @@ var Catalog = []Series{
 	{Metric: "warp.peers", Label: "Overlay peers", Group: "Warp", Kind: KindGauge, Unit: UnitCount, PerSubject: true},
 	{Metric: "warp.peers_active", Label: "Overlay tunnels up", Group: "Warp", Kind: KindGauge, Unit: UnitCount, PerSubject: true,
 		Help: "Peers with a recent handshake. The gap to configured peers is the outage."},
+	{Metric: "warp.rx_bps", Label: "Warp leader in", Group: "Warp", Kind: KindGauge, Unit: UnitBps, PerSubject: true},
+	{Metric: "warp.tx_bps", Label: "Warp leader out", Group: "Warp", Kind: KindGauge, Unit: UnitBps, PerSubject: true},
 	{Metric: "warp.cpu_pct", Label: "Warp leader CPU", Group: "Warp", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
 	{Metric: "warp.ram_pct", Label: "Warp leader RAM", Group: "Warp", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
 	{Metric: "warp.restarts", Label: "Warp leader restarts", Group: "Warp", Kind: KindCounter, Unit: UnitCount, PerSubject: true},

@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestACumulativeCounterIsRecordedAsItsDelta(t *testing.T) {
@@ -342,5 +345,105 @@ func TestAnEdgeIsNotRecordedTwice(t *testing.T) {
 	}
 	if got := capt.byMetric("edge.cpu_pct"); len(got) != 0 {
 		t.Fatalf("the component loop recorded edge.cpu_pct; sampleGateway already does, so the bucket would hold two readings of one machine")
+	}
+}
+
+// Throughput for warp and beam, the same gap as CPU and RAM and closed with it.
+//
+// The catalog has listed beam.rx_bps and beam.tx_bps since it was written, and
+// a query for either returned nothing - the Statistics tab offered two series
+// that could never have a point in them.
+func TestWarpAndBeamThroughputIsRecorded(t *testing.T) {
+	c, capt := newInfraCollector(t)
+	c.SetGatewayStats(gwSnapshot{
+		{Component: "warp", ID: "w1", Region: "eu", RAMPct: 28, RxBps: 96_000_000, TxBps: 120_000_000},
+		{Component: "beam", ID: "b1", Region: "eu", RAMPct: 9, RxBps: 3_000_000, TxBps: 22_000_000},
+	})
+	c.sampleGatewayComponents(time.Now())
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for metric, want := range map[string]float64{
+		"warp.rx_bps": 96_000_000,
+		"warp.tx_bps": 120_000_000,
+		"beam.rx_bps": 3_000_000,
+		"beam.tx_bps": 22_000_000,
+	} {
+		if got := capt.one(t, metric).Bucket.Sum; got != want {
+			t.Errorf("%s = %v, want %v", metric, got, want)
+		}
+	}
+}
+
+// The splice and the link publish to the same telemetry stream and carry no
+// throughput of their own: the splice shares a namespace with an edge that
+// already reports every byte, and the link ships without a system monitor.
+// Recording them would put a permanent flat zero in the record, which reads
+// like a quiet component rather than like an absent measurement.
+func TestOnlyThroughputCarryingComponentsGetBpsSeries(t *testing.T) {
+	c, capt := newInfraCollector(t)
+	c.SetGatewayStats(gwSnapshot{
+		{Component: "splice", ID: "host-1", RAMPct: 40, Counters: map[string]int64{"handover_ok": 1}},
+		{Component: "link", ID: "l1", RAMPct: 20, Gauges: map[string]float64{"active_tunnels": 2}},
+	})
+	c.sampleGatewayComponents(time.Now())
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{"splice.rx_bps", "splice.tx_bps", "link.rx_bps", "link.tx_bps"} {
+		if got := capt.byMetric(m); len(got) != 0 {
+			t.Errorf("%s got %d rows; the component reports no throughput", m, len(got))
+		}
+	}
+	// Their CPU and RAM still arrive - this guard is about throughput alone.
+	capt.one(t, "splice.cpu_pct")
+	capt.one(t, "link.ram_pct")
+}
+
+// An edge's throughput reaches the long-term record through a different path
+// from every other component's, and that path reads a BYTES-per-second field.
+//
+// Measured against production on 2026-09-03: metric_samples held a peak of 7541
+// for eu-edge-01 where gateway_bandwidth_stats held 60328 over the same window,
+// an exact factor of eight on both edges. The metric is named _bps and the
+// catalog declares it UnitBps, so the record stored an eighth of the truth
+// under a name that said otherwise - and a week-long chart, which reads this
+// store, would have disagreed with an hour-long one by that factor.
+func TestEdgeThroughputIsRecordedInBitsNotBytes(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	// The edge publishes rx_speed/tx_speed in BYTES per second; those are the
+	// fields this path reads.
+	mr.Set("edge:registry:e1", `{"edge_id":"e1","region":"eu","status":"online"}`)
+	if _, err := rdb.XAdd(t.Context(), &redis.XAddArgs{
+		Stream: "dylaris:edge:e1:stats",
+		Values: map[string]any{"data": `{"cpu":10,"ram_pct":40,"rx_speed":1000,"tx_speed":2000}`},
+	}).Result(); err != nil {
+		t.Fatalf("seed stats: %v", err)
+	}
+
+	capt := &captureStore{}
+	c := NewMetricsCollector(nil, rdb, nil,
+		fixedRecorder{metrics.NewRecorder(capt, time.Hour)},
+		NewFeatureFlags(settingsMap{MetricsEnabledSetting: "true"}))
+	c.sampleGateway(t.Context(), time.Now())
+	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	for metric, want := range map[string]float64{
+		"edge.rx_bps": 8000,  // 1000 bytes/s
+		"edge.tx_bps": 16000, // 2000 bytes/s
+	} {
+		got := capt.one(t, metric).Bucket.Sum
+		if got != want {
+			t.Errorf("%s = %v, want %v (the raw byte figure would be %v)", metric, got, want, want/8)
+		}
 	}
 }

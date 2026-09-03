@@ -253,11 +253,31 @@ func (c *MetricsCollector) sampleGatewayComponents(now time.Time) {
 //     edges exist. Recording both would fold two readings of one machine into
 //     one bucket and inflate its sample count.
 func (c *MetricsCollector) recordSystemLoad(gs protocol.GatewayStats, now time.Time) {
-	if gs.Component == "edge" || gs.RAMPct <= 0 {
+	if gs.Component == "edge" {
+		// Recorded by sampleGateway from the edge list, which is a different
+		// source with its own view of which edges exist. Doing it here as well
+		// would fold two readings of one machine into one bucket.
 		return
 	}
-	c.obs(gs.Component+".cpu_pct", gs.ID, gs.Region, gs.CPU, now)
-	c.obs(gs.Component+".ram_pct", gs.ID, gs.Region, gs.RAMPct, now)
+	if gs.RAMPct > 0 {
+		c.obs(gs.Component+".cpu_pct", gs.ID, gs.Region, gs.CPU, now)
+		c.obs(gs.Component+".ram_pct", gs.ID, gs.Region, gs.RAMPct, now)
+	}
+	// Throughput, for the components that carry any. Same gap as CPU and RAM
+	// above and closed for the same reason: RxBps and TxBps are typed fields on
+	// the record rather than entries in its Gauges map, so the loop that turns a
+	// component's own numbers into series walked past them. The catalog has
+	// listed beam.rx_bps and beam.tx_bps since the day it was written and
+	// nothing has ever produced them.
+	//
+	// carriesThroughput is the same predicate the bandwidth view uses, and the
+	// same reasoning: the splice shares a namespace with an edge that already
+	// reports every byte, and the link ships without a system monitor. Both
+	// would record a permanent flat zero.
+	if carriesThroughput(gs.Component) {
+		c.obs(gs.Component+".rx_bps", gs.ID, gs.Region, float64(gs.RxBps), now)
+		c.obs(gs.Component+".tx_bps", gs.ID, gs.Region, float64(gs.TxBps), now)
+	}
 }
 
 // recordRestart turns a component uptime into a restart COUNT.
@@ -425,8 +445,19 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 		s := e.Stats
 		c.obs("edge.cpu_pct", e.EdgeID, e.Region, s.CPU, now)
 		c.obs("edge.ram_pct", e.EdgeID, e.Region, s.RAMPercent, now)
-		c.obs("edge.rx_bps", e.EdgeID, e.Region, float64(s.RxSpeed), now)
-		c.obs("edge.tx_bps", e.EdgeID, e.Region, float64(s.TxSpeed), now)
+		// TIMES EIGHT, and it is not a fudge. RxSpeed/TxSpeed come from the
+		// edge's legacy `rx_speed`/`tx_speed` fields, which are BYTES per
+		// second; the metric is named _bps and the catalog declares it UnitBps,
+		// so recording them raw stored an eighth of the truth under a name that
+		// said otherwise. Measured against gateway_bandwidth_stats over the
+		// same window on 2026-09-03: peak 7541 here against 60328 there, an
+		// exact factor of 8 on both edges.
+		//
+		// Everything else on this platform - the live view, the alerts, the
+		// per-component series below - is bits per second, which is why the
+		// conversion belongs here rather than the name changing.
+		c.obs("edge.rx_bps", e.EdgeID, e.Region, float64(s.RxSpeed)*8, now)
+		c.obs("edge.tx_bps", e.EdgeID, e.Region, float64(s.TxSpeed)*8, now)
 		c.obs("edge.players", e.EdgeID, e.Region, float64(s.ActiveMCStreams), now)
 		players += s.ActiveMCStreams
 		totalRx += s.RxSpeed

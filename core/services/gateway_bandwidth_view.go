@@ -2,10 +2,13 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"math"
 	"sort"
 	"time"
+
+	"dylaris-core/metrics"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -25,14 +28,21 @@ const (
 // only has a mirror entry while it is reporting (the entry self-expires via the
 // 90s TTL), so presence == alive.
 type GatewayComponentView struct {
-	Component string  `json:"component"`
-	ID        string  `json:"id"`
-	Host      string  `json:"host"`
-	Region    string  `json:"region"`
-	RxBps     uint64  `json:"rxBps"`
-	TxBps     uint64  `json:"txBps"`
-	CapMbit   int     `json:"capMbit"`
+	Component string `json:"component"`
+	ID        string `json:"id"`
+	Host      string `json:"host"`
+	Region    string `json:"region"`
+	RxBps     uint64 `json:"rxBps"`
+	TxBps     uint64 `json:"txBps"`
+	CapMbit   int    `json:"capMbit"`
+	// UtilPct is OUTBOUND against the cap; UtilPctRx is INBOUND against the
+	// same cap. Two figures rather than one, because Ethernet is full duplex: a
+	// 1 Gbit port carries a gigabit out and a gigabit in at the same time, so
+	// the directions do not share a budget. Everything here used to be outbound
+	// only, which meant a component saturating its inbound direction read as
+	// idle and raised no alert.
 	UtilPct   float64 `json:"utilPct"`
+	UtilPctRx float64 `json:"utilPctRx"`
 	CapKnown  bool    `json:"capKnown"`
 	Alive     bool    `json:"alive"`
 
@@ -59,6 +69,7 @@ type GatewayHostView struct {
 	TxBps       uint64  `json:"txBps"`
 	BudgetMbit  int     `json:"budgetMbit"`
 	UtilPct     float64 `json:"utilPct"`
+	UtilPctRx   float64 `json:"utilPctRx"`
 	CapKnown    bool    `json:"capKnown"`
 	CapMismatch bool    `json:"capMismatch"`
 	Components  int     `json:"components"`
@@ -73,6 +84,12 @@ type GatewayAlert struct {
 	ID        string  `json:"id,omitempty"`
 	UtilPct   float64 `json:"utilPct"`
 	Threshold int     `json:"threshold"`
+	// Which direction tripped: "out" or "in". Named rather than implied,
+	// because the two have different causes and different fixes - an edge runs
+	// out of outbound serving players, a relay runs out of inbound taking
+	// uploads - and an alert that did not say which sent the reader to look at
+	// the wrong graph.
+	Direction string `json:"direction"`
 }
 
 // GatewayBandwidthOverview is the panel payload. Slices are always non-nil so the
@@ -91,14 +108,18 @@ type BandwidthHistoryPoint struct {
 	CapMbit int    `json:"capMbit"`
 }
 
-// utilPct returns tx as a percentage of budget (megabit/s -> bits/s) and whether
-// the budget was known. budgetMbit <= 0 (BANDWIDTH_MBIT unset) means UNKNOWN, not
-// 0 percent.
-func utilPct(txBps uint64, budgetMbit int) (float64, bool) {
+// utilPct returns a rate as a percentage of the budget (megabit/s -> bits/s) and
+// whether the budget was known. budgetMbit <= 0 (BANDWIDTH_MBIT unset) means
+// UNKNOWN, not 0 percent.
+//
+// Called once per DIRECTION against the same budget. A full-duplex link carries
+// its rated speed each way simultaneously, so the cap is a ceiling for each
+// direction rather than a pot the two share.
+func utilPct(bps uint64, budgetMbit int) (float64, bool) {
 	if budgetMbit <= 0 {
 		return 0, false
 	}
-	return float64(txBps) / (float64(budgetMbit) * 1_000_000) * 100, true
+	return float64(bps) / (float64(budgetMbit) * 1_000_000) * 100, true
 }
 
 type utilSample struct {
@@ -143,6 +164,7 @@ func evaluateAlerts(rows []models.GatewayBandwidthRow, thresholdPct int, window 
 
 	type hostTickAgg struct {
 		tx     uint64
+		rx     uint64
 		budget int
 	}
 	hostTicks := map[string]map[time.Time]*hostTickAgg{}
@@ -164,6 +186,7 @@ func evaluateAlerts(rows []models.GatewayBandwidthRow, thresholdPct int, window 
 				m[r.Time] = a
 			}
 			a.tx += r.TxBps
+			a.rx += r.RxBps
 			if r.CapMbit > a.budget {
 				a.budget = r.CapMbit
 			}
@@ -179,34 +202,58 @@ func evaluateAlerts(rows []models.GatewayBandwidthRow, thresholdPct int, window 
 
 	// Non-nil so the JSON payload is [] not null, keeping the "slices are always
 	// non-nil" contract that the panel relies on to render without a null guard.
+	// BOTH directions, each against the same cap and each able to raise its own
+	// alert. This used to look at outbound only, which made a saturated inbound
+	// link the one kind of exhaustion nothing on the platform could see - and it
+	// is the likelier kind for a beam relay taking uploads or a warp leader
+	// forwarding traffic, precisely the two components that had no screen.
 	alerts := []GatewayAlert{}
 	for host, ticks := range hostTicks {
-		samples := make([]utilSample, 0, len(ticks))
+		out := make([]utilSample, 0, len(ticks))
+		in := make([]utilSample, 0, len(ticks))
 		for tt, a := range ticks {
 			u, known := utilPct(a.tx, a.budget)
-			samples = append(samples, utilSample{t: tt, util: u, known: known})
+			out = append(out, utilSample{t: tt, util: u, known: known})
+			uRx, knownRx := utilPct(a.rx, a.budget)
+			in = append(in, utilSample{t: tt, util: uRx, known: knownRx})
 		}
-		if latest, ok := sustainedOver(samples, thresholdPct); ok {
-			alerts = append(alerts, GatewayAlert{Kind: "host", Host: host, UtilPct: latest, Threshold: thresholdPct})
+		for _, d := range []struct {
+			name    string
+			samples []utilSample
+		}{{"out", out}, {"in", in}} {
+			if latest, ok := sustainedOver(d.samples, thresholdPct); ok {
+				alerts = append(alerts, GatewayAlert{
+					Kind: "host", Host: host, UtilPct: latest,
+					Threshold: thresholdPct, Direction: d.name,
+				})
+			}
 		}
 	}
 	for _, ticks := range compTicks {
-		samples := make([]utilSample, 0, len(ticks))
+		out := make([]utilSample, 0, len(ticks))
+		in := make([]utilSample, 0, len(ticks))
 		var last models.GatewayBandwidthRow
 		var lastT time.Time
 		for tt, r := range ticks {
 			u, known := utilPct(r.TxBps, r.CapMbit)
-			samples = append(samples, utilSample{t: tt, util: u, known: known})
+			out = append(out, utilSample{t: tt, util: u, known: known})
+			uRx, knownRx := utilPct(r.RxBps, r.CapMbit)
+			in = append(in, utilSample{t: tt, util: uRx, known: knownRx})
 			if tt.After(lastT) {
 				lastT = tt
 				last = r
 			}
 		}
-		if latest, ok := sustainedOver(samples, thresholdPct); ok {
-			alerts = append(alerts, GatewayAlert{
-				Kind: "component", Host: last.Host, Component: last.Component, ID: last.ID,
-				UtilPct: latest, Threshold: thresholdPct,
-			})
+		for _, d := range []struct {
+			name    string
+			samples []utilSample
+		}{{"out", out}, {"in", in}} {
+			if latest, ok := sustainedOver(d.samples, thresholdPct); ok {
+				alerts = append(alerts, GatewayAlert{
+					Kind: "component", Host: last.Host, Component: last.Component, ID: last.ID,
+					UtilPct: latest, Threshold: thresholdPct, Direction: d.name,
+				})
+			}
 		}
 	}
 
@@ -220,7 +267,13 @@ func evaluateAlerts(rows []models.GatewayBandwidthRow, thresholdPct int, window 
 		if alerts[i].Component != alerts[j].Component {
 			return alerts[i].Component < alerts[j].Component
 		}
-		return alerts[i].ID < alerts[j].ID
+		if alerts[i].ID != alerts[j].ID {
+			return alerts[i].ID < alerts[j].ID
+		}
+		// One subject can now raise two alerts, so the direction is part of the
+		// order too - without it the sort is unstable between them and the
+		// panel's list reshuffles on every poll.
+		return alerts[i].Direction < alerts[j].Direction
 	})
 	return alerts
 }
@@ -233,6 +286,28 @@ type BandwidthSeries struct {
 	Host      string                  `json:"host,omitempty"`
 	Region    string                  `json:"region,omitempty"`
 	Points    []BandwidthHistoryPoint `json:"points"`
+}
+
+// RawRetention is how long gateway_bandwidth_stats keeps a row.
+//
+// It is the boundary between the two sources this screen can be answered from:
+// inside it, the raw 30-second rows; past it, the one-minute buckets of the
+// long-term record. Stated here rather than at the call site because the
+// database enforces it (a TimescaleDB retention policy, or the hourly sweep on
+// plain Postgres) and a window longer than this would silently be empty at its
+// left edge - which reads as an outage rather than as a missing source.
+const RawRetention = 24 * time.Hour
+
+// LongTermSeriesFor names the metrics that answer a window past RawRetention,
+// per component kind. Both directions of each kind that carries throughput.
+//
+// carriesThroughput decides the kinds; this restates them as metric names
+// rather than deriving them, because a name that does not exist produces an
+// empty chart and no error anywhere.
+var LongTermSeriesFor = map[string][2]string{
+	"edge": {"edge.rx_bps", "edge.tx_bps"},
+	"warp": {"warp.rx_bps", "warp.tx_bps"},
+	"beam": {"beam.rx_bps", "beam.tx_bps"},
 }
 
 // BandwidthHistory is every series the bandwidth screen draws, in one payload.
@@ -396,10 +471,11 @@ func LoadGatewayBandwidthOverview(ctx context.Context, rdb *redis.Client, st sto
 						continue
 					}
 					u, known := utilPct(gs.TxBps, gs.CapMbit)
+					uRx, _ := utilPct(gs.RxBps, gs.CapMbit)
 					ov.Components = append(ov.Components, GatewayComponentView{
 						Component: gs.Component, ID: gs.ID, Host: gs.Host, Region: gs.Region,
 						RxBps: gs.RxBps, TxBps: gs.TxBps, CapMbit: gs.CapMbit,
-						UtilPct: u, CapKnown: known, Alive: true,
+						UtilPct: u, UtilPctRx: uRx, CapKnown: known, Alive: true,
 						CPUPct: gs.CPU, RAMPct: gs.RAMPct, UptimeSec: gs.UptimeSec,
 						Gauges: gs.Gauges,
 					})
@@ -422,9 +498,11 @@ func LoadGatewayBandwidthOverview(ctx context.Context, rdb *redis.Client, st sto
 						continue
 					}
 					u, known := utilPct(agg.TxBps, agg.BudgetMbit)
+					uRx, _ := utilPct(agg.RxBps, agg.BudgetMbit)
 					ov.Hosts = append(ov.Hosts, GatewayHostView{
 						Host: agg.Host, RxBps: agg.RxBps, TxBps: agg.TxBps, BudgetMbit: agg.BudgetMbit,
-						UtilPct: u, CapKnown: known, CapMismatch: agg.CapMismatch, Components: perHost[agg.Host],
+						UtilPct: u, UtilPctRx: uRx, CapKnown: known,
+						CapMismatch: agg.CapMismatch, Components: perHost[agg.Host],
 					})
 				}
 			}
@@ -493,4 +571,82 @@ func scanKeys(ctx context.Context, rdb *redis.Client, match string) []string {
 		}
 	}
 	return keys
+}
+
+// LongTermBandwidth builds the per-component series from the long-term record,
+// for a window the raw rows no longer cover.
+//
+// Only the COMPONENT series, and that is not a shortcut: the long-term record
+// keys a sample by metric, subject and region, and has no host column - a
+// gateway component's host is a live fact this store never learned. The screen
+// does not need one either, because it takes its rows from the live overview
+// (which does know the hosts) and looks each chart up by component and id.
+//
+// A metric with nothing recorded yields no series rather than a flat zero. The
+// difference matters right after this ships: warp and beam throughput starts
+// accumulating at the deploy, so "nothing yet" and "no traffic" are two
+// different pictures and only one of them is true.
+func LongTermBandwidth(ctx context.Context, db *sql.DB, from, to time.Time, step time.Duration) BandwidthHistory {
+	out := BandwidthHistory{
+		StepSec:    int(step / time.Second),
+		Components: []BandwidthSeries{},
+		Hosts:      []BandwidthSeries{},
+	}
+	if db == nil {
+		return out
+	}
+	type key struct{ component, id string }
+	byKey := map[key]*BandwidthSeries{}
+	// Points are indexed while both directions are collected, because rx and tx
+	// arrive as two separate series and have to be merged onto one timeline.
+	points := map[key]map[int64]*BandwidthHistoryPoint{}
+
+	for component, names := range LongTermSeriesFor {
+		for i, metric := range names {
+			res, err := metrics.Query(ctx, db, metrics.SeriesQuery{
+				Metric: metric, From: from, To: to, Step: step, SplitSubjects: true,
+			})
+			if err != nil {
+				continue
+			}
+			for _, sr := range res {
+				if sr.Subject == "" {
+					continue
+				}
+				k := key{component, sr.Subject}
+				if byKey[k] == nil {
+					byKey[k] = &BandwidthSeries{Component: component, ID: sr.Subject}
+					points[k] = map[int64]*BandwidthHistoryPoint{}
+				}
+				for _, p := range sr.Points {
+					ts := p.Time.Unix()
+					pt := points[k][ts]
+					if pt == nil {
+						pt = &BandwidthHistoryPoint{TS: ts}
+						points[k][ts] = pt
+					}
+					// The PEAK within the bucket, matching what the raw path
+					// does - a mean would flatter exactly the spikes this
+					// screen exists to find.
+					if i == 0 {
+						pt.RxBps = uint64(p.Max)
+					} else {
+						pt.TxBps = uint64(p.Max)
+					}
+				}
+			}
+		}
+	}
+
+	for k, series := range byKey {
+		series.Points = sortedPoints(points[k])
+		out.Components = append(out.Components, *series)
+	}
+	sort.Slice(out.Components, func(i, j int) bool {
+		if out.Components[i].Component != out.Components[j].Component {
+			return out.Components[i].Component < out.Components[j].Component
+		}
+		return out.Components[i].ID < out.Components[j].ID
+	})
+	return out
 }

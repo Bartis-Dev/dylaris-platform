@@ -37,9 +37,10 @@ func (h *GatewayBandwidthHandler) GetOverview(w http.ResponseWriter, r *http.Req
 // is 30 seconds, so there is nothing to reduce, and the shortest range is the
 // one somebody opens to watch a spike as it happens.
 //
-// 24h is the ceiling because gateway_bandwidth_stats keeps 24 hours (a
-// TimescaleDB retention policy, or the hourly DELETE sweep on plain Postgres).
-// Asking for more would return a window that is simply empty at its start.
+// Past 24 hours the raw rows are gone (gateway_bandwidth_stats keeps a day, by
+// a TimescaleDB retention policy or the hourly DELETE sweep on plain Postgres)
+// and the answer comes from the long-term record instead. GetHistory picks the
+// source from the window this returns; nothing else has to know there are two.
 func bandwidthRange(name string) (window, step time.Duration) {
 	switch name {
 	case "15m":
@@ -50,6 +51,10 @@ func bandwidthRange(name string) (window, step time.Duration) {
 		return 6 * time.Hour, 5 * time.Minute
 	case "12h":
 		return 12 * time.Hour, 10 * time.Minute
+	case "7d":
+		return 7 * 24 * time.Hour, 2 * time.Hour
+	case "30d":
+		return 30 * 24 * time.Hour, 6 * time.Hour
 	default:
 		return 24 * time.Hour, 15 * time.Minute
 	}
@@ -67,16 +72,45 @@ func (h *GatewayBandwidthHandler) GetHistory(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	window, step := bandwidthRange(r.URL.Query().Get("range"))
-	host := r.URL.Query().Get("host")
-	component := r.URL.Query().Get("component")
+	now := time.Now()
 
-	rows, err := h.state.Store.GetGatewayBandwidthHistory(time.Now().Add(-window), component, host)
+	// Past the raw retention the only source is the long-term record, and it
+	// only exists when an operator has switched long-term statistics on. Saying
+	// which of those it is matters: an empty chart because nobody enabled
+	// recording and an empty chart because a database is down are the same
+	// picture and opposite problems.
+	if window > services.RawRetention {
+		handle := h.state.Metrics.Handle()
+		if handle == nil || handle.Read == nil {
+			writeBandwidthHistory(w, services.BandwidthHistory{
+				StepSec: int(step / time.Second), Components: []services.BandwidthSeries{}, Hosts: []services.BandwidthSeries{},
+			}, "Windows longer than 24 hours come from the long-term statistics database, which is not recording. Turn it on in Settings, Features.")
+			return
+		}
+		out := services.LongTermBandwidth(r.Context(), handle.Read, now.Add(-window), now, step)
+		writeBandwidthHistory(w, out, "")
+		return
+	}
+
+	rows, err := h.state.Store.GetGatewayBandwidthHistory(now.Add(-window), r.URL.Query().Get("component"), r.URL.Query().Get("host"))
 	if err != nil {
 		rows = nil
 	}
+	writeBandwidthHistory(w, services.BuildBandwidthHistory(rows, step), "")
+}
 
+// writeBandwidthHistory emits the payload plus, when there is one, the reason a
+// window came back empty. The note rides in the same response rather than in a
+// status code: an empty history is a normal answer, not a failure.
+func writeBandwidthHistory(w http.ResponseWriter, out services.BandwidthHistory, note string) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(services.BuildBandwidthHistory(rows, step))
+	body := map[string]any{
+		"stepSec": out.StepSec, "components": out.Components, "hosts": out.Hosts,
+	}
+	if note != "" {
+		body["note"] = note
+	}
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // GetRebalance handles GET /api/gateway-bandwidth/rebalance - the F3 rebalancer

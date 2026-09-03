@@ -12,7 +12,11 @@ export interface GatewayComponentView {
   rxBps: number;
   txBps: number;
   capMbit: number;
+  /** Upload against the cap. */
   utilPct: number;
+  /** Download against the SAME cap: a full-duplex link carries its rated
+   *  speed in each direction at once, so the two are independent. */
+  utilPctRx: number;
   capKnown: boolean;
   alive: boolean;
   cpuPct: number;
@@ -28,6 +32,7 @@ export interface GatewayHostView {
   txBps: number;
   budgetMbit: number;
   utilPct: number;
+  utilPctRx: number;
   capKnown: boolean;
   capMismatch: boolean;
   components: number;
@@ -75,11 +80,22 @@ export interface BandwidthHistory {
   stepSec: number;
   components: BandwidthSeries[];
   hosts: BandwidthSeries[];
+  /** Why this window is empty, when it is. Absent on a normal answer. */
+  note?: string;
 }
 
-/** The ranges the switcher offers. 24h is the ceiling: the raw rows are kept
- *  for 24 hours and nothing older exists to draw. */
-export const BANDWIDTH_RANGES = ['15m', '1h', '6h', '24h'] as const;
+/**
+ * The windows the switcher offers.
+ *
+ * Up to 24 hours these come from the raw per-component rows, which are kept for
+ * exactly that long. Beyond it the server answers from the long-term record
+ * instead - the same response shape, a different table - so nothing here has to
+ * know there are two sources. What the panel DOES have to handle is `note`: a
+ * long window with long-term statistics switched off comes back empty with a
+ * sentence saying so, because an empty week and a disabled feature are the same
+ * picture and opposite problems.
+ */
+export const BANDWIDTH_RANGES = ['1h', '6h', '24h', '7d'] as const;
 export type BandwidthRange = (typeof BANDWIDTH_RANGES)[number];
 
 /** seriesKey identifies one component series across renders and selections. */
@@ -123,7 +139,7 @@ export function hostRows(
     if (!known.has(c.host)) {
       known.set(c.host, {
         host: c.host, rxBps: 0, txBps: 0, budgetMbit: 0,
-        utilPct: 0, capKnown: false, capMismatch: false, components: 0,
+        utilPct: 0, utilPctRx: 0, capKnown: false, capMismatch: false, components: 0,
       });
     }
   }
@@ -140,10 +156,18 @@ export function hostRows(
     });
 }
 
-// formatBitsPerSec renders a bits/second rate with base-1000 SI scaling.
+/**
+ * A bits/second rate, base-1000.
+ *
+ * Spelled "Mbit/s" rather than "Mbps". Both are correct, but Mbps is read as
+ * megaBYTES often enough to matter on a screen whose whole purpose is judging
+ * headroom - an eightfold misreading in the direction of "plenty of room".
+ * Mbit/s cannot be read that way, and it matches BANDWIDTH_MBIT, which is what
+ * an operator typed to produce the cap this is measured against.
+ */
 export function formatBitsPerSec(bps: number): string {
-  if (!isFinite(bps) || bps <= 0) return '0 bps';
-  const units = ['bps', 'Kbps', 'Mbps', 'Gbps', 'Tbps'];
+  if (!isFinite(bps) || bps <= 0) return '0 bit/s';
+  const units = ['bit/s', 'kbit/s', 'Mbit/s', 'Gbit/s', 'Tbit/s'];
   const i = Math.min(units.length - 1, Math.floor(Math.log(bps) / Math.log(1000)));
   return `${(bps / Math.pow(1000, i)).toFixed(1)} ${units[i]}`;
 }

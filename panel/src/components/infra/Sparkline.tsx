@@ -17,8 +17,18 @@ export interface SparkSeries {
     values: number[];
     /** A CSS colour, normally a design token: `var(--accent)`. */
     color: string;
-    /** Filled under the line. One filled series per chart at most. */
+    /** Filled under the line. */
     fill?: boolean;
+    /**
+     * Which way this series grows from the baseline.
+     *
+     * Giving any series a direction turns the chart into the mirrored shape
+     * every network graph uses: the baseline moves to the middle, "up" grows
+     * upward and "down" grows downward. It is the one arrangement where the two
+     * directions cannot be confused, because the picture says which is which
+     * without a legend to read.
+     */
+    direction?: 'up' | 'down';
 }
 
 export default function Sparkline({
@@ -29,6 +39,7 @@ export default function Sparkline({
     title,
     empty = 'no history',
     grid,
+    showBaseline = true,
 }: {
     series: SparkSeries[];
     max: number;
@@ -45,6 +56,13 @@ export default function Sparkline({
      * reading the chart.
      */
     grid?: number[];
+    /**
+     * Draw the mirrored chart's own zero line. Off when the surrounding box
+     * draws one continuous line across itself instead - two lines at the same
+     * y is two renderers landing on the same subpixel by agreement, and only
+     * one of them can be the one a reader is meant to see.
+     */
+    showBaseline?: boolean;
 }) {
     // One point cannot be a line. Said in words rather than drawn as a flat
     // line along the floor, which would read as real, quiet traffic.
@@ -65,11 +83,16 @@ export default function Sparkline({
     const W = 100;
     const H = height;
     const ceiling = max > 0 ? max : 1;
+    const mirrored = series.some(s => s.direction);
+    // Where zero sits, and how far a full-scale reading reaches from it.
+    const base = mirrored ? H / 2 : H - 1;
+    const span = mirrored ? H / 2 - 1 : H - 2;
 
-    const path = (values: number[]) => {
-        const step = W / (values.length - 1);
-        const y = (v: number) => H - Math.min(1, Math.max(0, v / ceiling)) * (H - 2) - 1;
-        return values.map((v, i) => `${(i * step).toFixed(2)},${y(v).toFixed(2)}`).join(' ');
+    const path = (s: SparkSeries) => {
+        const step = W / (s.values.length - 1);
+        const sign = s.direction === 'down' ? 1 : -1;
+        const y = (v: number) => base + sign * Math.min(1, Math.max(0, v / ceiling)) * span;
+        return s.values.map((v, i) => `${(i * step).toFixed(2)},${y(v).toFixed(2)}`).join(' ');
     };
 
     return (
@@ -98,11 +121,25 @@ export default function Sparkline({
                     vectorEffect="non-scaling-stroke"
                 />
             ))}
+            {mirrored && showBaseline && (
+                // The zero line. Without it a mirrored chart has no visible
+                // origin, and "below the middle" stops meaning anything.
+                <line
+                    x1={0}
+                    x2={W}
+                    y1={base}
+                    y2={base}
+                    stroke="var(--base-04)"
+                    strokeWidth={1}
+                    vectorEffect="non-scaling-stroke"
+                />
+            )}
             {drawable.map((s, i) => {
-                const line = path(s.values);
+                const line = path(s);
+                const closeAt = mirrored ? base : H;
                 return (
                     <g key={i}>
-                        {s.fill && <polygon points={`0,${H} ${line} ${W},${H}`} fill={s.color} opacity={0.12} />}
+                        {s.fill && <polygon points={`0,${closeAt} ${line} ${W},${closeAt}`} fill={s.color} opacity={0.14} />}
                         <polyline
                             points={line}
                             fill="none"
