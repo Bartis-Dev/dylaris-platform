@@ -31,8 +31,7 @@ function shellSlugs(): string[] {
 
 /** Tabs that must not render when their backend is absent, and what gates them. */
 const GATED: Record<string, string> = {
-    edges: 'gatewayDeployed',
-    routes: 'gatewayDeployed',
+    gateway: 'gatewayDeployed',
     bandwidth: 'gatewayEnabled',
 };
 
@@ -62,6 +61,31 @@ describe('infrastructure tab routes', () => {
             expect(src, `${slug} does not read ${gate}`).toContain(gate);
             expect(src, `${slug} does not refuse when ${gate} is false`).toContain('TabGuard');
         }
+    });
+
+    it('the addresses that moved still redirect', () => {
+        // Both were real URLs somebody could have bookmarked or pasted into a
+        // ticket. Deleting the page instead of redirecting turns those into a
+        // 404 with no clue where the screen went.
+        const edges = readFileSync(join(APP, 'edges', 'page.tsx'), 'utf8');
+        expect(edges, 'the old Edges address does not redirect').toContain('redirect(');
+        expect(edges).toContain('/infrastructure/gateway');
+
+        const routes = readFileSync(join(APP, 'routes', 'page.tsx'), 'utf8');
+        expect(routes, 'the old Routes address does not redirect').toContain('redirect(');
+        expect(routes).toContain('/admin/routes');
+    });
+
+    it('routes live under admin and still refuse without a gateway', () => {
+        // The tab bar is a static list there, so the page is the only thing
+        // that can tell an operator why the screen is empty.
+        const page = readFileSync(join(__dirname, '../../app/(authed)/admin/routes/page.tsx'), 'utf8');
+        expect(page).toContain('RoutesPanel');
+        expect(page, 'the admin routes page lists nothing and explains nothing without a gateway')
+            .toContain('none is deployed');
+
+        const layout = readFileSync(join(__dirname, '../../app/(authed)/admin/layout.tsx'), 'utf8');
+        expect(layout, 'the Routes tab is not in the admin tab bar').toContain("slug: 'routes'");
     });
 
     it('the index redirects rather than becoming an address of its own', () => {

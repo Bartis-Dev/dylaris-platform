@@ -237,7 +237,9 @@ var headlineSpecs = []headlineSpec{
 	{"splice.sessions_opened", "Player sessions carried", "total"},
 	{"splice.handover_ok", "Players carried through an edge restart", "total"},
 	{"splice.players_dropped", "Players dropped in a handover", "total"},
-	{"edge.restarts", "Edge restarts survived", "total"},
+	// "Edge restarts", not "survived": this series counts restarts. Whether
+	// anybody came through one is the line above, which measures it.
+	{"edge.restarts", "Edge restarts", "total"},
 	{"beam.transfers_started", "Beam transfers", "total"},
 	{"node.up", "Node availability", "avg"},
 	{"edge.up", "Edge availability", "avg"},

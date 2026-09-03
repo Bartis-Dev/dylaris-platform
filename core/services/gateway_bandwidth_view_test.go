@@ -104,24 +104,110 @@ func TestEvaluateAlerts_EmptyWindow(t *testing.T) {
 	}
 }
 
-func TestAggregateHostHistory(t *testing.T) {
+func TestBuildBandwidthHistorySeparatesComponentsAndSumsHosts(t *testing.T) {
 	t0 := time.Unix(1730000000, 0)
 	t1 := time.Unix(1730000030, 0)
 	rows := []models.GatewayBandwidthRow{
-		{Time: t1, Component: "warp", ID: "eu-1", Host: "h1", RxBps: 100, TxBps: 900, CapMbit: 1000},
-		{Time: t1, Component: "edge", ID: "eu-a", Host: "h1", RxBps: 50, TxBps: 100, CapMbit: 1000},
-		{Time: t0, Component: "warp", ID: "eu-1", Host: "h1", RxBps: 10, TxBps: 20, CapMbit: 1000},
+		{Time: t1, Component: "warp", ID: "eu-1", Host: "h1", Region: "eu", RxBps: 100, TxBps: 900, CapMbit: 1000},
+		{Time: t1, Component: "edge", ID: "eu-a", Host: "h1", Region: "eu", RxBps: 50, TxBps: 100, CapMbit: 1000},
+		{Time: t0, Component: "warp", ID: "eu-1", Host: "h1", Region: "eu", RxBps: 10, TxBps: 20, CapMbit: 1000},
 	}
-	got := AggregateHostHistory(rows)
-	if len(got) != 2 {
-		t.Fatalf("expected 2 points, got %d: %+v", len(got), got)
+	// Step 0: the shortest range is raw, so nothing is reduced here.
+	got := BuildBandwidthHistory(rows, 0)
+
+	if len(got.Components) != 2 {
+		t.Fatalf("expected 2 component series, got %d: %+v", len(got.Components), got.Components)
 	}
-	// Ascending by ts: t0 first.
-	if got[0].TS != t0.Unix() || got[0].TxBps != 20 {
-		t.Fatalf("unexpected point[0]: %+v", got[0])
+	// Sorted by host, then component, then id: edge before warp.
+	if got.Components[0].Component != "edge" || got.Components[0].ID != "eu-a" {
+		t.Fatalf("unexpected first series: %+v", got.Components[0])
 	}
-	if got[1].TS != t1.Unix() || got[1].RxBps != 150 || got[1].TxBps != 1000 || got[1].CapMbit != 1000 {
-		t.Fatalf("unexpected point[1]: %+v", got[1])
+	if len(got.Components[0].Points) != 1 || got.Components[0].Points[0].TxBps != 100 {
+		t.Fatalf("edge series should hold only the edge's own row: %+v", got.Components[0].Points)
+	}
+	if n := len(got.Components[1].Points); n != 2 {
+		t.Fatalf("warp series has %d points, want 2", n)
+	}
+
+	if len(got.Hosts) != 1 {
+		t.Fatalf("expected 1 host series, got %d", len(got.Hosts))
+	}
+	hp := got.Hosts[0].Points
+	if len(hp) != 2 {
+		t.Fatalf("host series has %d points, want 2: %+v", len(hp), hp)
+	}
+	// Ascending by ts, and the later tick is the sum of both components.
+	if hp[0].TS != t0.Unix() || hp[0].TxBps != 20 {
+		t.Fatalf("unexpected host point[0]: %+v", hp[0])
+	}
+	if hp[1].TS != t1.Unix() || hp[1].RxBps != 150 || hp[1].TxBps != 1000 || hp[1].CapMbit != 1000 {
+		t.Fatalf("unexpected host point[1]: %+v", hp[1])
+	}
+}
+
+// A host's peak is the peak of the SUMS, never the sum of the peaks.
+//
+// This is the whole reason the host series is built here instead of by adding
+// the component series together in the browser. Two components on one host peak
+// in different seconds; adding their bucket maxima reports a load the link
+// never carried, and it does so in the direction that looks like an emergency.
+func TestAHostPeakIsThePeakOfTheSums(t *testing.T) {
+	base := time.Unix(1730000000, 0)
+	rows := []models.GatewayBandwidthRow{
+		// One tick: the edge is busy, the warp leader is idle.
+		{Time: base, Component: "edge", ID: "a", Host: "h1", TxBps: 900, CapMbit: 1000},
+		{Time: base, Component: "warp", ID: "w", Host: "h1", TxBps: 100, CapMbit: 1000},
+		// The next tick, inside the same bucket: exactly the other way round.
+		{Time: base.Add(30 * time.Second), Component: "edge", ID: "a", Host: "h1", TxBps: 100, CapMbit: 1000},
+		{Time: base.Add(30 * time.Second), Component: "warp", ID: "w", Host: "h1", TxBps: 900, CapMbit: 1000},
+	}
+	got := BuildBandwidthHistory(rows, 5*time.Minute)
+
+	if len(got.Hosts) != 1 || len(got.Hosts[0].Points) != 1 {
+		t.Fatalf("expected both ticks in one bucket: %+v", got.Hosts)
+	}
+	if tx := got.Hosts[0].Points[0].TxBps; tx != 1000 {
+		t.Fatalf("host peak = %d, want 1000; summing the per-component peaks would give 1800", tx)
+	}
+}
+
+// A bucket keeps its PEAK. Averaging is the reduction that lies in the
+// dangerous direction: a link that saturated for two minutes inside a fifteen
+// minute bucket averages out to comfortable, and the reader is deciding whether
+// to buy more uplink.
+func TestABucketKeepsItsPeak(t *testing.T) {
+	base := time.Unix(1730000000, 0)
+	rows := []models.GatewayBandwidthRow{
+		{Time: base, Component: "edge", ID: "a", Host: "h1", RxBps: 10, TxBps: 100, CapMbit: 1000},
+		{Time: base.Add(30 * time.Second), Component: "edge", ID: "a", Host: "h1", RxBps: 90, TxBps: 950, CapMbit: 1000},
+		{Time: base.Add(60 * time.Second), Component: "edge", ID: "a", Host: "h1", RxBps: 20, TxBps: 120, CapMbit: 1000},
+	}
+	got := BuildBandwidthHistory(rows, 5*time.Minute)
+	if len(got.Components) != 1 || len(got.Components[0].Points) != 1 {
+		t.Fatalf("expected one bucket: %+v", got.Components)
+	}
+	p := got.Components[0].Points[0]
+	if p.TxBps != 950 || p.RxBps != 90 {
+		t.Fatalf("bucket = rx %d tx %d, want the peak rx 90 tx 950 (the mean would be rx 40 tx 390)", p.RxBps, p.TxBps)
+	}
+	// Stamped with the floor of the step GRID, not with the first row's own
+	// time: two components sampled a second apart must land on one x position
+	// or their sparklines do not line up.
+	want := base.Unix() - base.Unix()%300
+	if p.TS != want {
+		t.Fatalf("bucket stamped %d, want the floor of the step grid %d", p.TS, want)
+	}
+}
+
+// Empty in, empty out - and as [] rather than null, which is what lets the
+// panel iterate without a null guard. The same contract the overview keeps.
+func TestBuildBandwidthHistoryIsEmptyNotNull(t *testing.T) {
+	got := BuildBandwidthHistory(nil, time.Minute)
+	if got.Components == nil || got.Hosts == nil {
+		t.Fatalf("nil slices reach the panel as JSON null: %+v", got)
+	}
+	if got.StepSec != 60 {
+		t.Fatalf("stepSec = %d, want 60", got.StepSec)
 	}
 }
 

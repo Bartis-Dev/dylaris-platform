@@ -449,7 +449,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/gateway-bandwidth/history` | session | `settings.read` | - | `GatewayBandwidthHandler.GetHistory` | Time-bucketed summed throughput from gateway_bandwidth_stats. |
+| GET | `/api/gateway-bandwidth/history` | session | `settings.read` | - | `GatewayBandwidthHandler.GetHistory` | Every series the bandwidth screen draws, in one response: one per component and one per host. |
 | GET | `/api/gateway-bandwidth/overview` | session | `settings.read` | - | `GatewayBandwidthHandler.GetOverview` | Live per-component + per-host utilisation and sustained-threshold alerts. |
 | GET | `/api/gateway-bandwidth/rebalance` | session | `settings.read` | - | `GatewayBandwidthHandler.GetRebalance` | the F3 rebalancer mode + recent decision feed. |
 | POST | `/api/gateway-bandwidth/rebalance` | session | `settings.write` | - | `GatewayBandwidthHandler.SetRebalanceMode` | sets the warp rebalancer mode (off \| dry-run \| armed). |

@@ -36,21 +36,57 @@ func TestGatewayBandwidthGetHistory_ShapeAndRange(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rw.Code)
 	}
-	var body struct {
-		Points []struct {
-			TS    int64  `json:"ts"`
-			RxBps uint64 `json:"rxBps"`
-			TxBps uint64 `json:"txBps"`
-		} `json:"points"`
-	}
+	var body services.BandwidthHistory
 	if err := json.NewDecoder(rw.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Points) != 1 || body.Points[0].TS != t0.Unix() || body.Points[0].TxBps != 200 {
-		t.Fatalf("unexpected points: %+v", body.Points)
+	if body.StepSec != 300 {
+		t.Fatalf("stepSec = %d, want 300 for range=6h", body.StepSec)
+	}
+	if len(body.Components) != 1 || body.Components[0].Component != "warp" {
+		t.Fatalf("unexpected component series: %+v", body.Components)
+	}
+	if len(body.Hosts) != 1 || len(body.Hosts[0].Points) != 1 || body.Hosts[0].Points[0].TxBps != 200 {
+		t.Fatalf("unexpected host series: %+v", body.Hosts)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// The window a range name asks for, and the bucket its points land on.
+//
+// 24h is the ceiling on purpose: gateway_bandwidth_stats keeps 24 hours, so a
+// longer window would return a chart that is empty at its left edge and look
+// like an outage. An unknown name falls back to that ceiling rather than
+// erroring, because the only caller is the panel's own switcher.
+func TestBandwidthRangeWindowsAndSteps(t *testing.T) {
+	cases := []struct {
+		name   string
+		window time.Duration
+		step   time.Duration
+	}{
+		{"15m", 15 * time.Minute, 0},
+		{"1h", time.Hour, time.Minute},
+		{"6h", 6 * time.Hour, 5 * time.Minute},
+		{"12h", 12 * time.Hour, 10 * time.Minute},
+		{"24h", 24 * time.Hour, 15 * time.Minute},
+		{"", 24 * time.Hour, 15 * time.Minute},
+		{"7d", 24 * time.Hour, 15 * time.Minute},
+	}
+	for _, c := range cases {
+		w, s := bandwidthRange(c.name)
+		if w != c.window || s != c.step {
+			t.Errorf("range %q = (%v, %v), want (%v, %v)", c.name, w, s, c.window, c.step)
+		}
+		if w > 24*time.Hour {
+			t.Errorf("range %q asks for %v, past the 24h retention of gateway_bandwidth_stats", c.name, w)
+		}
+	}
+	// The shortest range is raw: the persist cadence is 30s, so there is
+	// nothing to reduce, and this is the range somebody opens to watch a spike.
+	if _, s := bandwidthRange("15m"); s != 0 {
+		t.Errorf("15m bucketed at %v; it is meant to be raw", s)
 	}
 }
 

@@ -35,6 +35,20 @@ type GatewayComponentView struct {
 	UtilPct   float64 `json:"utilPct"`
 	CapKnown  bool    `json:"capKnown"`
 	Alive     bool    `json:"alive"`
+
+	// What the machine costs, and how long this process has been up. Every
+	// component already publishes all three in the same record the throughput
+	// comes from; this view simply used to drop them, which is why the panel
+	// could show a warp leader's bandwidth but not whether it was busy.
+	CPUPct    float64 `json:"cpuPct"`
+	RAMPct    float64 `json:"ramPct"`
+	UptimeSec int64   `json:"uptimeSec,omitempty"`
+
+	// The component's own gauges, passed through rather than translated: a warp
+	// leader reports peers, a beam relay reports transfers in flight, and only
+	// the caller knows which of them it is about to label. Translating here
+	// would mean this file changing every time a component adds a number.
+	Gauges map[string]float64 `json:"gauges,omitempty"`
 }
 
 // GatewayHostView is the summed throughput of all components co-located on one
@@ -211,27 +225,146 @@ func evaluateAlerts(rows []models.GatewayBandwidthRow, thresholdPct int, window 
 	return alerts
 }
 
-// AggregateHostHistory sums per-component history rows into one point per tick
-// (rows of a tick share a Time): rx/tx summed, cap = max cap (the shared-uplink
-// budget rule). Output is ordered by time ascending. With a host filter applied
-// upstream the rows are one host's series; with none they are the fleet total.
-func AggregateHostHistory(rows []models.GatewayBandwidthRow) []BandwidthHistoryPoint {
-	byTS := map[int64]*BandwidthHistoryPoint{}
+// BandwidthSeries is one subject's throughput history: a single component
+// (Component+ID) or a whole host.
+type BandwidthSeries struct {
+	Component string                  `json:"component,omitempty"`
+	ID        string                  `json:"id,omitempty"`
+	Host      string                  `json:"host,omitempty"`
+	Region    string                  `json:"region,omitempty"`
+	Points    []BandwidthHistoryPoint `json:"points"`
+}
+
+// BandwidthHistory is every series the bandwidth screen draws, in one payload.
+//
+// One request rather than one per card: the screen shows a sparkline for each
+// component plus a full chart for whatever is selected, and at six components
+// that is seven round trips for data that comes from a single table scan.
+//
+// The host series are computed HERE and not by summing the component series in
+// the browser. Summing bucket maxima is not the maximum of the sums - each
+// component peaks in its own second - so a client-side sum would report a host
+// load that never happened. Below, the per-tick rows are summed first (rows of
+// one persist tick share a timestamp) and only then reduced.
+type BandwidthHistory struct {
+	StepSec    int               `json:"stepSec"`
+	Components []BandwidthSeries `json:"components"`
+	Hosts      []BandwidthSeries `json:"hosts"`
+}
+
+// BuildBandwidthHistory turns raw per-component rows into the panel payload,
+// reducing each step-wide bucket to its PEAK.
+//
+// Peak, not average, and that is the whole reason a step exists rather than
+// sending every row: 24 hours at the 30-second persist cadence is 2880 points
+// per component, and the obvious way to shrink it - averaging - is the one that
+// lies in the dangerous direction. A link that saturated for two minutes inside
+// a fifteen-minute bucket averages out to comfortable, and the reader is
+// deciding whether to buy more uplink. A step of 0 (or one at or below the
+// persist cadence) leaves the rows untouched, so the shortest range is raw.
+func BuildBandwidthHistory(rows []models.GatewayBandwidthRow, step time.Duration) BandwidthHistory {
+	out := BandwidthHistory{
+		StepSec:    int(step / time.Second),
+		Components: []BandwidthSeries{},
+		Hosts:      []BandwidthSeries{},
+	}
+
+	type compKey struct{ component, id string }
+	compBuckets := map[compKey]map[int64]*BandwidthHistoryPoint{}
+	compMeta := map[compKey]BandwidthSeries{}
+
+	// Host totals are summed at RAW tick resolution first; the reduction to
+	// buckets happens afterwards, over the summed series.
+	hostTicks := map[string]map[int64]*BandwidthHistoryPoint{}
+
 	for _, r := range rows {
 		ts := r.Time.Unix()
-		p := byTS[ts]
+		ck := compKey{r.Component, r.ID}
+		if _, ok := compMeta[ck]; !ok {
+			compMeta[ck] = BandwidthSeries{Component: r.Component, ID: r.ID, Host: r.Host, Region: r.Region}
+			compBuckets[ck] = map[int64]*BandwidthHistoryPoint{}
+		}
+		peakInto(compBuckets[ck], bucketOf(ts, step), r.RxBps, r.TxBps, r.CapMbit)
+
+		if r.Host == "" {
+			continue
+		}
+		m := hostTicks[r.Host]
+		if m == nil {
+			m = map[int64]*BandwidthHistoryPoint{}
+			hostTicks[r.Host] = m
+		}
+		p := m[ts]
 		if p == nil {
 			p = &BandwidthHistoryPoint{TS: ts}
-			byTS[ts] = p
+			m[ts] = p
 		}
 		p.RxBps += r.RxBps
 		p.TxBps += r.TxBps
+		// The shared-uplink rule the live view uses: co-located components
+		// describe ONE link, so the budget is the largest cap among them rather
+		// than their sum.
 		if r.CapMbit > p.CapMbit {
 			p.CapMbit = r.CapMbit
 		}
 	}
-	out := make([]BandwidthHistoryPoint, 0, len(byTS))
-	for _, p := range byTS {
+
+	for ck, meta := range compMeta {
+		meta.Points = sortedPoints(compBuckets[ck])
+		out.Components = append(out.Components, meta)
+	}
+	sort.Slice(out.Components, func(i, j int) bool {
+		if out.Components[i].Host != out.Components[j].Host {
+			return out.Components[i].Host < out.Components[j].Host
+		}
+		if out.Components[i].Component != out.Components[j].Component {
+			return out.Components[i].Component < out.Components[j].Component
+		}
+		return out.Components[i].ID < out.Components[j].ID
+	})
+
+	for host, ticks := range hostTicks {
+		reduced := map[int64]*BandwidthHistoryPoint{}
+		for ts, p := range ticks {
+			peakInto(reduced, bucketOf(ts, step), p.RxBps, p.TxBps, p.CapMbit)
+		}
+		out.Hosts = append(out.Hosts, BandwidthSeries{Host: host, Points: sortedPoints(reduced)})
+	}
+	sort.Slice(out.Hosts, func(i, j int) bool { return out.Hosts[i].Host < out.Hosts[j].Host })
+	return out
+}
+
+// bucketOf floors a timestamp onto the step grid. A step of 0 or less is the
+// identity, which is what makes the shortest range raw rather than a special case.
+func bucketOf(ts int64, step time.Duration) int64 {
+	sec := int64(step / time.Second)
+	if sec <= 1 {
+		return ts
+	}
+	return ts - ts%sec
+}
+
+// peakInto keeps the largest reading seen in a bucket.
+func peakInto(m map[int64]*BandwidthHistoryPoint, ts int64, rx, tx uint64, capMbit int) {
+	p := m[ts]
+	if p == nil {
+		p = &BandwidthHistoryPoint{TS: ts}
+		m[ts] = p
+	}
+	if rx > p.RxBps {
+		p.RxBps = rx
+	}
+	if tx > p.TxBps {
+		p.TxBps = tx
+	}
+	if capMbit > p.CapMbit {
+		p.CapMbit = capMbit
+	}
+}
+
+func sortedPoints(m map[int64]*BandwidthHistoryPoint) []BandwidthHistoryPoint {
+	out := make([]BandwidthHistoryPoint, 0, len(m))
+	for _, p := range m {
 		out = append(out, *p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TS < out[j].TS })
@@ -267,6 +400,8 @@ func LoadGatewayBandwidthOverview(ctx context.Context, rdb *redis.Client, st sto
 						Component: gs.Component, ID: gs.ID, Host: gs.Host, Region: gs.Region,
 						RxBps: gs.RxBps, TxBps: gs.TxBps, CapMbit: gs.CapMbit,
 						UtilPct: u, CapKnown: known, Alive: true,
+						CPUPct: gs.CPU, RAMPct: gs.RAMPct, UptimeSec: gs.UptimeSec,
+						Gauges: gs.Gauges,
 					})
 				}
 			}

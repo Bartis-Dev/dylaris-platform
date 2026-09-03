@@ -1,6 +1,6 @@
 import { API_URL as API_BASE } from './core';
 import { handleUnauthorized } from './session';
-import type { GatewayBandwidthOverview, BandwidthHistoryPoint } from '../bandwidth';
+import type { GatewayBandwidthOverview, BandwidthHistory } from '../bandwidth';
 
 export interface AppModule {
     id: number;
@@ -973,14 +973,14 @@ export const getRoutingMigrationStatus = () => fetchAPI('/infrastructure/routing
 export const getGatewayBandwidthOverview = (): Promise<GatewayBandwidthOverview> =>
     fetchAPI('/gateway-bandwidth/overview');
 
+// Every series at once: one per component and one per host. One request rather
+// than one per card - the screen draws a sparkline for each component plus a
+// chart for whatever is selected, and that is seven round trips for data that
+// comes from a single table scan.
 export const getGatewayBandwidthHistory = (
     range: string,
-    host?: string,
-): Promise<{ points: BandwidthHistoryPoint[] }> => {
-    const q = new URLSearchParams({ range });
-    if (host) q.set('host', host);
-    return fetchAPI(`/gateway-bandwidth/history?${q.toString()}`);
-};
+): Promise<BandwidthHistory> =>
+    fetchAPI(`/gateway-bandwidth/history?range=${encodeURIComponent(range)}`);
 
 // F3 warp rebalancer: mode + recent decision feed, surfaced in the Bandwidth panel.
 export interface WarpMove {

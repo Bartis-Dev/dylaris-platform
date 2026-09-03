@@ -1,13 +1,8 @@
-"use client";
+import { redirect } from 'next/navigation';
 
-import RoutesPanel from '@/views/infrastructure/RoutesPanel';
-import TabGuard from '@/views/infrastructure/TabGuard';
-import { useInfra } from '@/views/infrastructure/context';
-
-export default function Page() {
-    const { gatewayDeployed, onlineEdgesList } = useInfra();
-    if (!gatewayDeployed) {
-        return <TabGuard reason="Routes are served by the gateway, and none is deployed. Enable gateway routing and deploy an edge first." />;
-    }
-    return <RoutesPanel onlineEdges={onlineEdgesList} />;
+// Routes moved to /admin/routes, next to Users and All Servers: they are an
+// administrative list of what the gateway serves, not a property of the
+// infrastructure the way a machine or an edge is.
+export default function RoutesRedirect() {
+    redirect('/admin/routes');
 }

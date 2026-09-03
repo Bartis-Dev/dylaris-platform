@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.4
+
+### Features
+- Infrastructure has a **Gateway** tab: edges, warp leaders and beam relays in
+  one list, each with CPU, RAM and its own number - players, peers, transfers in
+  flight. Warp leaders and beam relays had no screen at all before. `core` `panel`
+- Bandwidth is now one row per host and one column per service, so services
+  sharing a machine line up side by side. Every card carries a sparkline, and
+  the range switcher offers 15 min, 1 h, 6 h and 24 h. `core` `panel`
+- Routes moved from Infrastructure to Admin, next to Users. The old address
+  redirects. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The long-term statistics summary called a line **Edge restarts survived**. It
+  counts restarts and does not measure whether anyone came through one, so it
+  now reads **Edge restarts**. `core`
+
 ## 2026.09.03.3
 
 ### Features

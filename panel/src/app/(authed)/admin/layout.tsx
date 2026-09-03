@@ -8,6 +8,7 @@ import { useAppData } from '@/lib/AppDataContext';
 const TABS = [
     { slug: 'servers', label: 'All Servers' },
     { slug: 'users', label: 'Users' },
+    { slug: 'routes', label: 'Routes' },
     { slug: 'disk', label: 'Disk Analysis' },
 ];
 
@@ -35,7 +36,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <div className="flex items-center justify-between mb-6">
                 <div>
                     <h2 className="h-page">Admin</h2>
-                    <p className="text-sm text-(--base-06)">Servers, user accounts and storage diagnostics</p>
+                    <p className="text-sm text-(--base-06)">Servers, user accounts, gateway routes and storage diagnostics</p>
                 </div>
             </div>
 

@@ -28,34 +28,55 @@ func (h *GatewayBandwidthHandler) GetOverview(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(ov)
 }
 
+// bandwidthRange maps a range name to the window it covers and the bucket the
+// points are reduced onto.
+//
+// The steps are chosen so every range lands at roughly a hundred points per
+// series: enough to see the shape, few enough that six components plus their
+// hosts stay one small response. 15m is deliberately raw - the persist cadence
+// is 30 seconds, so there is nothing to reduce, and the shortest range is the
+// one somebody opens to watch a spike as it happens.
+//
+// 24h is the ceiling because gateway_bandwidth_stats keeps 24 hours (a
+// TimescaleDB retention policy, or the hourly DELETE sweep on plain Postgres).
+// Asking for more would return a window that is simply empty at its start.
+func bandwidthRange(name string) (window, step time.Duration) {
+	switch name {
+	case "15m":
+		return 15 * time.Minute, 0
+	case "1h":
+		return time.Hour, time.Minute
+	case "6h":
+		return 6 * time.Hour, 5 * time.Minute
+	case "12h":
+		return 12 * time.Hour, 10 * time.Minute
+	default:
+		return 24 * time.Hour, 15 * time.Minute
+	}
+}
+
 // GetHistory GET /api/gateway-bandwidth/history?range=24h&host=&component=
-// Time-bucketed summed throughput from gateway_bandwidth_stats.
+//
+// Every series the bandwidth screen draws, in one response: one per component
+// and one per host. It used to return a single pre-summed series, which is why
+// the screen could only chart one host at a time and had nothing to draw a
+// per-component sparkline from.
 func (h *GatewayBandwidthHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
 		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	duration := 24 * time.Hour
-	switch r.URL.Query().Get("range") {
-	case "1h":
-		duration = time.Hour
-	case "6h":
-		duration = 6 * time.Hour
-	case "12h":
-		duration = 12 * time.Hour
-	}
+	window, step := bandwidthRange(r.URL.Query().Get("range"))
 	host := r.URL.Query().Get("host")
 	component := r.URL.Query().Get("component")
-	since := time.Now().Add(-duration)
 
-	rows, err := h.state.Store.GetGatewayBandwidthHistory(since, component, host)
+	rows, err := h.state.Store.GetGatewayBandwidthHistory(time.Now().Add(-window), component, host)
 	if err != nil {
 		rows = nil
 	}
-	points := services.AggregateHostHistory(rows)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"points": points})
+	json.NewEncoder(w).Encode(services.BuildBandwidthHistory(rows, step))
 }
 
 // GetRebalance handles GET /api/gateway-bandwidth/rebalance - the F3 rebalancer

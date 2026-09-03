@@ -1982,7 +1982,7 @@
       "path": "/api/gateway-bandwidth/history",
       "auth": "session",
       "authorization": "settings.read",
-      "description": "Time-bucketed summed throughput from gateway_bandwidth_stats.",
+      "description": "Every series the bandwidth screen draws, in one response: one per component and one per host.",
       "handler": "GatewayBandwidthHandler.GetHistory",
       "group": "gateway-bandwidth",
       "external": false

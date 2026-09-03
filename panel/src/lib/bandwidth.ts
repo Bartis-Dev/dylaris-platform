@@ -15,6 +15,11 @@ export interface GatewayComponentView {
   utilPct: number;
   capKnown: boolean;
   alive: boolean;
+  cpuPct: number;
+  ramPct: number;
+  uptimeSec?: number;
+  /** The component's own gauges: warp reports peers, beam reports transfers. */
+  gauges?: Record<string, number>;
 }
 
 export interface GatewayHostView {
@@ -50,6 +55,91 @@ export interface BandwidthHistoryPoint {
   capMbit: number;
 }
 
+/** One subject's history: a component (component+id) or a whole host. */
+export interface BandwidthSeries {
+  component?: string;
+  id?: string;
+  host?: string;
+  region?: string;
+  points: BandwidthHistoryPoint[];
+}
+
+/**
+ * Every series the screen draws, in one response.
+ *
+ * The host series are computed by Core, not by adding the component series here:
+ * two components on one host peak in different seconds, so a client-side sum of
+ * bucket maxima would report a load the link never carried.
+ */
+export interface BandwidthHistory {
+  stepSec: number;
+  components: BandwidthSeries[];
+  hosts: BandwidthSeries[];
+}
+
+/** The ranges the switcher offers. 24h is the ceiling: the raw rows are kept
+ *  for 24 hours and nothing older exists to draw. */
+export const BANDWIDTH_RANGES = ['15m', '1h', '6h', '24h'] as const;
+export type BandwidthRange = (typeof BANDWIDTH_RANGES)[number];
+
+/** seriesKey identifies one component series across renders and selections. */
+export function seriesKey(s: { component?: string; id?: string }): string {
+  return `${s.component ?? ''}:${s.id ?? ''}`;
+}
+
+/**
+ * The three kinds that carry throughput, in the order the columns stand.
+ * Core only mirrors these three (see carriesThroughput): the splice shares an
+ * edge's namespace and the link ships without a system monitor, so neither has
+ * throughput of its own to show.
+ */
+export const GATEWAY_KINDS = [
+  { key: 'edge', label: 'Edge' },
+  { key: 'warp', label: 'Warp' },
+  { key: 'beam', label: 'Beam relay' },
+] as const;
+export type GatewayKind = (typeof GATEWAY_KINDS)[number]['key'];
+
+/**
+ * hostRows lays the components out as one row per host and one cell per kind.
+ *
+ * Hosts come from the host aggregates, so a host keeps its row (and its cap)
+ * even in a tick where none of its components reported. A cell holds a LIST
+ * rather than one component: nothing stops a host running two edges, and
+ * dropping the second silently would be worse than a slightly taller cell.
+ */
+export function hostRows(
+  hosts: GatewayHostView[],
+  components: GatewayComponentView[],
+): { host: GatewayHostView; cells: Record<GatewayKind, GatewayComponentView[]> }[] {
+  const known = new Map(hosts.map(h => [h.host, h]));
+  // A component whose host has no aggregate still has to appear somewhere, or
+  // it vanishes from the screen while it is demonstrably reporting. That
+  // includes a component reporting NO host at all - the host aggregate skips
+  // those, since something with no hostname cannot be co-located with anything,
+  // and dropping them here too would make a misconfigured component invisible
+  // on the one screen meant to show it.
+  for (const c of components) {
+    if (!known.has(c.host)) {
+      known.set(c.host, {
+        host: c.host, rxBps: 0, txBps: 0, budgetMbit: 0,
+        utilPct: 0, capKnown: false, capMismatch: false, components: 0,
+      });
+    }
+  }
+  return [...known.values()]
+    .sort((a, b) => a.host.localeCompare(b.host))
+    .map(host => {
+      const cells = { edge: [], warp: [], beam: [] } as Record<GatewayKind, GatewayComponentView[]>;
+      for (const c of components) {
+        if (c.host !== host.host) continue;
+        const bucket = cells[c.component as GatewayKind];
+        if (bucket) bucket.push(c);
+      }
+      return { host, cells };
+    });
+}
+
 // formatBitsPerSec renders a bits/second rate with base-1000 SI scaling.
 export function formatBitsPerSec(bps: number): string {
   if (!isFinite(bps) || bps <= 0) return '0 bps';
@@ -72,19 +162,6 @@ export function utilTone(pct: number, warn = 80, crit = 92): UtilTone {
 export function barWidthPct(pct: number): number {
   if (!isFinite(pct) || pct < 0) return 0;
   return Math.min(100, pct);
-}
-
-// groupComponentsByHost buckets components under their host for the nested display.
-export function groupComponentsByHost(
-  components: GatewayComponentView[],
-): Map<string, GatewayComponentView[]> {
-  const m = new Map<string, GatewayComponentView[]>();
-  for (const c of components) {
-    const arr = m.get(c.host) ?? [];
-    arr.push(c);
-    m.set(c.host, arr);
-  }
-  return m;
 }
 
 export interface BandwidthBellItem {

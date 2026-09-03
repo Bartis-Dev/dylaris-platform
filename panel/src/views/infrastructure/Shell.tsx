@@ -53,8 +53,10 @@ export default function InfrastructureShell({ children }: { children: React.Reac
         // screen calling it something friendlier only costs the reader the
         // connection to all of them.
         { slug: 'byon', label: 'BYON', count: byon.length, visible: true },
-        { slug: 'edges', label: 'Edges', count: infra.edges.length, visible: infra.gatewayDeployed },
-        { slug: 'routes', label: 'Routes', count: infra.routeCount, visible: infra.gatewayDeployed },
+        // No count: the tab lists edges, warp leaders and beam relays, and the
+        // only one of the three this screen knows about is the edges. A badge
+        // reading 2 next to a list of six is worse than no badge.
+        { slug: 'gateway', label: 'Gateway', visible: infra.gatewayDeployed },
         { slug: 'bandwidth', label: 'Bandwidth', visible: infra.gatewayEnabled },
         // Always shown. Whether there is anything recorded is a SERVER fact
         // (the feature flag, and whether the metrics database opened), and the
