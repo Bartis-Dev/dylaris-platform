@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A Core that started before its statistics database was reachable stopped
+  recording for good. During a stack deploy that is a matter of seconds, and it
+  cost every statistic on the platform: recording runs on one Core, so that one
+  starting first switched it off for the whole cluster. It now keeps trying, and
+  says so in the log. `core`
+
 ## 2026.09.03.6
 
 ### Features

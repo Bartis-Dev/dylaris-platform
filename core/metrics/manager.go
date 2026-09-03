@@ -32,6 +32,22 @@ type Manager struct {
 	cur  *Handle
 	dsn  string
 	stop context.CancelFunc
+
+	// want is the target an operator has CONFIGURED, whether or not it is
+	// currently open, and applied says Apply has been called at least once.
+	//
+	// The pair exists because opening used to be a single attempt at boot. A
+	// Core that started 51 seconds before its metrics database was resolvable
+	// logged one line and recorded nothing for the life of the process - and
+	// since sampling is leader-gated, that Core happening to be the leader
+	// stopped recording for the whole cluster while the other replica sat on a
+	// working connection doing nothing. Measured in production on 2026-09-03,
+	// during an ordinary stack deploy.
+	want    string
+	applied bool
+	// failing keeps the retry loop from logging once per attempt: one line when
+	// it breaks, one when it recovers.
+	failing bool
 	// done closes when the retired recorder's Run has returned, which is also
 	// when its final flush has finished. Waiting on it is what stops a swap from
 	// closing the database out from under a flush in progress.
@@ -40,7 +56,9 @@ type Manager struct {
 
 // NewManager returns a Manager with nothing open yet. Call Apply to open one.
 func NewManager(base context.Context, coreDB *sql.DB, coreUsesTimescale bool) *Manager {
-	return &Manager{base: base, coreDB: coreDB, coreTS: coreUsesTimescale}
+	m := &Manager{base: base, coreDB: coreDB, coreTS: coreUsesTimescale}
+	go m.Watch(base)
+	return m
 }
 
 // Handle is the current handle, or nil. Readers must cope with nil - see the
@@ -93,9 +111,10 @@ func (m *Manager) Apply(dsn string) error {
 		return errors.New("no metrics manager is running")
 	}
 
-	m.mu.RLock()
+	m.mu.Lock()
+	m.want, m.applied = dsn, true
 	same := m.cur != nil && m.dsn == dsn
-	m.mu.RUnlock()
+	m.mu.Unlock()
 	if same {
 		return nil
 	}
@@ -116,10 +135,70 @@ func (m *Manager) Apply(dsn string) error {
 	m.mu.Lock()
 	old, oldStop, oldDone := m.cur, m.stop, m.done
 	m.cur, m.dsn, m.stop, m.done = h, dsn, cancel, done
+	recovered := m.failing
+	m.failing = false
 	m.mu.Unlock()
 
+	if recovered {
+		log.Println("metrics: the statistics database is reachable again; recording resumed")
+	}
 	retire(old, oldStop, oldDone)
 	return nil
+}
+
+// retryInterval is how often an unopened target is tried again.
+//
+// Short, because every tick that passes without a recorder is a sample the
+// collector throws away - Observe on a nil recorder is a no-op by design, so
+// nothing queues up waiting for the database to come back.
+const retryInterval = 15 * time.Second
+
+// Watch reopens a configured target that is not open, until ctx ends.
+//
+// Started by NewManager rather than by its caller, deliberately: the failure it
+// exists to prevent was a single attempt with nobody to make a second one, and
+// a retry that has to be wired up separately is a retry somebody can forget to
+// wire up.
+func (m *Manager) Watch(ctx context.Context) {
+	if m == nil {
+		return
+	}
+	t := time.NewTicker(retryInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			dsn, retry := m.needsRetry()
+			if !retry {
+				continue
+			}
+			if err := m.Apply(dsn); err != nil {
+				m.mu.Lock()
+				first := !m.failing
+				m.failing = true
+				m.mu.Unlock()
+				if first {
+					log.Printf("metrics: the statistics database is unreachable, retrying every %s (%v)", retryInterval, err)
+				}
+			}
+		}
+	}
+}
+
+// needsRetry reports the target to reopen, and whether there is one.
+//
+// Nothing to do before the first Apply (boot has not chosen a target yet) or
+// after Close (shutdown, or an operator switching recording off) - reopening in
+// either case would be this loop deciding policy it does not own.
+func (m *Manager) needsRetry() (string, bool) {
+	if m == nil {
+		return "", false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.want, m.applied && m.cur == nil
 }
 
 // Close retires whatever is open. Safe on a Manager that never opened one.
@@ -130,6 +209,9 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	old, oldStop, oldDone := m.cur, m.stop, m.done
 	m.cur, m.dsn, m.stop, m.done = nil, "", nil, nil
+	// applied goes back to false so the retry loop does not treat a deliberate
+	// close as an outage and reopen what was just shut down.
+	m.want, m.applied, m.failing = "", false, false
 	m.mu.Unlock()
 	retire(old, oldStop, oldDone)
 }

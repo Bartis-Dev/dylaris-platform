@@ -392,7 +392,10 @@ func main() {
 	defer metricsManager.Close()
 
 	if mErr := metricsManager.Apply(services.LoadMetricsDBTarget(pgStore).DSN()); mErr != nil {
-		log.Printf("metrics: disabled (%v)", mErr)
+		// Not fatal and not permanent. During a stack deploy this Core can
+		// start before its statistics database is resolvable, and the manager
+		// keeps trying - see the note on Manager.want.
+		log.Printf("metrics: not recording yet, will keep trying (%v)", mErr)
 	}
 	// Started regardless of whether that target opened. The collector records
 	// through the manager rather than holding a recorder, so an admin who fixes
