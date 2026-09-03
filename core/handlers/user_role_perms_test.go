@@ -220,7 +220,7 @@ func TestSetUserPermissionsHandler_Success(t *testing.T) {
 	fs := &userRoleFakeStore{}
 	h := NewUserHandler(&AppState{Store: fs})
 	rec := httptest.NewRecorder()
-	body := map[string]interface{}{"canDeleteServers": true, "canChangeResources": false, "supportTeam": "billing"}
+	body := map[string]interface{}{"canDeleteServers": true, "canChangeResources": true, "supportTeam": "billing"}
 
 	h.SetUserPermissionsHandler(rec, setPermsReq(testTargetID, true, body))
 
@@ -231,8 +231,12 @@ func TestSetUserPermissionsHandler_Success(t *testing.T) {
 		t.Fatalf("expected 1 store call, got %d", len(fs.setPermsCalls))
 	}
 	call := fs.setPermsCalls[0]
-	if call.userID != testTargetID || !call.canDeleteServers || call.canChangeResources || call.supportTeam != "billing" {
-		t.Fatalf("call = %+v, want userID=%s canDeleteServers=true canChangeResources=false supportTeam=billing", call, testTargetID)
+	// canDeleteServers arrives TRUE and is stored FALSE: deleting follows the
+	// role, and this fake's target is not an admin. Forced rather than
+	// rejected, so a stale client or a direct API call cannot leave a row
+	// claiming a right ComputeEffectivePermissions no longer grants.
+	if call.userID != testTargetID || call.canDeleteServers || !call.canChangeResources || call.supportTeam != "billing" {
+		t.Fatalf("call = %+v, want userID=%s canDeleteServers=false canChangeResources=true supportTeam=billing", call, testTargetID)
 	}
 }
 

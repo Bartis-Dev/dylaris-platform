@@ -188,7 +188,10 @@ func TestDeleteSubServerHonorsTheDeleteCapability(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "no flag, not admin: refused like the full delete is", wantStatus: http.StatusForbidden},
-		{name: "flag granted", canDelete: true, wantStatus: http.StatusOK},
+		// The stored flag no longer grants it to a non-admin: deleting follows
+		// the role. A customer cancels rather than deletes, and the row that
+		// still carries the flag must not be a way around that.
+		{name: "the stored flag no longer grants it", canDelete: true, wantStatus: http.StatusForbidden},
 		{name: "admin always passes", admin: true, wantStatus: http.StatusOK},
 	}
 

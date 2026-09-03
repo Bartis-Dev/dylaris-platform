@@ -104,6 +104,23 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Deleting servers follows the ROLE, so it is never stored true for a
+	// non-admin. Forced here rather than rejected: the screen no longer offers
+	// the switch, so a request carrying it is a stale client or a direct API
+	// call, and neither is a reason to fail an otherwise valid save.
+	//
+	// Without this the row would keep claiming a right that
+	// ComputeEffectivePermissions no longer grants - a stored value nothing
+	// reads, which is how a permissions screen starts lying.
+	// A lookup that fails forces it false rather than refusing the save. The
+	// conservative direction is the one that grants nothing, and an operator
+	// editing the OTHER flags must not be blocked because one read hiccuped -
+	// this endpoint used to need no read at all.
+	target, terr := h.state.Store.GetUserByID(id)
+	if terr != nil || target == nil || !(target.IsAdmin || target.Role == "admin") {
+		req.CanDeleteServers = false
+	}
+
 	if err := h.state.Store.SetUserPermissionFlags(id, req.CanDeleteServers, req.CanChangeResources, req.SupportTeam); err != nil {
 		sendJSONError(w, "Failed to update permissions", 500)
 		return

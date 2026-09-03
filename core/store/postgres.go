@@ -2092,6 +2092,24 @@ func (s *PostgresStore) MarkEmailVerified(userID string) error {
 	return err
 }
 
+// SetUserEmail changes an account's address and un-verifies it in the same
+// statement.
+//
+// The two belong together. An admin typing a new address has not proved the
+// account can receive mail there, so leaving email_verified_at in place would
+// hand out a verified badge for an address nobody has answered - and password
+// reset, the one recovery path that exists while security questions are off,
+// aims at exactly that address.
+func (s *PostgresStore) SetUserEmail(userID, email string) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET email = $2, email_verified_at = NULL,
+		   email_verification_token = NULL, email_verification_sent_at = NULL
+		 WHERE id = $1`,
+		userID, email,
+	)
+	return err
+}
+
 func (s *PostgresStore) UpdateLastLoginAt(userID string) error {
 	_, err := s.db.Exec(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, userID)
 	return err

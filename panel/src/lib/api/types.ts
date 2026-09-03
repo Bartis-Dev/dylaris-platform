@@ -272,6 +272,11 @@ export const deleteUser = (id: string) => fetchAPI(`/users/${id}`, { method: 'DE
 export const cancelUserDeletion = (id: string) => fetchAPI(`/admin/users/${id}/cancel-deletion`, { method: 'POST' });
 export const setUserRole = (id: string, role: 'user' | 'support' | 'admin') =>
     fetchAPI(`/admin/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
+/** Change an account's address. Core stores it UNVERIFIED and sends a
+ *  verification when the policy requires one, because an admin typing an address
+ *  has not shown that anyone reads it - and the reset link aims there. */
+export const setUserEmail = (id: string, email: string) =>
+    fetchAPI(`/admin/users/${id}/email`, { method: 'PATCH', body: JSON.stringify({ email }) });
 export const setUserPermissions = (
     id: string,
     data: { canDeleteServers: boolean; canChangeResources: boolean; supportTeam?: string },

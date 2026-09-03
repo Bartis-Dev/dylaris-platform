@@ -65,11 +65,14 @@ func TestComputeEffectivePermissions(t *testing.T) {
 			want: EffectivePermissions{Role: "support", IsSupport: true},
 		},
 		{
-			name:           "regular user carries per-user flags and allowed regions through unchanged",
-			user:           &models.User{Role: "user", CanDeleteServers: true, CanChangeResources: false, AllRegionsAccess: false},
+			// The stored can_delete_servers is deliberately NOT carried through:
+			// deleting is admin-only and follows the role. The resource flag and
+			// the region list still are - see TestDeletingServersIsAdminOnly.
+			name:           "a regular user's stored delete flag is ignored, the rest carries through",
+			user:           &models.User{Role: "user", CanDeleteServers: true, CanChangeResources: true, AllRegionsAccess: false},
 			allowedRegions: []string{"eu", "us"},
 			want: EffectivePermissions{
-				Role: "user", CanDeleteServers: true, CanChangeResources: false,
+				Role: "user", CanDeleteServers: false, CanChangeResources: true,
 				CanAccessAllRegions: false, AllowedRegions: []string{"eu", "us"},
 			},
 		},
@@ -188,12 +191,15 @@ func TestLoadEffectivePermissions(t *testing.T) {
 	})
 
 	t.Run("success path composes the user and their region IDs", func(t *testing.T) {
+		// CanChangeResources rather than CanDeleteServers, because the delete
+		// flag no longer survives the computation for a non-admin and would
+		// make this assert nothing.
 		fs := &permissionsFakeStore{
-			user:    &models.User{Role: "user", CanDeleteServers: true},
+			user:    &models.User{Role: "user", CanChangeResources: true},
 			regions: []string{"eu", "us"},
 		}
 		got := LoadEffectivePermissions(&AppState{Store: fs}, "u1")
-		want := EffectivePermissions{Role: "user", CanDeleteServers: true, AllowedRegions: []string{"eu", "us"}}
+		want := EffectivePermissions{Role: "user", CanChangeResources: true, AllowedRegions: []string{"eu", "us"}}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("got %+v, want %+v", got, want)
 		}

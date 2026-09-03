@@ -42,14 +42,32 @@ func ComputeEffectivePermissions(user *models.User, allowedRegions []string) Eff
 			CanChangeResources:  true,
 		}
 	}
+	// Deleting a server is ADMIN-ONLY, and that is a role property rather than
+	// a per-user switch: the stored can_delete_servers flag is deliberately not
+	// read here.
+	//
+	// A hoster's customer cancels, they do not delete - and a paid server
+	// removed by accident is a support case nobody wins, because the data is
+	// gone with it. Support does not get it either: looking at a tenant's
+	// server is the job, removing it is not.
+	//
+	// The flag is still stored and still written by the permissions endpoint,
+	// which forces it false for non-admins (see SetUserPermissionsHandler), so
+	// there is no row that claims a right nobody has.
 	return EffectivePermissions{
 		Role:                role,
 		IsAdmin:             false,
 		IsSupport:           role == "support",
 		CanAccessAllRegions: user.AllRegionsAccess,
 		AllowedRegions:      allowedRegions,
-		CanDeleteServers:    user.CanDeleteServers,
-		CanChangeResources:  user.CanChangeResources,
+		CanDeleteServers:    false,
+		// Scoped by the CAPABILITY on the route, not by this flag: every call
+		// site pairs it with RequireCap("server.settings.write"), which the
+		// resolver evaluates against the one server in the request. So this
+		// grants the ability at all, and ownership or an explicit grant decides
+		// where - a user reaches their own servers, support reaches what it was
+		// given, an admin reaches everything.
+		CanChangeResources: user.CanChangeResources,
 	}
 }
 

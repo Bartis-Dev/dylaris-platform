@@ -16,6 +16,15 @@ interface UserRegionPickerProps {
     autoHideOnSingleRegion?: boolean;
     /** Disable the controls (e.g. during save). */
     disabled?: boolean;
+    /** Told once the region list is in: false while loading, then whether this
+     *  picker is rendering anything at all.
+     *
+     *  It exists because the picker can decide to render NOTHING (see
+     *  autoHideOnSingleRegion) while its heading and its Save button live in the
+     *  caller. On a single-region deployment that left a "Region Access"
+     *  heading, empty space, and a Save button under it - which is what an
+     *  operator reported. Only the picker knows, so the picker has to say. */
+    onVisibilityChange?: (visible: boolean) => void;
     /** Optional className wrapping the picker. */
     className?: string;
 }
@@ -27,6 +36,7 @@ export default function UserRegionPicker({
     autoHideOnSingleRegion = true,
     disabled,
     className,
+    onVisibilityChange,
 }: UserRegionPickerProps) {
     const [available, setAvailable] = useState<Region[]>([]);
     const [loaded, setLoaded] = useState(false);
@@ -38,6 +48,15 @@ export default function UserRegionPicker({
         });
     }, []);
 
+    const isSingleRegionSetup = available.length === 1 && available[0].id === 'default';
+    const visible = loaded && !(autoHideOnSingleRegion && isSingleRegionSetup);
+
+    // In an effect, not during render: telling a parent to re-render while this
+    // one is rendering is the React warning nobody reads until it is a bug.
+    useEffect(() => {
+        onVisibilityChange?.(visible);
+    }, [visible, onVisibilityChange]);
+
     if (!loaded) {
         return (
             <div className={className}>
@@ -47,8 +66,7 @@ export default function UserRegionPicker({
         );
     }
 
-    const isSingleRegionSetup = available.length === 1 && available[0].id === 'default';
-    if (autoHideOnSingleRegion && isSingleRegionSetup) {
+    if (!visible) {
         // In single-region setups the picker is meaningless — the user always
         // gets 'default'. Caller still needs to send allRegions:true on submit
         // so existing access is preserved; the parent form handles that.

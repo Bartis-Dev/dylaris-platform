@@ -213,6 +213,7 @@ var requiredCaps = map[string]string{
 	"/api/admin/users/{id:[0-9a-f-]{36}}/permissions":      "users.write",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/username-history": "users.read",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/username":         "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/email":            "users.write",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/panel-role":       "panelroles.write",
 	"/api/admin/panel-roles":                               "panelroles.read",
 	"/api/admin/panel-roles/{id:[0-9]+}":                   "panelroles.write",
@@ -962,6 +963,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(usernameHistoryHandler.Admin))).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(usernameHistoryHandler.AdminRename))).Methods("PATCH")
+	// The address, which nothing could change before - see handlers/user_email.go.
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/email", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(handlers.NewUserEmailHandler(appState).SetEmail))).Methods("PATCH")
 	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(accountPolicyHandler.Get))).Methods("GET")
 	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(accountPolicyHandler.Set))).Methods("PUT")
 	// --- Modpack settings + system feature flags (PANEL settings.*; Phase 4 Task 17) ---

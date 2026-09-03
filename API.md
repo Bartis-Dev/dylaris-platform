@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **499 routes** in 50 sections: 225 GET, 147 POST, 38 PUT, 36 PATCH, 54 DELETE.
+- **500 routes** in 50 sections: 225 GET, 147 POST, 38 PUT, 37 PATCH, 54 DELETE.
 - **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **343** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **8** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **344** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **9** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (115)
+- [/api/admin](#apiadmin) (116)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -292,6 +292,7 @@ can still show what exists.
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/billing` | session | `plans.write` | RequireBYONEnabled | `BillingHandler.SetBillingStatus` | RequireCap("plans.write") at the route. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/billing-overrides` | session | `plans.write` | RequireBYONEnabled | `BillingHandler.SetBillingOverrides` | RequireCap("plans.write") at the route. |
 | POST | `/api/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion` | session | `users.write` | - | `UserHandler.CancelUserDeletion` | Admin override: clears the pending_deletion stamps and returns the user to active state. |
+| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/email` | session | `users.write` | NewUserEmailHandler | `AuthMiddleware` | - |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.read` | RequireBYONEnabled | `EntitlementHandler.GetForUser` | RequireCap("plans.read"). |
 | POST | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireBYONEnabled | `EntitlementHandler.Grant` | RequireCap("plans.write"). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireBYONEnabled | `EntitlementHandler.Revoke` | RequireCap("plans.write"). |

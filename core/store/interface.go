@@ -426,6 +426,9 @@ type Store interface {
 	GetUserByEmailVerificationToken(token string) (*models.User, error)
 	SetEmailVerificationToken(userID string, token string) error
 	MarkEmailVerified(userID string) error
+	// SetUserEmail also clears the verification state; see the implementation
+	// for why the two are one operation.
+	SetUserEmail(userID, email string) error
 	UpdateLastLoginAt(userID string) error
 
 	// --- Password reset ---

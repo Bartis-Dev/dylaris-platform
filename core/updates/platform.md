@@ -8,6 +8,31 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.04.2
+
+### Features
+- An account's email address can now be seen and changed under Users. Neither
+  was possible before: the screen showed it nowhere and no endpoint could write
+  it. The new address is stored unverified, and a verification goes out when the
+  policy requires one. `core` `panel`
+
+### Breaking
+- Deleting servers is now ADMIN-ONLY. A non-admin who was granted the
+  "can delete servers" flag loses it, including for their own servers - the
+  stored flag is no longer read. Grant an admin role if someone must delete.
+  `core` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- The Region Access section no longer renders as a heading over empty space with
+  a Save button under it. The picker hides itself when only one region exists;
+  now the section around it follows. `panel`
+- Region access can no longer be saved when the account's current access failed
+  to load. The form falls back to "all regions", and saving that would have
+  granted more than anyone chose. `panel`
+
 ## 2026.09.04
 
 ### Features

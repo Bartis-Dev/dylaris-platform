@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, User } from '@/lib/api';
+import React, { useState, useEffect, useCallback } from 'react';
+import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, setUserEmail, User } from '@/lib/api';
 import { adminResetTOTP } from '@/lib/api/auth';
 import { getUserRegions, setUserRegions } from '@/lib/api/regions';
 import { setUserModpackFlag, clearUserModpackOverride } from '@/lib/api/modpackSettings';
@@ -111,6 +111,18 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     const [editAllRegions, setEditAllRegions] = useState(true);
     const [editRegions, setEditRegions] = useState<string[]>([]);
     const [editRegionsSaving, setEditRegionsSaving] = useState(false);
+    const [editEmail, setEditEmail] = useState('');
+    const [emailSaving, setEmailSaving] = useState(false);
+    const [emailMsg, setEmailMsg] = useState<{ ok: boolean; text: string } | null>(null);
+    // The picker hides itself on a single-region deployment, and the heading and
+    // Save button around it are ours. Without this the section rendered as a
+    // title over empty space with a Save button under it.
+    const [regionPickerVisible, setRegionPickerVisible] = useState(false);
+    // A region load that FAILED must not save. The state falls back to
+    // "all regions" so the form has something to show, and saving that would
+    // silently widen an account whose real access nobody managed to read.
+    const [editRegionsLoadFailed, setEditRegionsLoadFailed] = useState(false);
+    const onRegionPickerVisibility = useCallback((v: boolean) => setRegionPickerVisible(v), []);
 
     // Deletion-rescue state
     const [cancellingDeletion, setCancellingDeletion] = useState(false);
@@ -247,6 +259,30 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         } else setError(res.message || "Error creating user");
     };
 
+    const handleSaveEmail = async () => {
+        if (!settingsUser) return;
+        setEmailSaving(true);
+        setEmailMsg(null);
+        const res = await setUserEmail(settingsUser.id, editEmail.trim());
+        setEmailSaving(false);
+        if (res.success) {
+            // Reflect it locally so the "Change" button disables again and the
+            // verified hint below the field stops describing the OLD address.
+            setSettingsUser({ ...settingsUser, email: res.email ?? editEmail.trim(), emailVerifiedAt: undefined });
+            setEmailMsg({
+                ok: true,
+                text: res.unchanged
+                    ? 'That is already the stored address; nothing changed.'
+                    : res.emailVerifySent
+                      ? 'Address changed. A verification mail went to the new address; the account cannot sign in until it is confirmed.'
+                      : 'Address changed. It is marked unverified — nobody has answered it yet.',
+            });
+            loadUsers();
+        } else {
+            setEmailMsg({ ok: false, text: res.message || res.error || 'Failed to change the address.' });
+        }
+    };
+
     const handleSaveRegions = async () => {
         if (!settingsUser) return;
         setEditRegionsSaving(true);
@@ -300,14 +336,22 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         // Load region access — keep optimistic defaults until the call resolves.
         setEditAllRegions(true);
         setEditRegions([]);
+        setEditEmail(user.email || '');
+        setEmailMsg(null);
         try {
             const res = await getUserRegions(user.id);
             if (res.success) {
                 setEditAllRegions(!!res.allRegions);
                 setEditRegions(res.regions || []);
+                setEditRegionsLoadFailed(false);
+            } else {
+                setEditRegionsLoadFailed(true);
             }
         } catch {
-            /* keep optimistic defaults */
+            // The optimistic default is all-regions, which is the WIDEST answer
+            // there is. Saving it over an account whose access could not be read
+            // would grant more than anyone chose, so the save is blocked instead.
+            setEditRegionsLoadFailed(true);
         }
 
         // Role + capability flags. User payload already carries these
@@ -411,6 +455,18 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                             <tr key={u.id} className="table-tr table-tr-hover">
                                 <td className="table-td font-mono font-medium text-(--base-09)">
                                     {u.username}
+                                    {/* The address under the name rather than in its own column:
+                                        it is what support needs in order to reach somebody, and it
+                                        was not on this screen at all. Unverified is called out
+                                        because that account cannot receive a reset it can act on. */}
+                                    {u.email && (
+                                        <span className="block text-xs font-normal text-(--base-06) mt-0.5">
+                                            {u.email}
+                                            {!u.emailVerifiedAt && (
+                                                <span className="ml-1.5 text-(--warning-light)">unverified</span>
+                                            )}
+                                        </span>
+                                    )}
                                     {u.deletionStatus === 'pending_deletion' && (
                                         <span
                                             title={u.deletionScheduledAt ? `Scheduled for deletion on ${new Date(u.deletionScheduledAt).toLocaleDateString()}` : 'Scheduled for deletion'}
@@ -593,6 +649,43 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         </div>
                                     )}
 
+                                    {/* The address, which this screen showed nowhere and no
+                                        endpoint could write. While security questions are off the
+                                        reset link is the only way back into an account, so an
+                                        address nobody can reach - or correct - locks its owner out
+                                        for good. */}
+                                    <div>
+                                        <h4 className="mono-label mb-3">Email Address</h4>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="email"
+                                                value={editEmail}
+                                                onChange={e => { setEditEmail(e.target.value); setEmailMsg(null); }}
+                                                placeholder="name@example.com"
+                                                className="input-field flex-1"
+                                                disabled={emailSaving}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={handleSaveEmail}
+                                                disabled={emailSaving || !editEmail.trim() || editEmail.trim().toLowerCase() === (settingsUser.email || '').toLowerCase()}
+                                                className="btn btn-primary disabled:opacity-40 shrink-0"
+                                            >
+                                                {emailSaving ? 'Saving…' : 'Change'}
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-(--base-06) mt-2">
+                                            {settingsUser.emailVerifiedAt
+                                                ? 'Verified. Changing it marks the account unverified again — nobody has answered the new address yet.'
+                                                : 'Not verified. Password resets and notices go here, so an address the user cannot read means no way back into the account.'}
+                                        </p>
+                                        {emailMsg && (
+                                            <p className={`text-xs mt-2 ${emailMsg.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
+                                                {emailMsg.text}
+                                            </p>
+                                        )}
+                                    </div>
+
                                     <div>
                                         <h4 className="mono-label mb-3">Reset Password</h4>
                                         <div className="flex gap-2">
@@ -659,17 +752,27 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                 </select>
                                                 <p className="text-xs text-(--base-06)">Admins implicitly have all capability flags. The flags below only matter for non-admins.</p>
                                             </div>
-                                            <label className="flex items-start gap-2 text-sm cursor-pointer">
+                                            {/* Deleting follows the ROLE and is not a switch. It is
+                                                shown rather than hidden so the answer is visible
+                                                instead of merely absent - and it is always disabled,
+                                                including for admins, because there is nothing to
+                                                decide in either direction. Core forces the stored flag
+                                                false for non-admins, so no row claims what this says. */}
+                                            <label className="flex items-start gap-2 text-sm opacity-70">
                                                 <input
                                                     type="checkbox"
-                                                    checked={editCanDeleteServers}
-                                                    onChange={e => setEditCanDeleteServers(e.target.checked)}
+                                                    checked={editRole === 'admin'}
+                                                    readOnly
+                                                    disabled
                                                     className="checkbox mt-0.5"
-                                                    disabled={editRolePermsSaving || editRole === 'admin'}
                                                 />
                                                 <span>
                                                     <span className="font-medium">Can delete servers</span>
-                                                    <span className="block text-xs text-(--base-06)">Required for the user to invoke DELETE /servers on accounts they own or co-manage.</span>
+                                                    <span className="block text-xs text-(--base-06)">
+                                                        {editRole === 'admin'
+                                                            ? 'Admins can delete any server. This follows the role and cannot be granted separately.'
+                                                            : 'Admins only. A customer cancels rather than deletes, and support may look at a server without being able to remove it — the data goes with it.'}
+                                                    </span>
                                                 </span>
                                             </label>
                                             <label className="flex items-start gap-2 text-sm cursor-pointer">
@@ -682,7 +785,13 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                 />
                                                 <span>
                                                     <span className="font-medium">Can change server resources</span>
-                                                    <span className="block text-xs text-(--base-06)">Required for the user to edit RAM, CPU, or disk limits on servers.</span>
+                                                    <span className="block text-xs text-(--base-06)">
+                                                        {editRole === 'admin'
+                                                            ? 'Admins can change RAM, CPU and disk on every server.'
+                                                            : editRole === 'support'
+                                                              ? 'Lets this account change RAM, CPU and disk — on the servers it has been granted, not on all of them.'
+                                                              : 'Lets this account change RAM, CPU and disk on the servers it owns. It reaches nothing else.'}
+                                                    </span>
                                                 </span>
                                             </label>
                                             <div className="flex flex-col gap-[5px]">
@@ -772,20 +881,31 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         </div>
                                     </div>
 
-                                    {/* Region access — hidden by the picker itself in single-region setups. */}
-                                    <div>
+                                    {/* Region access. The picker hides itself when only the
+                                        default region exists, so the heading and the Save button
+                                        follow it - a section that renders nothing must not leave a
+                                        title and a button behind. */}
+                                    <div className={regionPickerVisible ? '' : 'hidden'}>
                                         <h4 className="mono-label mb-3">Region Access</h4>
                                         <UserRegionPicker
                                             allRegions={editAllRegions}
                                             regions={editRegions}
                                             onChange={next => { setEditAllRegions(next.allRegions); setEditRegions(next.regions); }}
                                             disabled={editRegionsSaving}
+                                            onVisibilityChange={onRegionPickerVisibility}
                                         />
+                                        {editRegionsLoadFailed && (
+                                            <p className="text-xs text-(--warning-light) mt-2">
+                                                This account&apos;s current region access could not be loaded, so saving
+                                                is disabled — it would write the form&apos;s default of all regions over
+                                                whatever is really stored. Close and reopen to try again.
+                                            </p>
+                                        )}
                                         <div className="flex justify-end mt-3">
                                             <button
                                                 type="button"
                                                 onClick={handleSaveRegions}
-                                                disabled={editRegionsSaving}
+                                                disabled={editRegionsSaving || editRegionsLoadFailed}
                                                 className="btn btn-primary btn-sm disabled:opacity-40"
                                             >
                                                 {editRegionsSaving ? 'Saving…' : 'Save region access'}

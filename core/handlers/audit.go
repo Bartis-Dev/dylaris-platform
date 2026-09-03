@@ -57,6 +57,7 @@ const (
 	AuditEventDeletionCancelledAtLogin = "deletion_cancelled_at_login"
 
 	// Roles + maintenance.
+	AuditEventUserEmailChanged       = "user_email_changed"
 	AuditEventUserRoleChanged        = "user_role_changed"
 	AuditEventUserPermissionsChanged = "user_permissions_changed"
 	AuditEventUserPanelRoleChanged   = "user_panel_role_changed"
