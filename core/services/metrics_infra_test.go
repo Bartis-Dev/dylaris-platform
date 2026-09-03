@@ -69,9 +69,42 @@ func TestParseRedisInfoTakesOnlyNumbers(t *testing.T) {
 }
 
 // gwSnapshot is a fixed gateway telemetry view.
+//
+// Snapshot strips the counters exactly as the real consumer does, so a test
+// that wants counters has to go through DrainCounters - the same separation the
+// production code has. A fake that served both from one field would let the
+// gauge path silently start reading counters again.
 type gwSnapshot []protocol.GatewayStats
 
-func (g gwSnapshot) Snapshot() []protocol.GatewayStats { return g }
+func (g gwSnapshot) Snapshot() []protocol.GatewayStats {
+	out := make([]protocol.GatewayStats, 0, len(g))
+	for _, gs := range g {
+		gs.Counters = nil
+		out = append(out, gs)
+	}
+	return out
+}
+
+func (g gwSnapshot) DrainCounters() []CounterBatch {
+	out := make([]CounterBatch, 0, len(g))
+	for _, gs := range g {
+		if len(gs.Counters) == 0 {
+			continue
+		}
+		out = append(out, CounterBatch{
+			Component: gs.Component, ID: gs.ID, Region: gs.Region, Counters: gs.Counters,
+		})
+	}
+	return out
+}
+
+// sampleGatewayAll is what sampleOnce does for the gateway: drain the counted
+// events, then sample the gauges. Tests go through both halves so neither can
+// quietly stop recording while the other keeps the test green.
+func (c *MetricsCollector) sampleGatewayAll(now time.Time) {
+	c.recordGatewayCounters(c.drainGatewayCounters(), now)
+	c.sampleGatewayComponents(now)
+}
 
 func newInfraCollector(t *testing.T) (*MetricsCollector, *captureStore) {
 	t.Helper()
@@ -90,7 +123,7 @@ func TestGatewayCountersBecomeSeriesNamedByTheirComponent(t *testing.T) {
 		Gauges:   map[string]float64{"active_sessions": 12},
 	}})
 
-	c.sampleGatewayComponents(time.Now())
+	c.sampleGatewayAll(time.Now())
 	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +167,7 @@ func TestAMalformedMetricNameIsDropped(t *testing.T) {
 			"handover-ok":        1,
 		},
 	}})
-	c.sampleGatewayComponents(time.Now())
+	c.sampleGatewayAll(time.Now())
 	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +187,7 @@ func TestOneRecordCannotPublishUnboundedSeries(t *testing.T) {
 	}
 	c, capt := newInfraCollector(t)
 	c.SetGatewayStats(gwSnapshot{{Component: "edge", ID: "e1", Counters: counters}})
-	c.sampleGatewayComponents(time.Now())
+	c.sampleGatewayAll(time.Now())
 	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +317,7 @@ func TestWarpAndBeamSystemLoadIsRecorded(t *testing.T) {
 		{Component: "warp", ID: "w1", Region: "eu", CPU: 12.5, RAMPct: 28},
 		{Component: "beam", ID: "b1", Region: "eu", CPU: 3, RAMPct: 9.5},
 	})
-	c.sampleGatewayComponents(time.Now())
+	c.sampleGatewayAll(time.Now())
 	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +350,7 @@ func TestAComponentThatMeasuresNothingRecordsNoLoad(t *testing.T) {
 		{Component: "splice", ID: "host-1", Counters: map[string]int64{"handover_ok": 1}},
 		{Component: "link", ID: "l1", Gauges: map[string]float64{"active_tunnels": 2}},
 	})
-	c.sampleGatewayComponents(time.Now())
+	c.sampleGatewayAll(time.Now())
 	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +372,7 @@ func TestAComponentThatMeasuresNothingRecordsNoLoad(t *testing.T) {
 func TestAnEdgeIsNotRecordedTwice(t *testing.T) {
 	c, capt := newInfraCollector(t)
 	c.SetGatewayStats(gwSnapshot{{Component: "edge", ID: "e1", Region: "eu", CPU: 30, RAMPct: 44}})
-	c.sampleGatewayComponents(time.Now())
+	c.sampleGatewayAll(time.Now())
 	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +392,7 @@ func TestWarpAndBeamThroughputIsRecorded(t *testing.T) {
 		{Component: "warp", ID: "w1", Region: "eu", RAMPct: 28, RxBps: 96_000_000, TxBps: 120_000_000},
 		{Component: "beam", ID: "b1", Region: "eu", RAMPct: 9, RxBps: 3_000_000, TxBps: 22_000_000},
 	})
-	c.sampleGatewayComponents(time.Now())
+	c.sampleGatewayAll(time.Now())
 	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +419,7 @@ func TestOnlyThroughputCarryingComponentsGetBpsSeries(t *testing.T) {
 		{Component: "splice", ID: "host-1", RAMPct: 40, Counters: map[string]int64{"handover_ok": 1}},
 		{Component: "link", ID: "l1", RAMPct: 20, Gauges: map[string]float64{"active_tunnels": 2}},
 	})
-	c.sampleGatewayComponents(time.Now())
+	c.sampleGatewayAll(time.Now())
 	if err := c.recorders.Recorder().Flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}

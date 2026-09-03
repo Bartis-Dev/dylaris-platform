@@ -302,3 +302,94 @@ func TestLoadGatewayBandwidthOverview_EmptyHistoryNonNilAlerts(t *testing.T) {
 		t.Fatalf("expected no alerts, got %+v", ov.Alerts)
 	}
 }
+
+// A saturated link with sampling dropouts must alert.
+//
+// This is the case the old rule could not express, and the reason it never
+// fired anywhere. A stored sample is a ONE-SECOND instantaneous reading, not the
+// tick's average, so a busy link records the occasional quiet second - measured
+// in production on 2026-09-03, the minimum sample in a 10-minute window was
+// between 0% and 58% of that window's own average. Requiring EVERY sample to
+// clear 80% therefore asked for an average of two to ten times the cap.
+//
+// The shape below is taken from that measurement: twenty ticks, seventeen of
+// them at 92% of a gigabit, three dropouts including one exact zero.
+func TestASaturatedLinkAlertsDespiteSamplingDropouts(t *testing.T) {
+	now := time.Unix(1730000600, 0)
+	cap1G := 1000
+	busy := int64(920_000_000)
+	dropouts := map[int]int64{4: 0, 9: 300_000_000, 15: 250_000_000}
+
+	var rows []models.GatewayBandwidthRow
+	for i := 0; i < 20; i++ {
+		tx := busy
+		if v, dip := dropouts[i]; dip {
+			tx = v
+		}
+		rows = append(rows, models.GatewayBandwidthRow{
+			Time:      now.Add(time.Duration(-(i+1)*30) * time.Second),
+			Component: "edge", ID: "eu-edge-01", Host: "eu-edge-01",
+			TxBps: uint64(tx), RxBps: 1000, CapMbit: cap1G,
+		})
+	}
+
+	got := evaluateAlerts(rows, 80, 10*time.Minute, now)
+	var host, comp bool
+	for _, a := range got {
+		if a.Direction != "out" {
+			continue
+		}
+		if a.Kind == "host" && a.Host == "eu-edge-01" {
+			host = true
+		}
+		if a.Kind == "component" && a.ID == "eu-edge-01" {
+			comp = true
+		}
+	}
+	if !host || !comp {
+		t.Fatalf("a link at 92%% for seventeen of twenty ticks raised no alert: %+v", got)
+	}
+}
+
+// The other half of the same rule: a link that is quiet most of the time must
+// NOT alert just because it spikes. Without this the median would only have
+// traded one useless answer for another.
+func TestAMostlyIdleLinkDoesNotAlertOnSpikes(t *testing.T) {
+	now := time.Unix(1730000600, 0)
+	var rows []models.GatewayBandwidthRow
+	for i := 0; i < 20; i++ {
+		tx := int64(150_000_000) // 15%
+		if i%3 == 0 {
+			tx = 990_000_000 // 99%, seven of twenty ticks
+		}
+		rows = append(rows, models.GatewayBandwidthRow{
+			Time:      now.Add(time.Duration(-(i+1)*30) * time.Second),
+			Component: "edge", ID: "spiky", Host: "spiky",
+			TxBps: uint64(tx), RxBps: 1000, CapMbit: 1000,
+		})
+	}
+	if got := evaluateAlerts(rows, 80, 10*time.Minute, now); len(got) != 0 {
+		t.Fatalf("a link idle for two thirds of the window alerted: %+v", got)
+	}
+}
+
+// An exactly-half-saturated link does not alert: the median of an even count is
+// the LOWER middle, so eleven of twenty ticks have to clear the threshold.
+func TestHalfTheWindowIsNotSustained(t *testing.T) {
+	now := time.Unix(1730000600, 0)
+	var rows []models.GatewayBandwidthRow
+	for i := 0; i < 20; i++ {
+		tx := int64(200_000_000)
+		if i < 10 {
+			tx = 950_000_000
+		}
+		rows = append(rows, models.GatewayBandwidthRow{
+			Time:      now.Add(time.Duration(-(i+1)*30) * time.Second),
+			Component: "edge", ID: "half", Host: "half",
+			TxBps: uint64(tx), RxBps: 1000, CapMbit: 1000,
+		})
+	}
+	if got := evaluateAlerts(rows, 80, 10*time.Minute, now); len(got) != 0 {
+		t.Fatalf("exactly half the window over threshold alerted: %+v", got)
+	}
+}

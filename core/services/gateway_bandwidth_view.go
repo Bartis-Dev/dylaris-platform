@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"math"
 	"sort"
 	"time"
 
@@ -128,29 +127,60 @@ type utilSample struct {
 	known bool
 }
 
-// sustainedOver reports whether a series shows utilisation continuously at or
-// above threshold for the window: at least 2 distinct-time samples, every
-// sample's budget known, and the minimum utilisation across samples >= threshold
-// (a single dip below clears it). It also returns the latest sample's utilisation
-// for display.
+// sustainedOver reports whether a series shows utilisation at or above
+// threshold for most of the window: at least 2 distinct-time samples, every
+// sample's budget known, and the MEDIAN utilisation >= threshold. It also
+// returns the latest sample's utilisation for display.
+//
+// The median, and not the minimum, and the difference is whether this can ever
+// fire at all.
+//
+// A stored sample is not the average throughput of its 30-second tick. It is a
+// ONE-SECOND instantaneous reading (the gateway collectors poll gopsutil once a
+// second and publish the latest), so a quiet second inside a busy minute lands
+// in the store as a dip - or as an exact zero. Requiring every sample to clear
+// the threshold therefore asked the link to be saturated even during its
+// quietest sampled second.
+//
+// Measured against production on 2026-09-03, over 10-minute windows (the
+// default sustain, 20 samples): the minimum sample was between 0% and 58% of
+// that window's own average, typically 20-30%. To get a minimum at 80% of the
+// cap the AVERAGE would have had to be two to ten times the cap, which a link
+// cannot carry. The alert had never fired, and neither had the warp rebalancer
+// that decides which hosts are hot from these same alerts.
+//
+// The median says what an operator means by sustained: for more than half of
+// the window this link was at or above the threshold. It is unmoved by the
+// sampling dropouts, and it still refuses a link that merely spikes.
 func sustainedOver(samples []utilSample, thresholdPct int) (float64, bool) {
 	if len(samples) < 2 {
 		return 0, false
 	}
 	sort.Slice(samples, func(i, j int) bool { return samples[i].t.Before(samples[j].t) })
-	min := math.MaxFloat64
+	utils := make([]float64, 0, len(samples))
 	for _, s := range samples {
 		if !s.known {
 			return 0, false
 		}
-		if s.util < min {
-			min = s.util
-		}
+		utils = append(utils, s.util)
 	}
-	if min < float64(thresholdPct) {
+	if medianOf(utils) < float64(thresholdPct) {
 		return 0, false
 	}
 	return samples[len(samples)-1].util, true
+}
+
+// medianOf returns the middle value, or the lower of the two middles for an
+// even count. The lower one deliberately: with 20 samples it means eleven of
+// them have to clear the threshold rather than ten, so an exactly-half-saturated
+// link does not alert.
+func medianOf(v []float64) float64 {
+	if len(v) == 0 {
+		return 0
+	}
+	sorted := append([]float64(nil), v...)
+	sort.Float64s(sorted)
+	return sorted[(len(sorted)-1)/2]
 }
 
 // evaluateAlerts flags hosts and components sustained at or above thresholdPct for

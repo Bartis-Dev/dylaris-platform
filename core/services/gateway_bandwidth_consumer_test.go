@@ -1,6 +1,8 @@
 package services
 
 import (
+	"fmt"
+
 	"dylaris-pkg/protocol"
 	"testing"
 	"time"
@@ -93,5 +95,103 @@ func TestSnapshotIsACopyRatherThanTheLiveMap(t *testing.T) {
 	got[0].ID = "mutated"
 	if s.latest["edge:a"].gs.ID != "a" {
 		t.Fatal("mutating the snapshot changed the consumer's own state")
+	}
+}
+
+// publish is what one component sending a telemetry record does to the
+// consumer, minus Redis. The accumulation lives on this path, so the test has
+// to use it rather than writing the maps by hand - a test that built the
+// pending batch itself would pass against the code that dropped nine records
+// out of ten.
+func (s *GatewayBandwidthConsumerService) publishForTest(gs protocol.GatewayStats) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := gs.Component + ":" + gs.ID
+	s.latest[key] = seenStat{gs: gs, seen: time.Now()}
+	s.addCounters(key, gs)
+}
+
+// Every publish between two drains is counted, not just the last one.
+//
+// The components publish a counter as a DELTA every 3 seconds and the metrics
+// collector drains every 30, so keeping only the newest record threw away nine
+// events out of ten. Measured in production on 2026-09-03: the two splices
+// logged 8 dropped players in a window where the long-term record held 1.
+func TestEveryCounterPublishBetweenTwoDrainsIsCounted(t *testing.T) {
+	s := NewGatewayBandwidthConsumerService(nil, nil, "core-1")
+	for i := 0; i < 10; i++ {
+		s.publishForTest(protocol.GatewayStats{
+			Component: "splice", ID: "host-1", Region: "eu",
+			Counters: map[string]int64{"players_dropped": 1, "sessions_opened": 3},
+			Gauges:   map[string]float64{"active_sessions": float64(i)},
+		})
+	}
+
+	got := s.DrainCounters()
+	if len(got) != 1 {
+		t.Fatalf("batches = %d, want 1: %+v", len(got), got)
+	}
+	b := got[0]
+	if b.Component != "splice" || b.ID != "host-1" || b.Region != "eu" {
+		t.Errorf("batch identity = %+v", b)
+	}
+	if b.Counters["players_dropped"] != 10 {
+		t.Errorf("players_dropped = %d, want 10 (one per publish); a value of 1 is the newest record alone",
+			b.Counters["players_dropped"])
+	}
+	if b.Counters["sessions_opened"] != 30 {
+		t.Errorf("sessions_opened = %d, want 30", b.Counters["sessions_opened"])
+	}
+
+	// Drained, not read: the publisher zeroed its own counters as it sent them,
+	// so handing the same events out twice would invent them.
+	if again := s.DrainCounters(); len(again) != 0 {
+		t.Errorf("a second drain returned %+v, want nothing", again)
+	}
+
+	// The gauge is unaffected: sampling the newest is correct for an instant,
+	// and Snapshot keeps serving it.
+	snap := s.Snapshot()
+	if len(snap) != 1 || snap[0].Gauges["active_sessions"] != 9 {
+		t.Errorf("snapshot gauges = %+v, want the newest reading", snap)
+	}
+	// ...and it must not carry a lone delta that a caller could mistake for the
+	// window's total.
+	if snap[0].Counters != nil {
+		t.Errorf("snapshot still exposes counters: %+v", snap[0].Counters)
+	}
+}
+
+// A producer that folds a session id into a metric name cannot grow the pending
+// batch without bound between two drains. The cap is enforced while
+// accumulating, not only while recording: recording happens once a tick, and by
+// then the map has already been built.
+func TestAccumulationIsBoundedByTheMetricNameCap(t *testing.T) {
+	s := NewGatewayBandwidthConsumerService(nil, nil, "core-1")
+	for i := 0; i < protocol.MaxCustomMetrics*3; i++ {
+		s.publishForTest(protocol.GatewayStats{
+			Component: "splice", ID: "host-1",
+			Counters: map[string]int64{fmt.Sprintf("session_%d", i): 1},
+		})
+	}
+	got := s.DrainCounters()
+	if len(got) != 1 {
+		t.Fatalf("batches = %d, want 1", len(got))
+	}
+	if n := len(got[0].Counters); n > protocol.MaxCustomMetrics {
+		t.Errorf("accumulated %d distinct names, cap is %d", n, protocol.MaxCustomMetrics)
+	}
+	// A name that cannot be a series must not occupy one of the slots either.
+	s2 := NewGatewayBandwidthConsumerService(nil, nil, "core-1")
+	s2.publishForTest(protocol.GatewayStats{
+		Component: "splice", ID: "h",
+		Counters: map[string]int64{"bad name!": 5, "good_name": 7},
+	})
+	b := s2.DrainCounters()
+	if len(b) != 1 || b[0].Counters["good_name"] != 7 {
+		t.Fatalf("valid counter lost: %+v", b)
+	}
+	if _, bad := b[0].Counters["bad name!"]; bad {
+		t.Error("an invalid metric name was accumulated")
 	}
 }

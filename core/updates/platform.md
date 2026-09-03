@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Gateway components publish their counters every 3 seconds as "events since my
+  last message", and the recorder sampled one message every 30 seconds, so nine
+  out of ten events were dropped. Player sessions, beam transfers and both
+  handover figures now count every event. Earlier history stays low. `core`
+- The bandwidth alert required every single reading in the window to be over the
+  threshold, and a reading is a one-second sample, so one quiet second cleared
+  it. It had never fired. It now asks whether the link was over the threshold
+  for most of the window. `core`
+- Warp rebalancing decides which hosts are hot from those same alerts, so it had
+  never run either. `core`
+
 ## 2026.09.03.9
 
 ### Features

@@ -64,6 +64,7 @@ type MetricsCollector struct {
 // without Redis.
 type gatewayStatsSource interface {
 	Snapshot() []protocol.GatewayStats
+	DrainCounters() []CounterBatch
 }
 
 const (
@@ -178,6 +179,18 @@ func (c *MetricsCollector) sampleSlow(ctx context.Context) {
 // and a two-replica install would report twice the players. The counter that
 // bills tenants was once wrong in exactly this way.
 func (c *MetricsCollector) sampleOnce(ctx context.Context) {
+	// Drained BEFORE both gates, and this ordering is the whole correctness of
+	// it. The counters accumulate in the consumer, which every replica runs; a
+	// replica that only drained while it held the lease would hand the next
+	// leader every event since its own process started, and the previous leader
+	// has already recorded almost all of them. Draining unconditionally keeps
+	// each replica's backlog to one tick, so a failover costs at most one
+	// 30-second window rather than a duplicate of the whole uptime.
+	//
+	// The same argument applies to the feature gate: recording switched off must
+	// not turn into a backlog that the day it is switched on reports as a single
+	// enormous spike.
+	batches := c.drainGatewayCounters()
 	if c.leader != nil && !c.leader.IsLeader() {
 		return
 	}
@@ -185,6 +198,7 @@ func (c *MetricsCollector) sampleOnce(ctx context.Context) {
 		return
 	}
 	now := time.Now()
+	c.recordGatewayCounters(batches, now)
 	c.samplePlatform(ctx, now)
 	c.sampleGateway(ctx, now)
 	c.sampleGatewayComponents(now)
@@ -194,13 +208,45 @@ func (c *MetricsCollector) sampleOnce(ctx context.Context) {
 	c.samplePresence(ctx, now)
 }
 
-// sampleGatewayComponents records the counters and gauges every gateway
-// component publishes about itself, plus the restarts derived from their uptime.
+// drainGatewayCounters takes the counted events waiting in the consumer, or
+// nothing when no telemetry view is wired.
+func (c *MetricsCollector) drainGatewayCounters() []CounterBatch {
+	if c.gwStats == nil {
+		return nil
+	}
+	return c.gwStats.DrainCounters()
+}
+
+// recordGatewayCounters turns each component's counted events into series.
 //
-// The names are the component own names, prefixed with the component: a counter
-// "handover_ok" from the splice becomes splice.handover_ok. That is what lets a
-// component add a measurement without either repository changing the shared
-// telemetry contract - and it is why the names are validated rather than
+// Separate from the gauges below because the two are read differently: a gauge
+// is sampled (the newest reading is the answer) and a counter is SUMMED (every
+// publish between two ticks is an event that happened). Folding them into one
+// loop is what made every counter series a tenth of the truth.
+func (c *MetricsCollector) recordGatewayCounters(batches []CounterBatch, now time.Time) {
+	for _, b := range batches {
+		if b.Component == "" || b.ID == "" {
+			continue
+		}
+		accepted := 0
+		for name, v := range b.Counters {
+			if accepted >= protocol.MaxCustomMetrics || !protocol.ValidMetricName(name) {
+				continue
+			}
+			accepted++
+			c.obs(b.Component+"."+name, b.ID, b.Region, float64(v), now)
+		}
+	}
+}
+
+// sampleGatewayComponents records the gauges every gateway component publishes
+// about itself, plus the restarts derived from their uptime. The counters take
+// the separate path above.
+//
+// The names are the component own names, prefixed with the component: a gauge
+// "active_sessions" from the splice becomes splice.active_sessions. That is what
+// lets a component add a measurement without either repository changing the
+// shared telemetry contract - and it is why the names are validated rather than
 // trusted. Each distinct name is a stored series that outlives the process that
 // published it, so a producer folding a session id or an address into one would
 // grow the store with TRAFFIC instead of with code.
@@ -213,13 +259,6 @@ func (c *MetricsCollector) sampleGatewayComponents(now time.Time) {
 			continue
 		}
 		accepted := 0
-		for name, v := range gs.Counters {
-			if accepted >= protocol.MaxCustomMetrics || !protocol.ValidMetricName(name) {
-				continue
-			}
-			accepted++
-			c.obs(gs.Component+"."+name, gs.ID, gs.Region, float64(v), now)
-		}
 		for name, v := range gs.Gauges {
 			if accepted >= protocol.MaxCustomMetrics || !protocol.ValidMetricName(name) {
 				continue

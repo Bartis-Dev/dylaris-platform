@@ -27,7 +27,28 @@ type GatewayBandwidthConsumerService struct {
 
 	mu      sync.Mutex
 	latest  map[string]seenStat // keyed by component ID
-	streams map[string]bool     // stream keys already being consumed
+	pending map[string]*CounterBatch
+	streams map[string]bool // stream keys already being consumed
+}
+
+// CounterBatch is everything one component COUNTED since the last drain.
+//
+// It exists because a counter and a gauge cannot be read the same way. A gauge
+// is an instant ("2 peers right now"), so sampling the newest one is correct. A
+// counter arrives as a DELTA - "events since my last publish" - and the
+// components publish one every 3 seconds while the metrics collector samples
+// every 30, so keeping only the newest threw nine out of every ten away.
+//
+// Measured in production on 2026-09-03: the two splices logged 8 dropped
+// players between 13:25 and 17:00 UTC and the long-term record held 1. Four
+// headline figures are built on these series ("Player sessions carried",
+// "Players carried through an edge restart", "Players dropped in a handover",
+// "Beam transfers"), so all four read roughly a tenth of the truth.
+type CounterBatch struct {
+	Component string
+	ID        string
+	Region    string
+	Counters  map[string]int64
 }
 
 // seenStat pairs a component's latest sample with the Core receive time, so
@@ -52,6 +73,7 @@ func NewGatewayBandwidthConsumerService(s store.Store, r *redis.Client, coreID s
 		redis:   r,
 		coreID:  coreID,
 		latest:  make(map[string]seenStat),
+		pending: make(map[string]*CounterBatch),
 		streams: make(map[string]bool),
 	}
 }
@@ -205,8 +227,62 @@ func (s *GatewayBandwidthConsumerService) Snapshot() []protocol.GatewayStats {
 		if now.Sub(v.seen) > gwbwStaleAfter {
 			continue
 		}
-		out = append(out, v.gs)
+		// Counters are deliberately stripped: what is left in `latest` is ONE
+		// publish's delta, and reading it as the window's total is exactly the
+		// defect DrainCounters exists to fix. Gauges and the typed fields are
+		// instants, so the newest is the right answer for them.
+		gs := v.gs
+		gs.Counters = nil
+		out = append(out, gs)
 	}
+	return out
+}
+
+// addCounters folds one publish's deltas into the pending batch. Caller holds
+// the lock.
+//
+// The distinct-name cap is applied HERE as well as at record time. Accumulating
+// first and bounding later would let a producer that folds a session id or an
+// address into a metric name grow this map with TRAFFIC rather than with code,
+// between two collector ticks, in a process that cannot drop it until the next
+// one.
+func (s *GatewayBandwidthConsumerService) addCounters(key string, gs protocol.GatewayStats) {
+	if len(gs.Counters) == 0 {
+		return
+	}
+	b := s.pending[key]
+	if b == nil {
+		b = &CounterBatch{Component: gs.Component, ID: gs.ID, Counters: map[string]int64{}}
+		s.pending[key] = b
+	}
+	// The newest region wins: a component that moved region keeps counting, and
+	// the batch is attributed where it currently runs.
+	b.Region = gs.Region
+	for name, v := range gs.Counters {
+		if !protocol.ValidMetricName(name) {
+			continue
+		}
+		if _, known := b.Counters[name]; !known && len(b.Counters) >= protocol.MaxCustomMetrics {
+			continue
+		}
+		b.Counters[name] += v
+	}
+}
+
+// DrainCounters returns every component's counted events since the previous
+// call and CLEARS them, so each event is handed out exactly once.
+//
+// Drained rather than read because the deltas cannot be re-derived: the
+// publisher zeroes its own counters as it sends them, which is what makes a
+// restart harmless there and makes a second reader impossible here.
+func (s *GatewayBandwidthConsumerService) DrainCounters() []CounterBatch {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]CounterBatch, 0, len(s.pending))
+	for _, b := range s.pending {
+		out = append(out, *b)
+	}
+	s.pending = map[string]*CounterBatch{}
 	return out
 }
 
@@ -258,7 +334,9 @@ func (s *GatewayBandwidthConsumerService) consume(ctx context.Context, streamKey
 					continue // bad json or unknown version: ack + drop
 				}
 				s.mu.Lock()
-				s.latest[gs.Component+":"+gs.ID] = seenStat{gs: gs, seen: time.Now()}
+				key := gs.Component + ":" + gs.ID
+				s.latest[key] = seenStat{gs: gs, seen: time.Now()}
+				s.addCounters(key, gs)
 				s.mu.Unlock()
 			}
 			if len(ackIDs) > 0 {
