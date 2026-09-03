@@ -171,56 +171,60 @@ function Section({ title, count, empty, children }: {
     );
 }
 
-/** A CPU or RAM reading: a wide bar, the number, and the label. */
-function Meter({ icon, label, pct, color }: {
-    icon: React.ReactNode; label: string; pct: number; color: string;
+/**
+ * One measurement: its own box, its own chart, its live value beside it.
+ *
+ * The scale is fixed to 0-100 and a line marks the halfway point. Both matter:
+ * scaled to the window's own maximum, a machine idling between 2 and 4 percent
+ * draws the same alarming sawtooth as one swinging between 40 and 90, and
+ * without a reference line a small box cannot show WHERE a flat line sits.
+ *
+ * CPU and RAM get a box each rather than two lines in one. They are unrelated
+ * judgements - a busy CPU is work being done, a full RAM is a machine about to
+ * be in trouble - and sharing an axis made the reader match colours to decide
+ * which of the two they were looking at.
+ */
+function LoadBox({ label, icon, pct, values, color }: {
+    label: string;
+    icon: React.ReactNode;
+    pct: number;
+    values: number[];
+    color: string;
 }) {
     return (
-        <div className="flex items-center gap-2">
-            <span className="text-(--base-05) shrink-0">{icon}</span>
-            <span className="mono-label text-(--base-06) w-8 shrink-0">{label}</span>
-            <div className="w-52 h-1.5 rounded-full bg-(--base-03) overflow-hidden shrink-0">
-                <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${Math.min(100, Math.max(0, pct))}%`, backgroundColor: color }}
-                />
+        <div className="rounded-md border border-(--base-03) bg-(--base-02) px-3 py-2 flex flex-col gap-1.5 w-64">
+            <div className="flex items-center gap-1.5 mono-label text-(--base-06)">
+                <span className="text-(--base-05)">{icon}</span>
+                {label}
+                <span className="ml-auto text-(--base-05)">0-100%</span>
             </div>
-            <span className="text-xs font-mono tabular-nums text-(--base-08) w-10 text-right shrink-0">
-                {pct.toFixed(0)}%
-            </span>
+            <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                    <Sparkline
+                        series={[{ values, color, fill: true }]}
+                        max={100}
+                        height={56}
+                        grid={[0.5]}
+                        title={`${label} history`}
+                        empty="no history yet"
+                    />
+                </div>
+                <span className="text-lg font-mono tabular-nums text-(--base-09) w-14 text-right shrink-0">
+                    {pct.toFixed(0)}%
+                </span>
+            </div>
         </div>
     );
 }
 
-/**
- * The load block: both meters and the graph behind them.
- *
- * The graph is fixed to a 0-100 scale rather than to the highest value in the
- * window. A machine idling between 2 and 4 percent would otherwise draw the
- * same alarming sawtooth as one swinging between 40 and 90, and the whole point
- * of putting it next to the bar is that the two agree.
- */
-function LoadBlock({ cpu, ram, history, label }: {
-    cpu: number; ram: number; history?: { cpu: number[]; ram: number[] }; label: string;
+/** Both boxes for one component. */
+function LoadBlock({ cpu, ram, history }: {
+    cpu: number; ram: number; history?: { cpu: number[]; ram: number[] };
 }) {
     return (
-        <div className="flex items-center gap-6 flex-wrap">
-            <div className="flex flex-col gap-2">
-                <Meter icon={<Cpu size={12} />} label="CPU" pct={cpu} color="var(--accent)" />
-                <Meter icon={<MemoryStick size={12} />} label="RAM" pct={ram} color="var(--primary)" />
-            </div>
-            <div className="w-44">
-                <Sparkline
-                    series={[
-                        { values: history?.cpu ?? [], color: 'var(--accent)' },
-                        { values: history?.ram ?? [], color: 'var(--primary)' },
-                    ]}
-                    max={100}
-                    height={44}
-                    title={`${label} CPU and RAM history`}
-                    empty="no history yet"
-                />
-            </div>
+        <div className="flex items-center gap-3 flex-wrap">
+            <LoadBox label="CPU" icon={<Cpu size={11} />} pct={cpu} values={history?.cpu ?? []} color="var(--accent)" />
+            <LoadBox label="RAM" icon={<MemoryStick size={11} />} pct={ram} values={history?.ram ?? []} color="var(--primary)" />
         </div>
     );
 }
@@ -237,7 +241,7 @@ function StatusDot({ online }: { online: boolean }) {
 /** One instance: identity on the left, what it costs on the right. */
 function Row({ head, meta, load }: { head: React.ReactNode; meta: React.ReactNode; load: React.ReactNode }) {
     return (
-        <div className="flex items-center justify-between gap-6 px-4 py-4 flex-wrap">
+        <div className="flex items-center justify-between gap-6 px-4 py-6 flex-wrap">
             <div className="flex flex-col gap-1 min-w-56">
                 <div className="flex items-center gap-2 flex-wrap text-sm">{head}</div>
                 <div className="flex items-center gap-3 flex-wrap text-xs text-(--base-06) font-mono">{meta}</div>
@@ -293,7 +297,7 @@ function EdgeRow({ edge, load }: { edge: GatewayEdge; load: LoadHistory }) {
             }
             load={
                 online && s
-                    ? <LoadBlock cpu={s.cpu} ram={s.ram_pct} history={load.get(`edge:${edge.edge_id}`)} label={edge.name} />
+                    ? <LoadBlock cpu={s.cpu} ram={s.ram_pct} history={load.get(`edge:${edge.edge_id}`)} />
                     : null
             }
         />
@@ -323,12 +327,7 @@ function ComponentRow({ comp, extra, load }: { comp: GatewayComponentView; extra
                 </>
             }
             load={
-                <LoadBlock
-                    cpu={comp.cpuPct}
-                    ram={comp.ramPct}
-                    history={load.get(`${comp.component}:${comp.id}`)}
-                    label={comp.id}
-                />
+                <LoadBlock cpu={comp.cpuPct} ram={comp.ramPct} history={load.get(`${comp.component}:${comp.id}`)} />
             }
         />
     );

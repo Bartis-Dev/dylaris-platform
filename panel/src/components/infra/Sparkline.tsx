@@ -28,6 +28,7 @@ export default function Sparkline({
     className = '',
     title,
     empty = 'no history',
+    grid,
 }: {
     series: SparkSeries[];
     max: number;
@@ -35,11 +36,22 @@ export default function Sparkline({
     className?: string;
     title?: string;
     empty?: string;
+    /**
+     * Faint horizontal lines, as fractions of the scale (0.5 = halfway up).
+     *
+     * The point of them is to make a FIXED scale visible. Without a reference
+     * line, a flat line at 3% and a flat line at 90% are the same picture in a
+     * small box, and the reader has to trust the number beside it instead of
+     * reading the chart.
+     */
+    grid?: number[];
 }) {
     // One point cannot be a line. Said in words rather than drawn as a flat
     // line along the floor, which would read as real, quiet traffic.
     const drawable = series.filter(s => s.values.length > 1);
     if (drawable.length === 0) {
+        // Same height as a drawn chart on purpose: a box that collapses when it
+        // has nothing yet makes the row jump the moment the first point lands.
         return (
             <div
                 className={`flex items-center text-[10px] font-mono text-(--base-05) ${className}`}
@@ -70,6 +82,22 @@ export default function Sparkline({
             style={{ height }}
         >
             {title && <title>{title}</title>}
+            {(grid ?? []).map(f => (
+                <line
+                    key={f}
+                    x1={0}
+                    x2={W}
+                    y1={H - f * (H - 2) - 1}
+                    y2={H - f * (H - 2) - 1}
+                    stroke="var(--base-04)"
+                    strokeWidth={1}
+                    // Solid, not dashed: the viewBox is stretched horizontally
+                    // (preserveAspectRatio="none"), and non-scaling-stroke keeps
+                    // the WIDTH but not the dash pattern - dashes come out
+                    // smeared at whatever width the box happens to be.
+                    vectorEffect="non-scaling-stroke"
+                />
+            ))}
             {drawable.map((s, i) => {
                 const line = path(s.values);
                 return (

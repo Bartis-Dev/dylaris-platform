@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.03.6
+
+### Features
+- On the Gateway tab, CPU and RAM each get their own box with a fixed 0-100%
+  scale and the live value beside the chart. One chart carrying both lines made
+  the reader match colours to tell two unrelated things apart. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.03.5
 
 ### Features
