@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -24,7 +25,26 @@ type Logger struct {
 	client     *redis.Client
 	streamKey  string
 	maxEntries int64
+	expireWarn sync.Once
 }
+
+// How long a stream outlives its last entry.
+//
+// Every write refreshes it, so a component that is alive keeps its record and
+// only a stream nobody writes to any more ages out - which is exactly the set
+// that has no owner left to clean it.
+//
+// It exists because the instance id is usually a container hostname, so each
+// redeploy starts a NEW stream and abandons the old one with no expiry at all.
+// Measured in production on 2026-09-03: 88 error streams holding 2445 entries,
+// 68 of them the hub's against two live instances. Nothing was ever going to
+// remove them, and the panel's Errors screen SCANS AND READS every one on every
+// load - so the cost is not the stored bytes, it is that the screen gets slower
+// and noisier for as long as the platform keeps being deployed.
+//
+// A month is long enough that the record of a component which died last week is
+// still there to look at, and short enough that the set stays bounded.
+const streamTTL = 30 * 24 * time.Hour
 
 // Services is the canonical set of service names that may appear in a stream
 // key. It is the SAME list a producer picks its name from and a reader scans
@@ -123,16 +143,34 @@ func (l *Logger) write(level, source, message string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, err = l.client.XAdd(ctx, &redis.XAddArgs{
+	// The expiry rides along with the write rather than being set once at
+	// construction: XADD does not refresh a TTL, so setting it once would let a
+	// busy stream expire out from under a component that is still writing.
+	pipe := l.client.Pipeline()
+	add := pipe.XAdd(ctx, &redis.XAddArgs{
 		Stream: l.streamKey,
 		MaxLen: l.maxEntries,
 		Approx: true,
 		Values: map[string]interface{}{"data": string(data)},
-	}).Result()
+	})
+	expire := pipe.Expire(ctx, l.streamKey, streamTTL)
+	// Exec reports the first failure; each command is inspected on its own
+	// below, because the two failures mean different things.
+	_, _ = pipe.Exec(ctx)
 
-	if err != nil {
+	if err := add.Err(); err != nil {
 		// Don't recurse - just log locally
 		log.Printf("[errlog] redis write failed: %v", err)
+		return
+	}
+	if err := expire.Err(); err != nil {
+		// The entry landed, so this is not a lost error - but the stream is now
+		// immortal, which is the thing this was added to stop. Once per process:
+		// it would otherwise repeat on every single write, and the most likely
+		// cause is an ACL that omits the permission, which does not fix itself.
+		l.expireWarn.Do(func() {
+			log.Printf("[errlog] could not set the expiry on %s, so it will not age out: %v", l.streamKey, err)
+		})
 	}
 }
 

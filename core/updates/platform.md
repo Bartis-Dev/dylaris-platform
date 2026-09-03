@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.04
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Error streams from components that are gone now age out after 30 days instead
+  of living forever. Each redeploy started a new stream under a new instance id
+  and abandoned the old one, so Infrastructure, Errors was scanning and reading
+  an ever-growing set - 88 streams here against a handful of live components.
+  A stream still being written keeps its record. `core`
+
 ## 2026.09.03.15
 
 ### Features
