@@ -224,7 +224,9 @@ export async function getTicket(id: number) {
 export interface CreateTicketPayload {
     categoryId: number;
     serverUuid?: string;
-    serverRegion?: string;
+    /** No serverRegion here: Core takes it from the server row it authorised,
+     *  so a client cannot state a region the server does not have. It comes
+     *  back on the Ticket. */
     subjectKind?: 'server' | 'node' | 'route' | '';
     subjectRef?: string;
     title: string;

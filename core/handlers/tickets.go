@@ -105,32 +105,44 @@ func canMutate(perms EffectivePermissions) bool {
 // and owners satisfy by construction - so a ticket can only ever point at a
 // server its author could already open.
 //
-// Deliberately boolean: the caller must answer "no such server" to both an
-// unknown uuid and someone else's, so this must not report which it was.
-func (h *TicketsHandler) mayAttachServer(userID, username, serverUUID string) bool {
+// It also hands back the server's region, because it already loaded the row and
+// the ticket has to record where the server is. Asking the caller for that (the
+// request used to carry a serverRegion field) let them state a region for a
+// server they do not own the description of, and nothing checked it against the
+// server they had just been authorised for.
+//
+// The boolean stays load-bearing: the caller must answer "no such server" to
+// both an unknown uuid and someone else's, so a false result must not report
+// which it was. The region is only meaningful when ok is true.
+func (h *TicketsHandler) mayAttachServer(userID, username, serverUUID string) (string, bool) {
 	if h.state == nil || h.state.Store == nil || h.state.Authz == nil {
-		return false
+		return "", false
 	}
 	srv, err := h.state.Store.GetServerByUUID(serverUUID)
 	if err != nil || srv == nil {
-		return false
+		return "", false
 	}
 	perms := LoadEffectivePermissions(h.state, userID)
 	res, rerr := h.state.Authz.Resolve(authz.Identity{
 		UserID: userID, Username: username, IsAdmin: perms.IsAdmin,
 	}, srv.ID)
 	if rerr != nil {
-		return false
+		return "", false
 	}
-	return res.HasCap("overview.read")
+	if !res.HasCap("overview.read") {
+		return "", false
+	}
+	return srv.Region, true
 }
 
 // ── Create ───────────────────────────────────────────────────────────
 
 type createTicketRequest struct {
-	CategoryID   int    `json:"categoryId"`
-	ServerUUID   string `json:"serverUuid,omitempty"`
-	ServerRegion string `json:"serverRegion,omitempty"`
+	CategoryID int    `json:"categoryId"`
+	ServerUUID string `json:"serverUuid,omitempty"`
+	// No serverRegion field on purpose. It used to be accepted here and stored
+	// verbatim, which let the author name any region for a server whose region
+	// the platform already knows. It is now taken from the server row.
 	// What the ticket is about: "server" | "node" | "route" | "" (nothing
 	// specific). SubjectRef names the node or route.
 	SubjectKind  string `json:"subjectKind,omitempty"`
@@ -208,8 +220,11 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	//
 	// Same answer for "no such server" and "not yours", or the fix would leave
 	// the oracle in place with an extra step.
+	serverRegion := ""
 	if uuid := strings.TrimSpace(req.ServerUUID); uuid != "" {
-		if !h.mayAttachServer(userID, username, uuid) {
+		var ok bool
+		serverRegion, ok = h.mayAttachServer(userID, username, uuid)
+		if !ok {
 			sendJSONError(w, "Server not found", http.StatusBadRequest)
 			return
 		}
@@ -223,9 +238,29 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Region snapshot: ticket belongs to the user's effective region for
-	// future cross-region support. For now everyone is in 'default'.
+	// The ticket's region is the region of the server it is about, taken from
+	// the row mayAttachServer just authorised. It used to be the constant
+	// "default", described as "the user's effective region" - but a user has a
+	// SET of regions (user_regions is staff visibility, not a home), so there
+	// was no such value to snapshot and the column said the same thing for every
+	// ticket ever filed.
+	//
+	// That is not cosmetic, because the column is read. The support inbox shows
+	// a RegionBadge per ticket and offers a region multi-select as soon as more
+	// than one region exists, filtering on exactly this field. On a two-region
+	// install every ticket therefore wore a "default" badge and picking "eu" or
+	// "us" emptied the list, with no selection that showed anything.
+	//
+	// A ticket with no server keeps "default": it is the seeded region and the
+	// honest answer for a billing question that is about no server at all.
+	//
+	// Existing rows are deliberately NOT backfilled. The column is a snapshot of
+	// where the server was when the ticket was filed, and today's servers.region
+	// is not evidence about a ticket from three months ago.
 	region := "default"
+	if serverRegion != "" {
+		region = serverRegion
+	}
 
 	subjectKind, subjectRef := normalizeTicketSubject(req.SubjectKind, req.SubjectRef)
 
@@ -234,7 +269,7 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		CategoryID:   cat.ID,
 		UserID:       userID,
 		ServerUUID:   strings.TrimSpace(req.ServerUUID),
-		ServerRegion: strings.TrimSpace(req.ServerRegion),
+		ServerRegion: serverRegion,
 		SubjectKind:  subjectKind,
 		SubjectRef:   subjectRef,
 		Title:        title,

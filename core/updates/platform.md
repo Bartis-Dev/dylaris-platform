@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.04.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A ticket is now filed under the region of the server it names, instead of
+  always under `default`. The support inbox shows a region badge per ticket and
+  offers a region filter once you run more than one region, both reading that
+  field, so on a multi-region install every ticket looked like `default` and
+  picking a real region emptied the list. Tickets opened before this update keep
+  their old value. `core`
+- The ticket API no longer accepts a `serverRegion` from the client. It is taken
+  from the server row the request was already authorised against, so a ticket
+  cannot claim a region its server does not have. `core`
+
 ## 2026.09.04.5
 
 ### Features

@@ -82,7 +82,7 @@ func TestMayAttachServer(t *testing.T) {
 
 	fs := &ticketAttachFakeStore{
 		servers: map[string]*models.Server{
-			"srv-uuid": {ID: 7, UUID: "srv-uuid", OwnerID: ownerID, OwnerName: "owner"},
+			"srv-uuid": {ID: 7, UUID: "srv-uuid", OwnerID: ownerID, OwnerName: "owner", Region: "eu"},
 		},
 		users: map[string]*models.User{
 			ownerID:    {ID: ownerID, Username: "owner"},
@@ -112,8 +112,19 @@ func TestMayAttachServer(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := h.mayAttachServer(c.userID, c.username, c.uuid); got != c.want {
+			region, got := h.mayAttachServer(c.userID, c.username, c.uuid)
+			if got != c.want {
 				t.Errorf("mayAttachServer(%q, %q) = %v, want %v", c.username, c.uuid, got, c.want)
+			}
+			// The region is the reason this returns anything besides a bool: the
+			// ticket records where the server is, and it must come from the row
+			// that was just authorised rather than from the request.
+			wantRegion := ""
+			if c.want {
+				wantRegion = "eu"
+			}
+			if region != wantRegion {
+				t.Errorf("region = %q, want %q", region, wantRegion)
 			}
 		})
 	}
@@ -121,10 +132,15 @@ func TestMayAttachServer(t *testing.T) {
 	t.Run("a stranger and an unknown uuid are indistinguishable", func(t *testing.T) {
 		// Both false is the whole point: the caller turns either into the same
 		// "Server not found", so no answer here may leak which case it was.
-		stranger := h.mayAttachServer(strangerID, "stranger", "srv-uuid")
-		unknown := h.mayAttachServer(strangerID, "stranger", "no-such-uuid")
+		strangerRegion, stranger := h.mayAttachServer(strangerID, "stranger", "srv-uuid")
+		unknownRegion, unknown := h.mayAttachServer(strangerID, "stranger", "no-such-uuid")
 		if stranger != unknown {
 			t.Errorf("stranger=%v unknown=%v - the two must be the same answer", stranger, unknown)
+		}
+		// The region must not leak either: a non-empty one for the real uuid
+		// would tell a stranger the server exists.
+		if strangerRegion != unknownRegion {
+			t.Errorf("region stranger=%q unknown=%q - a refusal must not say the server exists", strangerRegion, unknownRegion)
 		}
 	})
 }
