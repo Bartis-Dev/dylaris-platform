@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"strings"
+
 	"dylaris-core/models"
 )
 
@@ -78,13 +80,21 @@ func (p EffectivePermissions) CanAccessRegion(regionID string) bool {
 	if p.CanAccessAllRegions {
 		return true
 	}
+	regionID = strings.ToLower(strings.TrimSpace(regionID))
 	if regionID == "" {
 		// Defensive: a server with no region (shouldn't happen post-migration
 		// since the column defaults to 'default') is treated as default.
 		regionID = "default"
 	}
+	// Case- and space-insensitive, like services.equalRegion and PickBeamRelay.
+	// This was the one region comparison in the platform that demanded an exact
+	// match, and it is the one where a mismatch is silent: the other two fall
+	// back (any relay, no move), this one HIDES a server from the staff member
+	// meant to see it. Region ids are canonically lowercase, so folding cannot
+	// merge two distinct regions - CreateRegion lowercases and the id regex
+	// forbids the rest. It only forgives rows written before that was enforced.
 	for _, r := range p.AllowedRegions {
-		if r == regionID {
+		if strings.EqualFold(strings.TrimSpace(r), regionID) {
 			return true
 		}
 	}

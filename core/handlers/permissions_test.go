@@ -107,6 +107,13 @@ func TestCanAccessRegion(t *testing.T) {
 		{"empty region defensively maps to default and matches", EffectivePermissions{AllowedRegions: []string{"default"}}, "", true},
 		{"empty region maps to default but is denied without it", EffectivePermissions{AllowedRegions: []string{"eu"}}, "", false},
 		{"no allowed regions denies everything", EffectivePermissions{}, "eu", false},
+		// Case- and space-insensitive, matching services.equalRegion and
+		// PickBeamRelay. This was the one exact-match region comparison, and the
+		// one where a mismatch is silent - it hides a server from the staff
+		// member meant to see it instead of falling back like the other two.
+		{"a region differing only in case still matches", EffectivePermissions{AllowedRegions: []string{"eu"}}, "EU", true},
+		{"a stored region with surrounding space still matches", EffectivePermissions{AllowedRegions: []string{" eu "}}, "eu", true},
+		{"folding does not turn a non-member into a member", EffectivePermissions{AllowedRegions: []string{"eu"}}, "US", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

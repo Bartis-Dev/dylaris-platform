@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.04.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A node's self-reported region is now checked against your configured regions
+  before it is stored, the same rule that already applied when an admin sets one
+  by hand. A typo in `DYLARIS_REGION` used to be written straight through, which
+  quietly misdirected Beam transfers, hid the node's servers from regional staff
+  and let a region be deleted while servers still ran in it. An unknown value is
+  reported once on the Errors screen instead. `core`
+- Region access checks now ignore case and surrounding whitespace, matching how
+  every other region comparison in the platform already worked. A region stored
+  as `EU` no longer hides its servers from staff granted `eu`. `core`
+
 ## 2026.09.04.4
 
 ### Features

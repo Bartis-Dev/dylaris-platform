@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -22,6 +23,13 @@ type DiscoveryService struct {
 	// (single-Core dev mode); non-nil = only run when this Core holds the
 	// global lease. See pkg/leader.
 	leader leader.Election
+	// badRegionReported remembers which unknown DYLARIS_REGION value was last
+	// reported per node, so a misconfigured node is announced once instead of
+	// every 5 seconds. The error stream is capped at 500 entries and trims
+	// itself, so a repeating report would evict every other error in about
+	// forty minutes. Only scanNodes touches it, from the single ticker
+	// goroutine in Start, so it needs no lock.
+	badRegionReported map[int]string
 }
 
 // SetLeader wires the leader-election gate. Call once at boot.
@@ -155,9 +163,10 @@ type NodeIPs struct {
 
 func NewDiscoveryService(s store.Store, r *redis.Client, secret string) *DiscoveryService {
 	return &DiscoveryService{
-		store:         s,
-		redis:         r,
-		clusterSecret: secret,
+		store:             s,
+		redis:             r,
+		clusterSecret:     secret,
+		badRegionReported: map[int]string{},
 	}
 }
 
@@ -243,6 +252,46 @@ type NodeLinkState struct {
 	Running         string `json:"running,omitempty"`
 	Available       string `json:"available,omitempty"`
 	UpdateAvailable bool   `json:"updateAvailable"`
+}
+
+// applyHeartbeatRegion stores an auto-discovered node's DYLARIS_REGION, but
+// only once it names a region that EXISTS - the same rule ConfigureNode applies
+// when an admin adopts a node by hand.
+//
+// It has to be the same rule because this column is a join key, not a label.
+// It picks the beam relay (a HARD filter, so the wrong value sends a transfer
+// across an ocean), it is what stops the rebalancer moving a server between
+// regions, it decides which servers regional staff may see, and it is copied
+// onto every server created on this node - where CountServersInRegion reads it
+// to decide whether a region may be deleted. A DYLARIS_REGION typo used to be
+// written through unchecked, and each of those consumers then answered about a
+// region no row describes: staff silently lost sight of the servers, and the
+// delete guard counted zero for a region that was really in use.
+//
+// Region ids are canonically lowercase - CreateRegion lowercases and the id
+// regex allows nothing else - so normalise before the lookup. Otherwise
+// DYLARIS_REGION=EU would be refused over its casing while naming a region
+// that plainly exists.
+func (s *DiscoveryService) applyHeartbeatRegion(node *models.Node, reported string) {
+	region := strings.ToLower(strings.TrimSpace(reported))
+	if region == "" {
+		return
+	}
+	if _, err := s.store.GetRegion(region); err != nil {
+		// Once per distinct bad value, not once per 5s tick: see badRegionReported.
+		if s.badRegionReported[node.ID] != region {
+			s.badRegionReported[node.ID] = region
+			logErrf("discovery", "node %s reports region %q, which is not a configured region - keeping %q. Create the region or fix DYLARIS_REGION on that node.",
+				node.Name, reported, node.Region)
+		}
+		return
+	}
+	delete(s.badRegionReported, node.ID)
+	if region == node.Region {
+		return
+	}
+	log.Printf("Node region updated for %s: %q -> %q", node.Name, node.Region, region)
+	s.store.SetNodeRegion(node.ID, region)
 }
 
 func (s *DiscoveryService) scanNodes() {
@@ -356,9 +405,8 @@ func (s *DiscoveryService) scanNodes() {
 			// Region — only update when the heartbeat carries one AND the node has
 			// not been adopted by an admin. Configured nodes (and nodes that don't
 			// broadcast DYLARIS_REGION) keep whatever the admin set.
-			if !node.Configured && hb.Region != "" && hb.Region != node.Region {
-				log.Printf("Node region updated for %s: %q → %q", node.Name, node.Region, hb.Region)
-				s.store.SetNodeRegion(node.ID, hb.Region)
+			if !node.Configured && hb.Region != "" {
+				s.applyHeartbeatRegion(node, hb.Region)
 			}
 
 			// Hardware-change guard: if the node's host CPU layout changed since we
