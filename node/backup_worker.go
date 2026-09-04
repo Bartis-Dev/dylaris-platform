@@ -155,6 +155,29 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 		// Drain any remaining bytes so the writer goroutine doesn't block on
 		// a full pipe; CloseWithError unblocks the writer immediately.
 		pr.CloseWithError(upErr)
+		// Remove what was half-written, which for the file-backed providers is
+		// a real archive-shaped file: local, shared and node-local all io.Copy
+		// straight into the destination, so an upload that dies partway leaves
+		// its bytes there and returns the error.
+		//
+		// Nothing else would ever remove it. Retention prunes SUCCESSFUL runs,
+		// and reapAbandonedRuns deliberately deletes nothing (it cannot tell a
+		// complete archive from a partial one). Meanwhile the node reports
+		// node-local usage by summing every regular file in .dylaris-backups/,
+		// so the debris counts against backup.quota_per_server_gb and shows on
+		// the Overview usage bar while appearing in no backup list.
+		//
+		// The trigger that matters makes that circular: a disk filling up
+		// produces the largest leftover, which pushes the server over its quota,
+		// which is what refuses the NEXT run. The failure would keep itself
+		// alive.
+		//
+		// Safe to call unconditionally - the key belongs to this run alone, so
+		// there is no other archive it could remove, and deleteBackup is
+		// best-effort on a key that was never written (a BYON node holds no
+		// bucket credentials, so its S3 branch returns without doing anything;
+		// its own staged temp file is already removed by uploadBackupPresigned).
+		deleteBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
 		reportBackup(ctx, rdb, cmd.RunID, "failed", "upload failed: "+upErr.Error(), 0)
 		return
 	}

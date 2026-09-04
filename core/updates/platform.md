@@ -23,6 +23,10 @@ Newest release first. The format is fixed and checked in CI - see the
 - Failures inside the shared-storage verifier now reach the Errors screen instead
   of the log alone - including the one that stopped a storage fault from being
   recorded at all, which used to hide every other fault with it. `core`
+- A backup whose upload failed left the half-written archive behind, and nothing
+  ever removed it: retention only prunes successful runs. On node-local storage it
+  counted against the per-server backup quota and showed as used space while
+  appearing in no backup list. It is now cleaned up. `node`
 
 ## 2026.09.04.2
 
