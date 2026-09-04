@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"time"
 
+	"dylaris-core/services"
+
 	"dylaris-core/storage"
 
 	"github.com/redis/go-redis/v9"
@@ -386,11 +388,11 @@ func PendingRoundID(ctx context.Context, rdb *redis.Client) (string, error) {
 func storeReport(ctx context.Context, rdb *redis.Client, roundID string, rep Report) {
 	data, err := json.Marshal(rep)
 	if err != nil {
-		log.Printf("storagereach: marshal report for %s: %v", rep.CoreID, err)
+		services.ReportOperatorError("storagereach", "marshal report for %s: %v", rep.CoreID, err)
 		return
 	}
 	if err := rdb.Set(ctx, roundReportKey(roundID, rep.CoreID), data, roundTTL).Err(); err != nil {
-		log.Printf("storagereach: store report for %s: %v", rep.CoreID, err)
+		services.ReportOperatorError("storagereach", "store report for %s: %v", rep.CoreID, err)
 	}
 }
 

@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.04.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Failures inside the shared-storage verifier now reach the Errors screen instead
+  of the log alone - including the one that stopped a storage fault from being
+  recorded at all, which used to hide every other fault with it. `core`
+
 ## 2026.09.04.2
 
 ### Features

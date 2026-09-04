@@ -2,3 +2,8 @@
 # `next build` output with output: "export". Copied into core/panelfs/dist at
 # image-build time; never committed, for the same reason .next never was.
 /out/
+
+# Impeccable design hook. config.json IS committed - it carries the decision
+# about which file is exempt, and that belongs to the project rather than to
+# whoever ran the hook last. The cache beside it is regenerated every run.
+/.impeccable/hook.cache.json

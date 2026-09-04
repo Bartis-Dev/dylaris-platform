@@ -71,9 +71,18 @@ func (h *TrafficLimitHandler) ListTrafficLimits(w http.ResponseWriter, r *http.R
 }
 
 // ResolveTrafficLimit GET /api/traffic-limits/resolve?user=&region=&kind=
-// answers what actually applies, and says which scope decided it. The panel
-// shows the scope so an operator can tell an inherited value from an override
-// before changing the wrong one.
+// answers what actually applies, and says which scope decided it.
+//
+// The PANEL does not call this, and that is not an oversight. The screen shows
+// the user_default rows and the user: overrides as two lists side by side, so an
+// operator sees which scope holds what by reading the rows themselves rather
+// than a computed answer - which is the better version of what this endpoint was
+// originally written to give them.
+//
+// It stays because the scope walk it exposes (services.ResolveTrafficLimit, also
+// used by the billing and store handlers) is the one thing an API-key integration
+// would otherwise have to reimplement, and reimplementing a precedence rule is
+// how two answers to the same question start to disagree.
 func (h *TrafficLimitHandler) ResolveTrafficLimit(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	region, kind := strings.TrimSpace(q.Get("region")), strings.TrimSpace(q.Get("kind"))

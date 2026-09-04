@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/services"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -232,7 +234,7 @@ func (s *Service) run(ctx context.Context) {
 			roundInFlight = false
 			roundBudgetExpiry = time.Time{}
 			if out.err != nil {
-				log.Printf("storagereach: participating in round %s: %v", roundIDInFlight, out.err)
+				services.ReportOperatorError("storagereach", "participating in round %s: %v", roundIDInFlight, out.err)
 			}
 			continue
 		case <-ticker.C:
@@ -268,7 +270,7 @@ func (s *Service) run(ctx context.Context) {
 		// blocking every later attempt.
 		if roundInFlight && !roundBudgetExpiry.IsZero() && time.Now().After(roundBudgetExpiry) {
 			roundBudgetExpiry = time.Now().Add(s.roundBudget)
-			log.Printf("storagereach: round %s participation did not finish within %s; the coordinator will see this Core as no-response", roundIDInFlight, s.roundBudget)
+			services.ReportOperatorError("storagereach", "round %s participation did not finish within %s; the coordinator will see this Core as no-response", roundIDInFlight, s.roundBudget)
 		}
 
 		// Take part in any open config round. This is the fast path: a round
@@ -333,7 +335,7 @@ func (s *Service) observe(ctx context.Context) (CoreResult, bool) {
 		// Redis being unreachable is separately visible on the health page.
 		// Closing every storage route because peers could not be COUNTED
 		// would turn a Redis blip into a storage outage.
-		log.Printf("storagereach: could not list online Cores, skipping this self-check: %v", err)
+		services.ReportOperatorError("storagereach", "could not list online Cores, skipping this self-check: %v", err)
 		return CoreResult{CoreID: me, Status: StatusOK}, false
 	}
 	if !contains(participants, me) {
@@ -363,7 +365,7 @@ func (s *Service) observe(ctx context.Context) (CoreResult, bool) {
 		// either gate on a peer's fault or clear a real one of this Core's.
 		// Committing nothing leaves an already-gated Core gated, with its
 		// fault standing.
-		log.Printf("storagereach: could not read peer beacon claims, skipping this self-check: %v", claimErr)
+		services.ReportOperatorError("storagereach", "could not read peer beacon claims, skipping this self-check: %v", claimErr)
 		return CoreResult{CoreID: me, Status: StatusOK}, false
 	}
 
@@ -424,7 +426,7 @@ func (s *Service) observe(ctx context.Context) (CoreResult, bool) {
 func (s *Service) claimBeaconWrite(ctx context.Context, wrote bool) {
 	if wrote {
 		if err := PublishClaim(ctx, s.deps.Redis, s.deps.CoreID, time.Now(), s.claimTTL); err != nil {
-			log.Printf("storagereach: %v", err)
+			services.ReportOperatorError("storagereach", "%v", err)
 		}
 		return
 	}
@@ -432,7 +434,7 @@ func (s *Service) claimBeaconWrite(ctx context.Context, wrote bool) {
 	// this Core's beacon at once instead of at the claim's TTL - which is long
 	// enough for them to gate themselves on a fault that is only about here.
 	if err := ClearClaim(ctx, s.deps.Redis, s.deps.CoreID); err != nil {
-		log.Printf("storagereach: %v", err)
+		services.ReportOperatorError("storagereach", "%v", err)
 	}
 }
 
@@ -473,7 +475,7 @@ func (s *Service) apply(ctx context.Context, res CoreResult) CoreResult {
 
 	if res.Status == StatusOK {
 		if err := ClearFault(ctx, s.deps.Redis, res.CoreID); err != nil {
-			log.Printf("storagereach: %v", err)
+			services.ReportOperatorError("storagereach", "%v", err)
 		}
 	} else {
 		hostname, _ := os.Hostname()
@@ -488,8 +490,15 @@ func (s *Service) apply(ctx context.Context, res CoreResult) CoreResult {
 			Since:        now,
 			At:           now,
 		}); err != nil {
-			log.Printf("storagereach: %v", err)
+			services.ReportOperatorError("storagereach", "%v", err)
 		}
+		// Plain log, and deliberately not reported to the error stream: the
+		// verdict was just written with RecordFault above and the panel reads
+		// it from there. What IS reported are the failures of this verifier's
+		// own machinery - a round that could not run, a claim that could not be
+		// published, a fault that could not be recorded - because those are the
+		// ones no screen can show, and the last of them is what makes every
+		// other fault invisible.
 		log.Printf("storagereach: %s cannot use the shared storage: %s %s", res.CoreID, res.Status, res.Detail)
 	}
 

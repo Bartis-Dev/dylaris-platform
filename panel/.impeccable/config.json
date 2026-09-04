@@ -1,0 +1,9 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [
+      "src/components/mods/ModDescription.tsx"
+    ],
+    "ignoreValues": []
+  }
+}
