@@ -22,6 +22,19 @@ WORKDIR /app
 COPY package.json ./
 COPY packages/ ./packages/
 COPY panel/package.json ./panel/
+# npm is PINNED, and it is the one pin this stage cannot do without.
+#
+# The 10.9.8 that ships in node:22-alpine hits an arborist bug while resolving
+# this workspace's peer graph - "Cannot read properties of null (reading
+# 'edgesOut')" in #loadPeerSet - and it took the build down on 2026-09-04 with no
+# change on our side. Measured rather than guessed: the same tree, resolved in
+# the same minute, fails on 10.9.8 and succeeds on 11.19.1.
+#
+# Because the lockfile above is deliberately not copied, every build resolves
+# fresh, so anything upstream can break this layer at any time and the failure
+# arrives attached to whichever commit happened to be pushed. An exact version
+# rather than npm@11: a floating npm is precisely what just did this.
+RUN npm i -g npm@11.19.1
 RUN npm install --workspaces --include-workspace-root
 
 COPY panel/ ./panel/
