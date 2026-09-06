@@ -69,7 +69,7 @@ export function defaultLocalTarget(platform: DeployPlatform | undefined): string
     return platform === 'windows' ? 'host.docker.internal' : '127.0.0.1';
 }
 
-const REG = 'ghcr.io/bartis-dev';
+const REG = 'ghcr.io/dylaris-dev';
 
 /**
  * Port warp binds locally for its Redis proxy.

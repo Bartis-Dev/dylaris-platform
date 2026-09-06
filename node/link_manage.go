@@ -8,7 +8,7 @@ import "strings"
 // managing one: resolveNodeManagesLink is asked about the raw env value, so a
 // default here cannot make an in-cluster node start spawning a Link it was
 // never meant to run.
-const defaultLinkImage = "ghcr.io/bartis-dev/dylaris-gateway-link:latest"
+const defaultLinkImage = "ghcr.io/dylaris-dev/gateway-link:latest"
 
 // resolveLinkImage picks the Link image, falling back to the built-in default.
 // The BYON deploy snippet used to have to carry the image string purely because

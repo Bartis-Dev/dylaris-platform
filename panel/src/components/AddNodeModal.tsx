@@ -28,7 +28,7 @@ const FLEET_COMPOSE = `# Add this service to the stack you deploy on the new hos
 # It joins the SAME overlay network as core and redis, so nothing is published.
 services:
   node:
-    image: ghcr.io/bartis-dev/dylaris-platform-node:latest
+    image: ghcr.io/dylaris-dev/platform-node:latest
     restart: unless-stopped
     environment:
       NODE_ID: "<stable-id-for-this-machine>"

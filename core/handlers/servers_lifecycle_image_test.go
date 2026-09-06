@@ -7,8 +7,8 @@ import "testing"
 // with no image at all - unstartable, and destructive, because the previous
 // sub-server's container is removed before the new one is built.
 func TestResolveJavaImage(t *testing.T) {
-	const stored = "ghcr.io/bartis-dev/dylaris-platform-mc-java21:latest"
-	const requested = "ghcr.io/bartis-dev/dylaris-platform-mc-java25:latest"
+	const stored = "ghcr.io/dylaris-dev/platform-mc-java21:latest"
+	const requested = "ghcr.io/dylaris-dev/platform-mc-java25:latest"
 
 	tests := []struct {
 		name      string

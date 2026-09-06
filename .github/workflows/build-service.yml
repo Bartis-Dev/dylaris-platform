@@ -39,7 +39,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: bartis-dev/dylaris-platform
+  IMAGE_NAME: dylaris-dev/platform
   # build-push-action v6 generates a build summary and uploads a build RECORD
   # artifact for every build. On this runner that is four to six extra artifact
   # uploads per run for a page nobody opens, on a workflow whose whole problem

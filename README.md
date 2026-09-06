@@ -304,8 +304,8 @@ The single-host `docker-compose.yml` declares all five services below. The Swarm
 
 | Service | Image | Role |
 |---|---|---|
-| **core** | `ghcr.io/bartis-dev/dylaris-platform-core` | REST API (`:25500`) + gRPC mesh endpoint (`:25501`). Auth, scheduler, RCON, SSE, library, leader election. |
-| **node** | `ghcr.io/bartis-dev/dylaris-platform-node` | Per-host agent. Mounts `/var/run/docker.sock` to create/manage MC server containers; persists data to the `dylaris_data` volume. |
+| **core** | `ghcr.io/dylaris-dev/platform-core` | REST API (`:25500`) + gRPC mesh endpoint (`:25501`). Auth, scheduler, RCON, SSE, library, leader election. |
+| **node** | `ghcr.io/dylaris-dev/platform-node` | Per-host agent. Mounts `/var/run/docker.sock` to create/manage MC server containers; persists data to the `dylaris_data` volume. |
 | ~~panel~~ | *(no image)* | Compiled into `-core`. See "Panel" in the layout table. |
 | **timescaledb** | `timescale/timescaledb:latest-pg16` | PostgreSQL 16 + TimescaleDB for relational data and time-series stats. Data on the `timescaledb_data` volume. |
 | **redis** | `valkey/valkey:8-alpine` | In-memory store for command queues, pub/sub, service discovery, settings mirroring and stats streams. **Valkey** is a drop-in, Redis-compatible fork; the service keeps the hostname `redis` so `REDIS_ADDR=redis:6379` works everywhere. |
@@ -696,7 +696,7 @@ Every online Core must be able to write to and read from the SAME shared Core fi
 ```bash
 # Update to the latest images
 docker compose pull && docker compose up -d                                              # single host
-docker service update --image ghcr.io/bartis-dev/dylaris-platform-core:latest dylaris_core   # swarm (per service)
+docker service update --image ghcr.io/dylaris-dev/platform-core:latest dylaris_core   # swarm (per service)
 
 # Logs
 docker compose logs -f core                            # single host

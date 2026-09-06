@@ -173,7 +173,7 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
 NODE_ENROLL_TOKEN=<your enroll token>
 CORE_GRPC_ADDR=<core-host:25501>
 NODE_MANAGES_LINK=true
-LINK_IMAGE=<public link image, e.g. ghcr.io/bartis-dev/dylaris-gateway-link:latest>` : '';
+LINK_IMAGE=<public link image, e.g. ghcr.io/dylaris-dev/gateway-link:latest>` : '';
     const linkEnv = revealed ? `NODE_ID=${revealed.nodeId}
 LINK_SECRET=${revealed.linkSecret}
 LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';

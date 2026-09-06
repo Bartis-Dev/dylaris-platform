@@ -151,7 +151,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		Name:            containerName,
 		NodeID:          nodeIDInt,
 		OwnerID:         req.OwnerID,
-		GameImage:       "ghcr.io/bartis-dev/dylaris-platform-mc-java21:latest", // Default, overridden during setup
+		GameImage:       "ghcr.io/dylaris-dev/platform-mc-java21:latest", // Default, overridden during setup
 		Port:            25565,
 		Memory:          req.Docker.RAM,
 		CPULimit:        req.Docker.CPULimit,

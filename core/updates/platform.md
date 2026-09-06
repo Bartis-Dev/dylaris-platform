@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.06
+
+### Features
+- Nothing.
+
+### Breaking
+- **Every image moved to a new registry path.** The project now lives in the
+  `dylaris-dev` organisation, so `ghcr.io/bartis-dev/dylaris-platform-*` is now
+  `ghcr.io/dylaris-dev/platform-*` and `ghcr.io/bartis-dev/dylaris-gateway-*` is
+  now `ghcr.io/dylaris-dev/gateway-*`. Update your compose or stack files before
+  your next deploy; the old paths are not redirected. `core` `node` `panel`
+- The stored Minecraft runtime image of every existing server is rewritten
+  automatically on first boot after this update, so servers created before the
+  move keep starting. Nothing to do, but the count appears in the Core log. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.04.6
 
 ### Features

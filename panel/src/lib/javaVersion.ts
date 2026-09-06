@@ -13,10 +13,10 @@ export interface JavaImage {
 }
 
 export const JAVA_IMAGES: JavaImage[] = [
-    { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java25:latest', label: 'Java 25', note: '26.1+', proxyNote: 'Newest' },
-    { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java21:latest', label: 'Java 21', note: '1.20.5 - 26.0', proxyNote: 'Recommended' },
-    { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java17:latest', label: 'Java 17', note: '1.18+', proxyNote: 'Minimum for Velocity' },
-    { id: 'ghcr.io/bartis-dev/dylaris-platform-mc-java8:latest', label: 'Java 8', note: '1.7 - 1.16', proxyNote: 'BungeeCord only' },
+    { id: 'ghcr.io/dylaris-dev/platform-mc-java25:latest', label: 'Java 25', note: '26.1+', proxyNote: 'Newest' },
+    { id: 'ghcr.io/dylaris-dev/platform-mc-java21:latest', label: 'Java 21', note: '1.20.5 - 26.0', proxyNote: 'Recommended' },
+    { id: 'ghcr.io/dylaris-dev/platform-mc-java17:latest', label: 'Java 17', note: '1.18+', proxyNote: 'Minimum for Velocity' },
+    { id: 'ghcr.io/dylaris-dev/platform-mc-java8:latest', label: 'Java 8', note: '1.7 - 1.16', proxyNote: 'BungeeCord only' },
 ];
 
 export const JAVA_25 = JAVA_IMAGES[0].id;

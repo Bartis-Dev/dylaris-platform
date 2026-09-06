@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.06
+
+### Features
+- Nothing.
+
+### Breaking
+- **The images you pull have a new address.** Anything you copied earlier that
+  says `ghcr.io/bartis-dev/dylaris-gateway-link` or `-warp` becomes
+  `ghcr.io/dylaris-dev/gateway-link` and `ghcr.io/dylaris-dev/gateway-warp`.
+  Edit that one line in your compose file and pull again. Fresh snippets from
+  the panel already carry the new address.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.04.3
 
 ### Features

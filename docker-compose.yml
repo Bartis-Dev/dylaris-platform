@@ -13,7 +13,7 @@
 
 services:
   core:
-    image: ghcr.io/bartis-dev/dylaris-platform-core:latest
+    image: ghcr.io/dylaris-dev/platform-core:latest
     restart: unless-stopped
     depends_on:
       timescaledb:
@@ -173,7 +173,7 @@ services:
       - core_data:/app/dylaris_data
 
   node:
-    image: ghcr.io/bartis-dev/dylaris-platform-node:latest
+    image: ghcr.io/dylaris-dev/platform-node:latest
     restart: unless-stopped
     depends_on:
       - redis
