@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.06.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A Minecraft server created before the registry move kept starting from the
+  old image address.** The stored runtime image was rewritten in the database,
+  but a container never reads that column again: a restart reuses the previous
+  container's image and a manually deleted one is rebuilt from the node's saved
+  config. Both now rewrite the old address, so the server keeps starting once
+  the local copy of the deleted image is gone. `node`
+
 ## 2026.09.06
 
 ### Features

@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.06.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A server you created before the address change kept starting from the old
+  address.** It worked only because a copy was still on your machine; once that
+  copy was cleaned up the server would have refused to start. Restarting a
+  server now moves it to the new address on its own. Nothing for you to
+  edit. `node`
+
 ## 2026.09.06
 
 ### Features

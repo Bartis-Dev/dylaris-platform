@@ -294,6 +294,32 @@ type DockerConfig struct {
 	ContainerPort int     `json:"containerPort"` // 0 = use global containerPort var
 }
 
+// The project moved from ghcr.io/bartis-dev/dylaris-* to ghcr.io/dylaris-dev/*
+// and the old packages are DELETED, so a legacy reference no longer pulls.
+//
+// Core's servers.game_image was rewritten by the registry-move migration, but a
+// container never reads that column again after it is created: a restart takes
+// the image from the previous container's inspect (RestartContainer), and the
+// reconciler takes it from the on-disk .node_config.json. Both keep a legacy
+// name alive for the life of the server, and it works right up until the local
+// image is gone - at which point the server cannot start at all and the pull
+// error names a package that no longer exists.
+//
+// Rewriting here rather than at the two read sites because every create path
+// ends in startMinecraftContainer, so this is the one place that cannot be
+// bypassed by a caller that resolves an image some other way.
+const (
+	legacyImagePrefix  = "ghcr.io/bartis-dev/dylaris-"
+	currentImagePrefix = "ghcr.io/dylaris-dev/"
+)
+
+func normalizeImageRef(image string) string {
+	if !strings.HasPrefix(image, legacyImagePrefix) {
+		return image
+	}
+	return currentImagePrefix + strings.TrimPrefix(image, legacyImagePrefix)
+}
+
 type ServerConfig struct {
 	UUID            string       `json:"uuid"`
 	OwnerID         string       `json:"ownerId"` // tenant key for network isolation; empty on restart/reconcile (resolved from allocator)
@@ -1097,6 +1123,11 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	if config.Docker.Image == "" {
 		return "", fmt.Errorf("server image is required")
 	}
+	if moved := normalizeImageRef(config.Docker.Image); moved != config.Docker.Image {
+		log.Printf("image %s has moved to %s (registry owner change); creating mc_%s with the new reference",
+			config.Docker.Image, moved, config.UUID)
+		config.Docker.Image = moved
+	}
 	dm.pullImage(config.Docker.Image)
 
 	// Create directory locally (via StorageManager or legacy path)
@@ -1356,6 +1387,9 @@ func (dm *DockerManager) PullContainerImage(uuid string) {
 }
 
 func (dm *DockerManager) pullImage(image string) {
+	// PullContainerImage reads the image off an existing container, so a legacy
+	// reference reaches here even when the create path already rewrote its own.
+	image = normalizeImageRef(image)
 	log.Printf("Pulling Image: %s ...", image)
 	reader, err := dm.cli.ImagePull(dm.ctx, image, dockerimage.PullOptions{})
 	if err != nil {
