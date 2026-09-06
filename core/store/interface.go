@@ -332,6 +332,7 @@ type Store interface {
 	ListLinkKitsForACLTeardown(hardSuspendedBefore, overLimitBefore, revokedAfter time.Time) ([]WarpAPIKey, error)
 	GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error)
 	RevokeWarpAPIKeyByNodeID(nodeID string) error
+	RollWarpAPIKeyHash(nodeID, newHash string) error
 	InsertWarpPeer(p WarpPeer) (int, error)
 	GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error)
 	ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error)

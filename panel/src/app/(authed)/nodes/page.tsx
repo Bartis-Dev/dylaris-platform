@@ -4,13 +4,14 @@ import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
     HardDrive, Globe, Server, Plus, Trash2, AlertTriangle, Clock,
-    ExternalLink, ShoppingCart,
+    ExternalLink, ShoppingCart, RefreshCw,
 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getNodes,
-    listNodeWarpKeys, mintNodeWarpKey, revokeNodeWarpKey, type NodeWarpKey,
+    listNodeWarpKeys, mintNodeWarpKey, revokeNodeWarpKey, rollNodeWarpKey, type NodeWarpKey,
 } from '@/lib/api';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { coreOrigin } from '@/lib/api/core';
 import { getStoreStatus } from '@/lib/api/store';
 import { getMyUsage } from '@/lib/api/usage';
@@ -127,7 +128,11 @@ function MyNodesInner() {
     // enroll token to become a node. They are minted together here so the deploy
     // snippet is complete - handing over one and a placeholder for the other was
     // the gap this closes.
-    const [revealedNode, setRevealedNode] = useState<{ token: string; warpKey: string; label: string; grpcTlsFingerprint?: string } | null>(null);
+    // token is absent for a ROLL: the machine enrolled long ago and an enroll
+    // token is first-pairing only, so minting one would hand out a credential
+    // with nothing to pair.
+    const [revealedNode, setRevealedNode] = useState<{ token?: string; warpKey: string; label: string; grpcTlsFingerprint?: string; rolled?: boolean } | null>(null);
+    const [rollingKey, setRollingKey] = useState('');
     const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
     const [nodeUsage, setNodeUsage] = useState<{ used: number; limit?: number } | null>(null);
     // Which machine the removal dialog is open for, by id and by the label the
@@ -289,6 +294,37 @@ function MyNodesInner() {
             setError('Could not revoke that key.');
             return;
         }
+        loadNodeKeys();
+    };
+
+    // Roll = new secret, SAME machine. node_id and the location name do not move,
+    // so the node keeps identifying itself with the same NODE_ID and every server
+    // on it keeps resolving to the same node row - nothing is recreated and no
+    // world data is touched.
+    //
+    // It deliberately does not cut the tunnel. The running machine stays up on
+    // its current connection until the customer redeploys with the new key, and
+    // the kit's kill_old policy replaces the connection at that moment. The trash
+    // button beside this one is still the immediate cutoff, which is what a
+    // leaked key wants.
+    const handleRollNodeKey = async (nodeId: string, label: string) => {
+        const ok = await confirmDialog({
+            title: 'Roll this overlay key?',
+            message: `The current key for ${label} stops working for new connections straight away, and you get a replacement shown once. `
+                + 'Your servers and their data are not affected, and the machine keeps running on its current connection until you redeploy it with the new key.',
+            confirmLabel: 'Roll the key',
+            destructive: false,
+        });
+        if (!ok) return;
+        setRollingKey(nodeId);
+        setError('');
+        const res = await rollNodeWarpKey(nodeId);
+        setRollingKey('');
+        if (!res.success || !res.warp_key) {
+            setError(res.message || 'Could not roll that key.');
+            return;
+        }
+        setRevealedNode({ warpKey: res.warp_key, label, rolled: true });
         loadNodeKeys();
     };
 
@@ -502,13 +538,23 @@ function MyNodesInner() {
                                             <div className="text-(--base-08) truncate">{k.name}</div>
                                             <div className="mono-label truncate">{k.node_id}</div>
                                         </div>
-                                        <button
-                                            onClick={() => handleRevokeNodeKey(k.node_id)}
-                                            className="text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors"
-                                            title="Revoke this overlay key"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
+                                        <div className="flex items-center gap-0.5 shrink-0">
+                                            <button
+                                                onClick={() => handleRollNodeKey(k.node_id, k.name)}
+                                                disabled={rollingKey === k.node_id}
+                                                className="text-(--base-06) hover:text-(--base-09) p-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                                title="Replace this key with a new one, keeping the machine and its servers"
+                                            >
+                                                <RefreshCw size={14} className={rollingKey === k.node_id ? 'animate-spin' : undefined} />
+                                            </button>
+                                            <button
+                                                onClick={() => handleRevokeNodeKey(k.node_id)}
+                                                className="text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors"
+                                                title="Revoke this overlay key"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -600,19 +646,35 @@ function MyNodesInner() {
             {revealedNode && (
                 <aside className={`card p-5 space-y-3 border-(--accent-border) bg-(--accent-ghost) ${DEPLOY_ASIDE_STICKY}`}>
                     <div className="text-sm font-medium text-(--base-09)">
-                        {revealedNode.label} — two keys, shown once.
+                        {revealedNode.rolled
+                            ? <>{revealedNode.label} — new overlay key, shown once.</>
+                            : <>{revealedNode.label} — two keys, shown once.</>}
                     </div>
-                    <p className="text-xs text-(--base-07)">
-                        Both are already filled into the compose file below, so the normal path never
-                        needs them by hand. They are blurred because this page is one people have open
-                        while sharing a screen; click either to read it.
-                    </p>
+                    {revealedNode.rolled ? (
+                        <p className="text-xs text-(--base-07)">
+                            Only the key changed. Replace <code className="font-mono">API_KEY</code> in
+                            this machine&apos;s warp service and deploy again — the name, the address and
+                            your servers all stay as they are. Until you do, the machine keeps running
+                            on the connection it already has.
+                        </p>
+                    ) : (
+                        <p className="text-xs text-(--base-07)">
+                            Both are already filled into the compose file below, so the normal path never
+                            needs them by hand. They are blurred because this page is one people have open
+                            while sharing a screen; click either to read it.
+                        </p>
+                    )}
                     <SecretField label="Overlay key (warp API_KEY)" value={revealedNode.warpKey} />
-                    <SecretField
-                        label="Enrollment key (NODE_ENROLL_TOKEN)"
-                        value={revealedNode.token}
-                        note="It expires in 7 days and can be used once."
-                    />
+                    {/* A roll has no enrollment key: the machine paired long ago and
+                        that token is single-use, first-pairing only. Showing an
+                        empty field would read as one that failed to generate. */}
+                    {revealedNode.token && (
+                        <SecretField
+                            label="Enrollment key (NODE_ENROLL_TOKEN)"
+                            value={revealedNode.token}
+                            note="It expires in 7 days and can be used once."
+                        />
+                    )}
                     <DeployKit
                         kind="node"
                         warpKey={revealedNode.warpKey}
@@ -623,7 +685,7 @@ function MyNodesInner() {
                         config={deployConfig}
                     />
                     <button type="button" onClick={() => setRevealedNode(null)} className="btn btn-secondary btn-sm">
-                        I saved them
+                        {revealedNode.rolled ? 'I saved it' : 'I saved them'}
                     </button>
                 </aside>
             )}

@@ -1217,6 +1217,13 @@ export const mintLinkKit = (name: string): Promise<MintedLinkKit> =>
 export const revokeLinkKit = (linkId: string): Promise<{ success: boolean }> =>
     fetchAPI(`/warp/link-kits/${encodeURIComponent(linkId)}`, { method: 'DELETE' });
 
+// Roll replaces the SECRET and nothing else: same link_id, same row, same peer.
+// It is not a revoke - the machine keeps its tunnel until it is redeployed with
+// the new key, at which point kill_old swaps the connection. Revoke is still
+// the immediate-cutoff path for a key that leaked.
+export const rollLinkKit = (linkId: string): Promise<MintedLinkKit> =>
+    fetchAPI(`/warp/link-kits/${encodeURIComponent(linkId)}/roll`, { method: 'POST' });
+
 // BYON node warp keys: the overlay credential a customer machine needs BEFORE it
 // can enroll as a node. Separate product and separate cap from a link kit (max
 // nodes, not max links); the two are kept apart server-side by a node_id prefix.
@@ -1241,6 +1248,13 @@ export const mintNodeWarpKey = (name: string): Promise<MintedNodeWarpKey> =>
     fetchAPI('/warp/node-keys', { method: 'POST', body: JSON.stringify({ name }) });
 export const revokeNodeWarpKey = (nodeId: string): Promise<{ success: boolean }> =>
     fetchAPI(`/warp/node-keys/${encodeURIComponent(nodeId)}`, { method: 'DELETE' });
+
+// Same in-place roll as rollLinkKit. The node_id and the location name do not
+// move, which is what keeps the tenant's servers pointing at the same machine:
+// a server resolves through the node row, and the node identifies itself by
+// NODE_ID, not by this key.
+export const rollNodeWarpKey = (nodeId: string): Promise<MintedNodeWarpKey> =>
+    fetchAPI(`/warp/node-keys/${encodeURIComponent(nodeId)}/roll`, { method: 'POST' });
 
 // Live availability check for the route-create form. Accepts the same
 // three input shapes the create endpoint does and answers `{available}`

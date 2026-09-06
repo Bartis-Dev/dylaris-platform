@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.06.3
+
+### Features
+- You can now replace the key of a machine, or of a protected address, from the
+  panel. Nothing else changes: the same address, the same servers, the same
+  name. Edit that one line in your compose file and deploy again when it suits
+  you - what you are running now keeps running until you do.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A compose file copied in the last few days names an image that does not
+  exist.** The address changed and the snippet was one segment out, so a fresh
+  deploy could not pull warp, link or the node agent. Copy the snippet again
+  from the panel; nothing else about your setup is affected.
+
 ## 2026.09.06.2
 
 ### Features

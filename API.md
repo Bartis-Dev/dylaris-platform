@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **500 routes** in 50 sections: 225 GET, 147 POST, 38 PUT, 37 PATCH, 54 DELETE.
+- **502 routes** in 50 sections: 225 GET, 149 POST, 38 PUT, 37 PATCH, 54 DELETE.
 - **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **344** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **95** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **344** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **9** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -188,7 +188,7 @@ can still show what exists.
 - [/api/updates](#apiupdates) (1)
 - [/api/users](#apiusers) (7)
 - [/api/versions](#apiversions) (2)
-- [/api/warp](#apiwarp) (15)
+- [/api/warp](#apiwarp) (17)
 - [/healthz](#healthz) (1)
 - [/solder/api](#solderapi) (5)
 - [/solder/mirror](#soldermirror) (1)
@@ -914,9 +914,11 @@ can still show what exists.
 | GET | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.ListLinkKits` | (tenant) returns the caller's route-only link kits (metadata only, no secrets). |
 | POST | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a warp enrollment key bound to the calling user plus an auto-generated link identity (node_id). |
 | DELETE | `/api/warp/link-kits/{linkID}` | session | _no capability_ | - | `WarpHandler.RevokeLinkKit` | owner or admin. |
+| POST | `/api/warp/link-kits/{linkID}/roll` | session | _no capability_ | - | `WarpHandler.RollLinkKit` | owner or admin. |
 | GET | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.ListNodeWarpKeys` | the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting). |
 | POST | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.MintNodeWarpKey` | tenant self-service. |
 | DELETE | `/api/warp/node-keys/{nodeID}` | session | _no capability_ | - | `WarpHandler.RevokeNodeWarpKey` | owner or admin. |
+| POST | `/api/warp/node-keys/{nodeID}/roll` | session | _no capability_ | - | `WarpHandler.RollNodeWarpKey` | owner or admin. |
 | GET | `/api/warp/regions` | session | `topology.read` | - | `WarpHandler.ListRegions` | returns the full warp registry (regions + leaders + liveness + peer counts) for the admin panel. |
 | POST | `/api/warp/regions` | session | `topology.write` | - | `WarpHandler.UpsertRegion` | (admin) creates or updates a region's subnet + enabled flag. |
 | DELETE | `/api/warp/regions/{region}` | session | `topology.write` | - | `WarpHandler.DeleteRegion` | (admin) removes a region (cascades its leaders). |

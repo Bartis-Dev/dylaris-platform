@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -678,6 +679,106 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// rollWarpKeySecret replaces the secret of one live warp key in place, after
+// checking the caller owns it, and returns the new plaintext.
+//
+// Shared by the node-key and link-kit roll endpoints because the two differ only
+// in their id prefix and their wording. Both are the SAME operation on the same
+// table, and writing it twice is how the two drift.
+//
+// It deliberately does NOT disconnect the peer, which is the one thing that
+// makes this different from revoke. A roll is "the machine keeps running, and
+// the old secret stops opening anything new": the customer edits one line and
+// redeploys when it suits them, and the kit's kill_old policy replaces the old
+// tunnel at that moment. Revoke is the immediate-cutoff path and already exists
+// beside it - a leaked key wants that one, not this.
+func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, id, prefix, notFound string) (string, bool) {
+	userID, _ := r.Context().Value("userID").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if userID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return "", false
+	}
+	// Same reason RevokeLinkKit and RevokeNodeWarpKey check it: the two kinds of
+	// key must not be reachable through each other's endpoint.
+	if !strings.HasPrefix(id, prefix) {
+		sendJSONError(w, "Invalid id", http.StatusBadRequest)
+		return "", false
+	}
+	key, err := h.state.Store.GetWarpAPIKeyByNodeID(id)
+	if err != nil {
+		sendJSONError(w, notFound, http.StatusNotFound)
+		return "", false
+	}
+	// Same message for "not yours" as for "does not exist", so a reply cannot
+	// confirm that an id belongs to someone.
+	if !isAdmin && key.OwnerID != userID {
+		sendJSONError(w, notFound, http.StatusNotFound)
+		return "", false
+	}
+	// A revoked key is not rollable: rolling it would quietly bring a revoked
+	// identity back to life under a new secret.
+	if key.RevokedAt != nil {
+		sendJSONError(w, notFound, http.StatusNotFound)
+		return "", false
+	}
+	plaintext, err := generatePlaintextKey()
+	if err != nil {
+		sendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		return "", false
+	}
+	if err := h.state.Store.RollWarpAPIKeyHash(id, HashAPIKey(plaintext)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			sendJSONError(w, notFound, http.StatusNotFound)
+			return "", false
+		}
+		sendJSONError(w, "Failed to roll the key", http.StatusInternalServerError)
+		return "", false
+	}
+	log.Printf("rolled warp key %s (owner %s); identity and peer left in place", id, key.OwnerID)
+	return plaintext, true
+}
+
+// RollNodeWarpKey POST /api/warp/node-keys/{nodeID}/roll - owner or admin.
+// New secret, same machine: node_id and the location name do not move, so the
+// tenant's servers keep resolving to the same node row.
+func (h *WarpHandler) RollNodeWarpKey(w http.ResponseWriter, r *http.Request) {
+	if !byonActive(h.state, r) {
+		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		return
+	}
+	nodeID := mux.Vars(r)["nodeID"]
+	plaintext, ok := h.rollWarpKeySecret(w, r, nodeID, "node-", "Node key not found")
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"warp_key": plaintext,
+		"node_id":  nodeID,
+		"note":     "Shown once. Replace API_KEY in the node's warp service and redeploy; nothing else changes.",
+	})
+}
+
+// RollLinkKit POST /api/warp/link-kits/{linkID}/roll - owner or admin. The
+// route-only twin of RollNodeWarpKey; the link trades this key for its own
+// tunnel token at boot, so redeploying is what picks it up.
+func (h *WarpHandler) RollLinkKit(w http.ResponseWriter, r *http.Request) {
+	linkID := mux.Vars(r)["linkID"]
+	plaintext, ok := h.rollWarpKeySecret(w, r, linkID, "link-", "Link not found")
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"warp_key": plaintext,
+		"link_id":  linkID,
+		"note":     "Shown once. Replace WARP_API_KEY in the route-only .env and redeploy.",
+	})
 }
 
 // ListRegions returns the full warp registry (regions + leaders + liveness +

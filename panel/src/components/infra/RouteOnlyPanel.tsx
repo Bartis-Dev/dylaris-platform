@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash2, Loader2, Server, Link2, Copy, Check, ShieldCheck, Pencil, X } from 'lucide-react';
+import { Plus, Trash2, Loader2, Server, Link2, Copy, Check, ShieldCheck, Pencil, X, RefreshCw } from 'lucide-react';
 import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
 import {
     CreateRouteRequest, LinkRoute, LinkKit, MintedLinkKit,
     getLinkRoutes, createLinkRoute, deleteLinkRoute,
-    listLinkKits, mintLinkKit, revokeLinkKit,
+    listLinkKits, mintLinkKit, revokeLinkKit, rollLinkKit,
 } from '@/lib/api';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { SkeletonCard } from '@/components/Skeleton';
@@ -53,6 +53,10 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     const [linkName, setLinkName] = useState('');
     const [minting, setMinting] = useState(false);
     const [minted, setMinted] = useState<MintedLinkKit | null>(null);
+    // A roll reuses the same reveal - it produces the same one secret - so only
+    // the wording differs, and this is what selects it.
+    const [mintedWasRoll, setMintedWasRoll] = useState(false);
+    const [rollingLink, setRollingLink] = useState('');
 
     // Create-route flow
     const [linkId, setLinkId] = useState('');
@@ -108,6 +112,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             // looking like success for a security-critical mint.
             if (!res.success) throw new Error((res as { message?: string }).message || 'Failed to create link');
             setMinted(res);
+            setMintedWasRoll(false);
             setLinkName('');
             await load();
             setLinkId(res.link_id);
@@ -115,6 +120,36 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             flashToast(e instanceof Error ? e.message : 'Failed to create link');
         } finally {
             setMinting(false);
+        }
+    };
+
+    // New secret, same link. The link_id, its routes and its protected address all
+    // stay; only WARP_API_KEY changes. The tunnel is left up on purpose - the
+    // machine keeps serving until it is redeployed with the new key, and revoke
+    // beside this is still the immediate cutoff for a key that leaked.
+    const roll = async (linkIdToRoll: string, name: string) => {
+        if (!(await confirmDialog({
+            title: 'Roll this link key?',
+            message: `The current key for ${name} stops working for new connections straight away, and you get a replacement shown once. `
+                + 'The address and its routes do not change, and the link keeps running until you redeploy it with the new key.',
+            confirmLabel: 'Roll the key',
+            destructive: false,
+        }))) return;
+        setRollingLink(linkIdToRoll);
+        try {
+            // Same reason mint and revoke check it: fetchAPI resolves on an HTTP
+            // error with a JSON body, so an unchecked res would reveal a panel
+            // reading WARP_API_KEY=undefined after a roll that never happened.
+            const res = await rollLinkKit(linkIdToRoll);
+            if (!res.success || !res.warp_key) throw new Error((res as { message?: string }).message || 'Failed to roll link key');
+            setMinted(res);
+            setMintedWasRoll(true);
+            setLinkId(res.link_id);
+            await load();
+        } catch (e) {
+            flashToast(e instanceof Error ? e.message : 'Failed to roll link key');
+        } finally {
+            setRollingLink('');
         }
     };
 
@@ -238,6 +273,14 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                                 <ShieldCheck size={14} className="text-(--success-light) shrink-0" />
                                 <span className="text-sm text-(--base-09) truncate">{k.name}</span>
                                 <span className="text-xs text-(--base-06) font-mono truncate ml-auto">{k.link_id}</span>
+                                <button
+                                    onClick={() => roll(k.link_id, k.name)}
+                                    disabled={rollingLink === k.link_id}
+                                    title="Replace this key with a new one, keeping the address and its routes"
+                                    className="p-1.5 text-(--base-06) hover:text-(--base-09) transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    <RefreshCw size={14} className={rollingLink === k.link_id ? 'animate-spin' : undefined} />
+                                </button>
                                 <button
                                     onClick={() => revoke(k.link_id)}
                                     title="Revoke link"
@@ -402,7 +445,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             {/* Sticky, because the reader works through the compose file while
                 scrolling the form and the route list beside it. */}
             <aside className={`space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
-                {minted && <MintReveal kit={minted} onCopy={flashToast} onClose={() => setMinted(null)} />}
+                {minted && <MintReveal kit={minted} rolled={mintedWasRoll} onCopy={flashToast} onClose={() => setMinted(null)} />}
                 {!minted && (
                     <p className="text-xs text-(--base-06)">
                         {kits.length > 0
@@ -429,18 +472,21 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
 // MintReveal shows the one-time secrets for a freshly minted link kit. The warp
 // key is hashed server-side and can never be shown again, so we make copying it
 // prominent and warn the user.
-function MintReveal({ kit, onCopy, onClose }: { kit: MintedLinkKit; onCopy: (m: string) => void; onClose: () => void }) {
+function MintReveal({ kit, rolled, onCopy, onClose }: { kit: MintedLinkKit; rolled?: boolean; onCopy: (m: string) => void; onClose: () => void }) {
     // The link fetches everything else (its tunnel token + Redis credential) from
     // Core at boot using this warp key, so the only secret to paste is WARP_API_KEY.
     return (
         <div className="rounded-md border border-(--accent)/30 bg-(--accent)/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-(--base-09)">Link created - copy this now</span>
+                <span className="text-sm font-medium text-(--base-09)">
+                    {rolled ? 'New key - copy this now' : 'Link created - copy this now'}
+                </span>
                 <button onClick={onClose} className="text-xs text-(--base-06) hover:text-(--base-09)">Dismiss</button>
             </div>
             <p className="text-xs text-(--base-07) leading-relaxed">
                 Shown once. It is already filled into the compose file below. The link fetches its tunnel token
                 and Redis credential from Core on its own. The warp key cannot be retrieved later.
+                {rolled && ' Only the key changed - the address and its routes are untouched, and the link keeps running until you redeploy it.'}
             </p>
             <CopyRow label="WARP_API_KEY" value={kit.warp_key} onCopy={onCopy} />
             <button

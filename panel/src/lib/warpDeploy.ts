@@ -170,7 +170,7 @@ ${header}
 
 services:
   warp:
-    image: ${REG}/dylaris-gateway-warp:latest
+    image: ${REG}/gateway-warp:latest
     restart: unless-stopped
     environment:
       # keep - this link's key. Shown once; we store only a hash of it.
@@ -185,7 +185,7 @@ services:
     cap_add: [NET_ADMIN]
 
   link:
-    image: ${REG}/dylaris-gateway-link:latest
+    image: ${REG}/gateway-link:latest
     restart: unless-stopped
     depends_on: [warp]
     environment:
@@ -256,7 +256,7 @@ ${header}
 
 services:
   warp:
-    image: ${REG}/dylaris-gateway-warp:latest
+    image: ${REG}/gateway-warp:latest
     restart: unless-stopped
     environment:
       # keep - this node's key. Shown once; we store only a hash of it.
@@ -275,7 +275,7 @@ services:
     cap_add: [NET_ADMIN]
 
   node:
-    image: ${REG}/dylaris-platform-node:latest
+    image: ${REG}/platform-node:latest
     restart: unless-stopped
     depends_on: [warp]
     environment:

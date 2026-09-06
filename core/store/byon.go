@@ -105,10 +105,27 @@ func (s *PostgresStore) CountPendingNodeEnrollTokens(userID string) (int, error)
 	return n, err
 }
 
+// Only tokens that can still be redeemed. The panel renders this list under
+// "keys waiting to be used", and it used to return every row ever minted.
+//
+// Two things were wrong with that, and both were visible on a working account.
+// Adding a machine mints an overlay key AND an enroll token under the same
+// label; once the machine enrolled, the token was consumed but stayed on this
+// list, so one machine showed as two entries that both offered a delete. And an
+// expired token sat there forever claiming to be usable, while the cap beside it
+// had already stopped counting it.
+//
+// Consumed and expired are exactly what CountPendingNodeEnrollTokens excludes,
+// so the list and the number now agree. Recovery tokens are deliberately still
+// listed: they are genuinely waiting to be used. They are excluded from the
+// COUNT for a different reason - they re-pair a machine that is already counted.
 func (s *PostgresStore) ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error) {
 	rows, err := s.db.Query(
 		`SELECT id, user_id, label, created_at, expires_at, consumed_at
-		 FROM node_enroll_tokens WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		 FROM node_enroll_tokens
+		 WHERE user_id = $1 AND consumed_at IS NULL
+		   AND (expires_at IS NULL OR expires_at > NOW())
+		 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -604,3 +604,34 @@ func (s *PostgresStore) RevokeWarpAPIKeyByNodeID(nodeID string) error {
 	_, err := s.db.Exec(`UPDATE warp_api_keys SET revoked_at = NOW() WHERE node_id = $1 AND revoked_at IS NULL`, nodeID)
 	return err
 }
+
+// RollWarpAPIKeyHash replaces the secret of a live key IN PLACE, keeping its
+// row, its id and its node_id. sql.ErrNoRows when there is no live key with
+// that identity, so a caller cannot read "rotated" off a no-op.
+//
+// An UPDATE and not revoke-then-insert, and that is load-bearing rather than a
+// style choice: GetWarpAPIKeyByNodeID selects on node_id with NO revoked_at
+// filter, so a second row carrying the same identity would make every lookup
+// for that machine ambiguous - including the one warp authenticates through.
+//
+// Keeping the row is also the whole point of a roll. The id is what
+// DisconnectKeyPeers and the ACL reconciler address, and node_id is what the
+// customer has in their compose file, so only the secret has to travel. A mint
+// generates a fresh identity instead, which would move the overlay address and
+// force a second edit for no gain.
+func (s *PostgresStore) RollWarpAPIKeyHash(nodeID, newHash string) error {
+	res, err := s.db.Exec(
+		`UPDATE warp_api_keys SET key_hash = $2 WHERE node_id = $1 AND revoked_at IS NULL`,
+		nodeID, newHash)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}

@@ -4942,6 +4942,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/warp/link-kits/{linkID}/roll",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "owner or admin.",
+      "handler": "WarpHandler.RollLinkKit",
+      "group": "warp",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/warp/node-keys",
       "auth": "session",
@@ -4968,6 +4978,16 @@
       "authorization": "no capability",
       "description": "owner or admin.",
       "handler": "WarpHandler.RevokeNodeWarpKey",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/warp/node-keys/{nodeID}/roll",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "owner or admin.",
+      "handler": "WarpHandler.RollNodeWarpKey",
       "group": "warp",
       "external": false
     },
@@ -5003,10 +5023,10 @@
     }
   ],
   "counts": {
-    "total": 501,
+    "total": 503,
     "byAuth": {
       "none": 35,
-      "session": 453,
+      "session": 455,
       "user API key": 10,
       "warp key": 3
     },
@@ -5058,7 +5078,7 @@
       "updates": 1,
       "users": 7,
       "versions": 2,
-      "warp": 15
+      "warp": 17
     },
     "external": 10
   }

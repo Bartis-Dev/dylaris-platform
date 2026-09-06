@@ -8,6 +8,31 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.06.3
+
+### Features
+- The overlay key of a machine, and the key of a protected address, can now be
+  replaced from the panel without taking anything apart. The machine keeps its
+  name, its address and its servers; only the key in your compose file changes,
+  and the old one stops opening new connections at once. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The deploy snippet named images that do not exist.** After the move to the
+  new registry the templates kept the old middle segment, so the compose file
+  the panel handed out said `dylaris-dev/dylaris-gateway-warp` instead of
+  `dylaris-dev/gateway-warp`, for warp, link and the node agent alike. Copy a
+  fresh snippet. `core` `panel`
+- An enrollment key that had already been used, or had expired, stayed in the
+  list of keys waiting to be used. Adding one machine therefore looked like two
+  entries to delete, next to the overlay key of that same machine. The list now
+  shows exactly what counts against your plan. `core` `panel`
+
 ## 2026.09.06.2
 
 ### Features

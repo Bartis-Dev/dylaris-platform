@@ -1035,12 +1035,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/warp/link-boot",
 		authLimiter.Limit(30, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkBoot))).Methods("POST")
 	api.HandleFunc("/warp/link-kits/{linkID}", authHandler.AuthMiddleware(warpHandler.RevokeLinkKit)).Methods("DELETE")
+	api.HandleFunc("/warp/link-kits/{linkID}/roll", authHandler.AuthMiddleware(warpHandler.RollLinkKit)).Methods("POST")
 	// BYON node warp keys (tenant self-service; BYON + gateway gated inside the
 	// handler, capped on max_nodes). Separate from link kits by the "node-"
 	// node_id prefix - see MintNodeWarpKey.
 	api.HandleFunc("/warp/node-keys", authHandler.AuthMiddleware(warpHandler.MintNodeWarpKey)).Methods("POST")
 	api.HandleFunc("/warp/node-keys", authHandler.AuthMiddleware(warpHandler.ListNodeWarpKeys)).Methods("GET")
 	api.HandleFunc("/warp/node-keys/{nodeID}", authHandler.AuthMiddleware(warpHandler.RevokeNodeWarpKey)).Methods("DELETE")
+	api.HandleFunc("/warp/node-keys/{nodeID}/roll", authHandler.AuthMiddleware(warpHandler.RollNodeWarpKey)).Methods("POST")
 	// Overlay addresses for the deploy snippets. Authed but uncapped for the same
 	// reason as the kits above: the tenant minting the key is the one who needs
 	// them, and they are RFC1918 addresses that authorize nothing on their own.

@@ -193,8 +193,9 @@ var ExemptRoutes = map[string]bool{
 	"/api/gateway/link-routes/{domain:.+}": true, // authed; in-handler owner filter
 
 	// Warp route-only link kits: tenant self-service, BYON-gated + owner-filtered in-handler.
-	"/api/warp/link-kits":          true, // authed; in-handler owner filter
-	"/api/warp/link-kits/{linkID}": true, // authed; in-handler owner filter
+	"/api/warp/link-kits":               true, // authed; in-handler owner filter
+	"/api/warp/link-kits/{linkID}":      true, // authed; in-handler owner filter
+	"/api/warp/link-kits/{linkID}/roll": true, // authed; in-handler owner filter, same as the revoke beside it
 
 	// Beam: caller's own servers/ticket/config.
 	"/api/beam/servers": true, // authed; own beam-eligible servers
@@ -205,9 +206,10 @@ var ExemptRoutes = map[string]bool{
 	"/api/settings/filemanager/limits": true, // authed; own upload/download limits
 
 	// Store panel-session calls (distinct from the service-to-service PUBLIC ones above).
-	"/api/store/link/start":        true, // authed; panel-user session
-	"/api/warp/node-keys":          true, // authed; own BYON node keys, BYON+gateway gated in-handler
-	"/api/warp/node-keys/{nodeID}": true, // authed; own BYON node key (owner-checked in-handler)
+	"/api/store/link/start":             true, // authed; panel-user session
+	"/api/warp/node-keys":               true, // authed; own BYON node keys, BYON+gateway gated in-handler
+	"/api/warp/node-keys/{nodeID}":      true, // authed; own BYON node key (owner-checked in-handler)
+	"/api/warp/node-keys/{nodeID}/roll": true, // authed; own BYON node key (owner-checked in-handler)
 	// Overlay addresses for the deploy snippet. Read-only RFC1918 values that
 	// authorize nothing without a warp key, needed by exactly the tenants who
 	// mint one on /nodes.

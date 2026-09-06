@@ -16,7 +16,7 @@ describe('routeOnlyCompose', () => {
     // The link is what makes this route-only rather than plain overlay access.
     it('includes the link container', () => {
         const out = routeOnlyCompose(base);
-        expect(out).toContain('dylaris-gateway-link');
+        expect(out).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
         expect(out).toContain('depends_on: [warp]');
     });
 
@@ -363,5 +363,34 @@ describe('nodeCompose on Windows', () => {
     it('actually differs between the two', () => {
         expect(nodeCompose({ ...base, platform: 'windows' }))
             .not.toBe(nodeCompose({ ...base, platform: 'linux' }));
+    });
+});
+
+// Every image this file emits, spelled out. The organisation move renamed all
+// of them (ghcr.io/bartis-dev/dylaris-<x> -> ghcr.io/dylaris-dev/<x>) and the
+// templates kept the old middle segment, so the snippet handed to every BYON
+// and route-only customer named three images that do not exist. Nothing failed:
+// the one image assertion in this file was an incidental substring that matched
+// the WRONG name, so it stayed green precisely because the bug was there.
+describe('emitted image paths', () => {
+    it('route-only names warp and link at the current registry path', () => {
+        const out = routeOnlyCompose(base);
+        expect(out).toContain('image: ghcr.io/dylaris-dev/gateway-warp:latest');
+        expect(out).toContain('image: ghcr.io/dylaris-dev/gateway-link:latest');
+    });
+
+    it('node names warp and the node agent at the current registry path', () => {
+        const out = nodeCompose(base);
+        expect(out).toContain('image: ghcr.io/dylaris-dev/gateway-warp:latest');
+        expect(out).toContain('image: ghcr.io/dylaris-dev/platform-node:latest');
+    });
+
+    // The old owner must not survive anywhere in a file a customer runs, and
+    // neither must the doubled segment the move left behind.
+    it('emits no legacy registry path', () => {
+        for (const out of [routeOnlyCompose(base), nodeCompose(base)]) {
+            expect(out).not.toContain('bartis-dev');
+            expect(out).not.toContain('dylaris-dev/dylaris-');
+        }
     });
 });
